@@ -47,7 +47,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
     section: 'identity',
     level: 'required',
     passed: !!doc.name.trim() && !!doc.styleNumber.trim(),
-    message: 'Style name and style number are set.',
+    message: doc.name.trim() && doc.styleNumber.trim() ? 'Style name and style number are set.' : 'Enter a style name and style number.',
     fix: { screen: 'techpack' },
   });
   add({
@@ -55,7 +55,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
     section: 'identity',
     level: 'required',
     passed: doc.sizes.range.includes(doc.sizes.base),
-    message: `Base size (${doc.sizes.base}) is part of the size range.`,
+    message: doc.sizes.range.includes(doc.sizes.base) ? `Base size (${doc.sizes.base}) is part of the size range.` : `Base size (${doc.sizes.base}) must be part of the size range.`,
     fix: { screen: 'measurements' },
   });
 
@@ -84,7 +84,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'materials',
       level: 'required',
       passed: !!m.composition.trim(),
-      message: `Material “${m.name}” has a fibre composition.`,
+      message: m.composition.trim() ? `Material “${m.name}” has a fibre composition.` : `Material “${m.name}” needs a fibre composition (e.g. 100% cotton).`,
       fix: { screen: 'materials', focus: m.id },
     });
     add({
@@ -92,7 +92,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'materials',
       level: 'required',
       passed: m.weight !== null,
-      message: `Material “${m.name}” has a fabric weight.`,
+      message: m.weight ? `Material “${m.name}” has a fabric weight.` : `Material “${m.name}” needs a fabric weight (g/m² or oz/yd²).`,
       fix: { screen: 'materials', focus: m.id },
     });
     add({
@@ -100,7 +100,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'materials',
       level: 'required',
       passed: !/to be specified/i.test(m.name),
-      message: `Material “${m.name}” has been renamed from its placeholder.`,
+      message: /to be specified/i.test(m.name) ? `“${m.name}” is still a placeholder — name the actual material.` : `Material “${m.name}” is named.`,
       fix: { screen: 'materials', focus: m.id },
     });
     add({
@@ -108,7 +108,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'materials',
       level: 'recommended',
       passed: !!m.supplier.trim(),
-      message: `Material “${m.name}” lists a supplier.`,
+      message: m.supplier.trim() ? `Material “${m.name}” lists a supplier.` : `Material “${m.name}” has no supplier listed.`,
       fix: { screen: 'materials', focus: m.id },
     });
   }
@@ -124,7 +124,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
   for (const cid of usedColors) {
     const c = doc.colors.find((x) => x.id === cid);
     if (!c) {
-      add({ id: `colors.missing.${cid}`, section: 'colors', level: 'required', passed: false, message: `A layer references a colour that was deleted (${cid}). Pick a palette colour.`, fix: { screen: 'materials' } });
+      add({ id: `colors.missing.${cid}`, section: 'colors', level: 'required', passed: false, message: `A layer references a color that was deleted (${cid}). Pick a palette colour.`, fix: { screen: 'materials' } });
       continue;
     }
     add({
@@ -132,7 +132,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'colors',
       level: 'recommended',
       passed: !!c.standard?.code,
-      message: `Colour “${c.name}” has a colour-standard reference (you supply this; screen colour is not a match).`,
+      message: c.standard?.code ? `Color “${c.name}” has a color-standard reference.` : `Color “${c.name}” has no color-standard reference. Add the code you have verified (screen color is not a match).`,
       fix: { screen: 'materials', focus: c.id },
     });
   }
@@ -156,7 +156,9 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       passed: p.confirmed,
       message: hasDefaults
         ? `${p.code} ${p.label}: uses an unconfirmed template default — review and confirm.`
-        : `${p.code} ${p.label}: confirmed.`,
+        : p.confirmed
+          ? `${p.code} ${p.label}: confirmed.`
+          : `${p.code} ${p.label}: not confirmed yet — check every size and tick Confirmed.`,
       fix: { screen: 'measurements', focus: p.id },
     });
   }
@@ -197,7 +199,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
         section: 'artwork',
         level: 'required',
         passed: !!l.placement.anchorId,
-        message: `“${l.name}”: placement has a reference point.`,
+        message: l.placement.anchorId ? `“${l.name}”: placement has a reference point.` : `“${l.name}”: choose the reference point the placement is measured from.`,
         fix: { screen: 'studio', focus: l.id },
       });
       const unsupported = l.targets.filter((t) => {
@@ -219,7 +221,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
         section: 'artwork',
         level: 'recommended',
         passed: !!l.decoration.artworkCode.trim(),
-        message: `“${l.name}”: has an artwork identifier.`,
+        message: l.decoration.artworkCode.trim() ? `“${l.name}”: has an artwork identifier.` : `“${l.name}”: no artwork ID yet.`,
         fix: { screen: 'studio', focus: l.id },
       });
     }
@@ -251,7 +253,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
         section: 'construction',
         level: 'recommended',
         passed: !!l.notes.trim(),
-        message: `“${l.name}”: has manufacturing notes (the drawn dash is illustrative only).`,
+        message: l.notes.trim() ? `“${l.name}”: has manufacturing notes.` : `“${l.name}”: add stitch manufacturing notes (the drawn dash is illustrative only).`,
         fix: { screen: 'studio', focus: l.id },
       });
     }
@@ -276,7 +278,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
     section: 'construction',
     level: 'recommended',
     passed: doc.constructionNotes.length > 0,
-    message: 'Construction notes describe seams, finishes, and assembly.',
+    message: doc.constructionNotes.length ? 'Construction notes are present.' : 'No construction notes yet — describe seams, finishes and assembly.',
     fix: { screen: 'techpack' },
   });
   for (const lb of doc.labels) {
@@ -285,7 +287,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'labels',
       level: 'required',
       passed: !!lb.description.trim(),
-      message: `Label/packaging item “${lb.type}” has a description.`,
+      message: lb.description.trim() ? `Label/packaging item “${lb.type}” has a description.` : `Label/packaging item “${lb.type}” needs a description (or remove it).`,
       fix: { screen: 'techpack', focus: lb.id },
     });
     add({
@@ -293,7 +295,7 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
       section: 'labels',
       level: 'recommended',
       passed: !!lb.placement.trim() || ['polybag', 'folding', 'carton'].includes(lb.type),
-      message: `Label “${lb.type}” has a placement.`,
+      message: `Label “${lb.type}” ${lb.placement.trim() ? 'has a placement.' : 'has no placement.'}`,
       fix: { screen: 'techpack', focus: lb.id },
     });
   }

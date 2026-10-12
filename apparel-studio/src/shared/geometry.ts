@@ -206,3 +206,19 @@ export function pointsAlongPolyline(pts: { x: number; y: number }[], spacing: nu
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
+
+/** Parallel offset of an (open) path as a polyline path string; positive = left of travel direction. */
+export function offsetPath(d: string, dist: number, steps = 12): string {
+  const pts = flattenPath(d, steps)[0] ?? [];
+  if (pts.length < 2) return d;
+  const out: [number, number][] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    out.push([pts[i][0] + (dy / l) * dist, pts[i][1] - (dx / l) * dist]);
+  }
+  return 'M' + out.map((p) => `${Math.round(p[0] * 100) / 100},${Math.round(p[1] * 100) / 100}`).join(' L');
+}

@@ -113,7 +113,7 @@ export async function seedDemo(db: DB, storage: StorageAdapter): Promise<string[
     pattern.tileWidthMm = 45;
     pattern.view = 'all';
     // Erase part of the pattern near the left sleeve hem (nondestructive mask) to demonstrate erasing.
-    pattern.mask = [{ mode: 'erase', view: 'front', width: 40, points: [880, 330, 900, 360, 915, 380] }];
+    pattern.mask = [{ mode: 'erase', view: 'front', width: 28, points: [962, 236, 935, 310, 908, 386] }];
     doc.layers.push(pattern);
     const hem = makeStitchingLayer(tee, ['bottom_hem', 'sleeve_hem_left', 'sleeve_hem_right'], coral.id);
     hem.name = 'Contrast hem coverstitch';

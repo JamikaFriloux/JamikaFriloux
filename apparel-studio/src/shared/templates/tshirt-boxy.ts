@@ -1,5 +1,6 @@
 import type { GarmentTemplate } from '../schema/template';
 import { mirrorPath } from '../geometry';
+import ghostAssets from './ghost/tshirt-boxy-v1.json';
 
 /**
  * Boxy T-shirt, template v1.
@@ -25,7 +26,7 @@ const NECK_RIB_BACK_SEEN_FROM_FRONT = 'M405,60 C440,80 560,80 595,60 L576,50 C54
 const INNER_BACK = 'M424,50 C428,120 462,148 500,148 C538,148 572,120 576,50 C545,64 455,64 424,50 Z';
 const NECK_RIB_BACK = 'M405,60 C440,80 560,80 595,60 L576,50 C545,60 455,60 424,50 Z';
 
-const SLEEVE_HEM_STITCH_L = 'M54,214 L117,386';
+const SLEEVE_HEM_STITCH_L = 'M49.3,217.4 L111.8,388.9';
 const SLEEVE_SEAM_L = 'M96,398 C132,377 168,357 204,336';
 const SIDE_SEAM_L = 'M204,336 L204,760';
 const SHOULDER_L = 'M405,60 L212,104';
@@ -164,5 +165,5 @@ export const tshirtBoxyV1: GarmentTemplate = {
     { id: 'K', code: 'K', label: 'Neck rib height', howToMeasure: 'Rib width at center front, from seam to finished edge.', view: 'front', defaultMm: 22, tolPlusMm: 1.6, tolMinusMm: 1.6 },
     { id: 'L', code: 'L', label: 'Bicep (half)', howToMeasure: 'From the underarm point perpendicular to the top sleeve fold.', view: 'front', defaultMm: 186, tolPlusMm: 6.4, tolMinusMm: 6.4 },
   ],
-  ghost: null,
+  ghost: ghostAssets as GarmentTemplate['ghost'],
 };

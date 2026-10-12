@@ -7,6 +7,7 @@ import { getHardware, FINISH_COLORS } from '../catalog/hardware';
 import { EMBELLISHMENT_FINISH_COLORS } from '../catalog/embellishments';
 import { getTexture, type TextureDef } from '../catalog/textures';
 import { STITCH_DASH } from './stitch';
+import { offsetPath } from '../geometry';
 
 /** How an asset is drawn: an href (browser) or inline sanitized SVG markup (PDF). */
 export type AssetDraw =
@@ -98,7 +99,7 @@ function LayerMask({ id, strokes, vb }: { id: string; strokes: MaskStroke[]; vb:
 /** Procedural vector texture tile (for technical/print views). */
 function TexturePattern({ id, def, tile, strength }: { id: string; def: TextureDef; tile: number; strength: number }) {
   const t = tile;
-  const op = Math.min(1, 0.12 + strength * 0.35);
+  const op = Math.min(1, 0.05 + strength * 0.16);
   const ink = '#000';
   let body: React.ReactNode;
   switch (def.kind) {
@@ -286,8 +287,8 @@ export function TechView(props: TechViewProps) {
       const t = textureFor(p.componentId);
       if (!t) continue;
       const key = `${t.def.id}-${t.scale}-${t.strength.toFixed(2)}`;
-      // Tiles are exaggerated 4x on the flat so the structure stays visible at screen scale.
-      usedTextures.set(key, { def: t.def, tile: (t.def.tileMm * t.scale * 4) / k, strength: t.strength });
+      // Tiles are exaggerated 1.5x on the flat so the structure stays visible at screen scale.
+      usedTextures.set(key, { def: t.def, tile: (t.def.tileMm * t.scale * 1.5) / k, strength: t.strength });
     }
     for (const [key, t] of usedTextures) defs.push(<TexturePattern key={`t-${key}`} id={`${P}-tex-${key}`} def={t.def} tile={t.tile} strength={t.strength} />);
   }
@@ -321,15 +322,17 @@ export function TechView(props: TechViewProps) {
         </g>
       );
     }
-    const interactive = props.interactiveLayers && !l.locked;
+    // Patterns are not grabbable on the canvas (clicks select the part underneath).
+    const grabbable = props.interactiveLayers && l.type === 'artwork';
     return (
       <g
         key={`${l.id}-${keySuffix}`}
         opacity={l.opacity}
         clipPath={clipPanelId ? `url(#${P}-clip-${clipPanelId})` : undefined}
         data-layer-id={l.id}
-        style={interactive ? { cursor: 'move' } : undefined}
-        onPointerDown={interactive && props.onLayerPointerDown ? (e) => props.onLayerPointerDown!(e, l) : undefined}
+        pointerEvents={l.type === 'pattern' ? 'none' : undefined}
+        style={grabbable && !l.locked ? { cursor: 'move' } : undefined}
+        onPointerDown={grabbable && props.onLayerPointerDown ? (e) => props.onLayerPointerDown!(e, l) : undefined}
       >
         <g mask={maskAttr}>{content}</g>
       </g>
@@ -411,10 +414,11 @@ export function TechView(props: TechViewProps) {
     for (const s of view.seams) {
       if (restyled.has(s.id) && stitching) continue;
       const isStitchLine = s.defaultStyle === 'coverstitch' || s.defaultStyle === 'double-needle' || s.defaultStyle === 'single-needle';
+      const twoRow = s.defaultStyle === 'coverstitch' || s.defaultStyle === 'double-needle';
       seamNodes.push(
         <path
           key={s.id}
-          d={s.d}
+          d={twoRow ? offsetPath(s.d, -3) : s.d}
           fill="none"
           stroke={OUTLINE}
           strokeWidth={isStitchLine ? 1.1 : 1.3}
@@ -424,9 +428,9 @@ export function TechView(props: TechViewProps) {
           data-seam-id={s.id}
         />,
       );
-      if (s.defaultStyle === 'coverstitch' || s.defaultStyle === 'double-needle') {
+      if (twoRow) {
         seamNodes.push(
-          <path key={`${s.id}-2`} d={s.d} fill="none" stroke={OUTLINE} strokeWidth={1.1} strokeDasharray={STITCH_DASH['single-needle'].dash} opacity={0.75} transform="translate(0,6)" pointerEvents="none" />,
+          <path key={`${s.id}-2`} d={offsetPath(s.d, 3)} fill="none" stroke={OUTLINE} strokeWidth={1.1} strokeDasharray={STITCH_DASH['single-needle'].dash} opacity={0.75} pointerEvents="none" />,
         );
       }
     }
@@ -444,8 +448,7 @@ export function TechView(props: TechViewProps) {
           stitchNodes.push(
             <path
               key={`${l.id}-${sid}-${i}`}
-              d={s.d}
-              transform={o ? `translate(0,${o})` : undefined}
+              d={o ? offsetPath(s.d, o) : s.d}
               fill="none"
               stroke={col}
               strokeWidth={st.width}
