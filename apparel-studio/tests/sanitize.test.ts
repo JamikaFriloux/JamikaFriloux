@@ -19,6 +19,8 @@ describe('SVG sanitizer', () => {
   it('keeps safe internal references and gradients', () => {
     const ok = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`;
     expect(sanitizeSvg(Buffer.from(ok)).svg).toContain('url(#g)');
+    // A clean file reports nothing removed (no false "unsafe content" warning).
+    expect(sanitizeSvg(Buffer.from(ok)).removed).toBe(0);
   });
 
   it('rejects DTDs and files without dimensions', () => {

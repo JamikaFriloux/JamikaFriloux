@@ -1,0 +1,329 @@
+{
+  "generatedAt": "2026-10-12T21:01:23.901Z",
+  "results": [
+    {
+      "garment": "tshirt",
+      "check": "Recolor right sleeve only",
+      "passed": true,
+      "detail": "fills using Forest: sleeve_right"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Sleeve color linked in front view",
+      "passed": true,
+      "detail": "right=#1f5c3f left=#f4f3ef body=#f4f3ef"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Sleeve color linked in back view",
+      "passed": true,
+      "detail": "right=#1f5c3f left=#f4f3ef body=#f4f3ef"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Logo dragged on canvas (visual estimate)",
+      "passed": true,
+      "detail": "x 500.0 → 470.0, source canvas-estimate"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Logo manufacturing placement entered",
+      "passed": true,
+      "detail": "W 240 × H 180 mm, 50 mm below center_chest, ±5"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Canvas follows entered dimensions",
+      "passed": true,
+      "detail": "transform {\"x\":500,\"y\":390,\"width\":240,\"height\":180,\"rotation\":0}"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Erase affects only the pattern layer",
+      "passed": true,
+      "detail": "pattern mask strokes: 1; other 7 layers unchanged: true"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Rhinestone path edited (point inserted)",
+      "passed": true,
+      "detail": "3 individual + path with 4 points"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Rhinestone BOM count = placements",
+      "passed": true,
+      "detail": "BOM 26, canvas badge 26"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Stud BOM count = placements",
+      "passed": true,
+      "detail": "BOM 4"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Hardware BOM row",
+      "passed": true,
+      "detail": "Metal badge plate — Brushed silver × 1"
+    },
+    {
+      "garment": "tshirt",
+      "check": "cm entry stored in mm",
+      "passed": true,
+      "detail": "A/L = 715 mm"
+    },
+    {
+      "garment": "tshirt",
+      "check": "inch fraction entry stored exactly",
+      "passed": true,
+      "detail": "L/M = 185.7375 mm (7 5/16\")"
+    },
+    {
+      "garment": "tshirt",
+      "check": "All POMs confirmed",
+      "passed": true,
+      "detail": "12/12"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Material change updates BOM reference",
+      "passed": true,
+      "detail": "mesh → sleeve_left; jersey → body_front, body_back, sleeve_right"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Fabric consumption not inferred",
+      "passed": true,
+      "detail": "mesh quantity type: missing"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Reopened project identical to saved state",
+      "passed": true,
+      "detail": "12 layers, 3 assets"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Artwork visible after reopen",
+      "passed": true,
+      "detail": "2 image element(s) on front"
+    },
+    {
+      "garment": "tshirt",
+      "check": "All required checks pass before review export",
+      "passed": true,
+      "detail": "none open"
+    },
+    {
+      "garment": "tshirt",
+      "check": "R1 export VT-TS-001_R1_techpack.pdf",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "tshirt",
+      "check": "R1 export VT-TS-001_R1_BOM.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "tshirt",
+      "check": "R1 export VT-TS-001_R1_measurements.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "tshirt",
+      "check": "R1 export VT-TS-001_R1_mockup_front.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "tshirt",
+      "check": "R1 export VT-TS-001_R1_mockup_back.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Review revision issued",
+      "passed": true,
+      "detail": "R1 review"
+    },
+    {
+      "garment": "tshirt",
+      "check": "BOM CSV contains counted embellishments",
+      "passed": true,
+      "detail": "rhinestone and stud rows marked counted"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Measurement CSV values",
+      "passed": true,
+      "detail": "cm values present"
+    },
+    {
+      "garment": "tshirt",
+      "check": "Issued revision unchanged after later edit",
+      "passed": true,
+      "detail": "snapshot 830231ba6eeb…, PDF sha 378a09eea65e…"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Independent recolor + back-only override",
+      "passed": true,
+      "detail": "all-views: kangaroo_pocket; back only: hood"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Front/back assignment differs only where overridden",
+      "passed": true,
+      "detail": "back #b5653f, front #f4f3ef"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Stitching on the intended seams",
+      "passed": true,
+      "detail": "pocket_topstitch"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Material reference in BOM",
+      "passed": true,
+      "detail": "French terry → hood_lining"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Embellishment counts",
+      "passed": true,
+      "detail": "rhinestones 53 (canvas 53), studs 4"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Hardware counted",
+      "passed": true,
+      "detail": "Metal badge plate — Brushed silver"
+    },
+    {
+      "garment": "hoodie",
+      "check": "All required checks pass",
+      "passed": true,
+      "detail": "none open"
+    },
+    {
+      "garment": "hoodie",
+      "check": "R1 export VT-HD-001_R1_techpack.pdf",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "hoodie",
+      "check": "R1 export VT-HD-001_R1_BOM.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "hoodie",
+      "check": "R1 export VT-HD-001_R1_measurements.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "hoodie",
+      "check": "R1 export VT-HD-001_R1_mockup_front.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "hoodie",
+      "check": "R1 export VT-HD-001_R1_mockup_back.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "hoodie",
+      "check": "Revision snapshot keeps counts, materials and back override",
+      "passed": true,
+      "detail": "snapshot rhinestones 53; back override on hood"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Independent recolor + back-only override",
+      "passed": true,
+      "detail": "all-views: leg_front_left; back only: waistband"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Front/back assignment differs only where overridden",
+      "passed": true,
+      "detail": "back #b5653f, front #f4f3ef"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Stitching on the intended seams",
+      "passed": true,
+      "detail": "front_rise, back_rise"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Material reference in BOM",
+      "passed": true,
+      "detail": "French terry → leg_back_right"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Embellishment counts",
+      "passed": true,
+      "detail": "rhinestones 72 (canvas 72), studs 4"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Hardware counted",
+      "passed": true,
+      "detail": "Metal badge plate — Brushed silver"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "All required checks pass",
+      "passed": true,
+      "detail": "none open"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "R1 export VT-SP-001_R1_techpack.pdf",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "R1 export VT-SP-001_R1_BOM.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "R1 export VT-SP-001_R1_measurements.csv",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "R1 export VT-SP-001_R1_mockup_front.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "R1 export VT-SP-001_R1_mockup_back.png",
+      "passed": true,
+      "detail": "generated"
+    },
+    {
+      "garment": "sweatpants",
+      "check": "Revision snapshot keeps counts, materials and back override",
+      "passed": true,
+      "detail": "snapshot rhinestones 72; back override on waistband"
+    }
+  ]
+}

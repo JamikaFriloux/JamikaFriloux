@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import request from 'supertest';
 import { makePng, makeTestApp } from './helpers';
-import { readPdf } from './pdfText';
+import { readPdf, textOverlaps } from './pdfText';
 import { seedDemo } from '../src/server/demo/seed';
 import type { ProjectDoc, ProjectRecord } from '../src/shared/schema/project';
 import { requireTemplate } from '../src/shared/templates';
@@ -127,6 +127,7 @@ describe('revisions and exports', () => {
       expect(p.text).toContain('SC-TS-001');
       expect(p.text).toContain(`Page ${i + 1} of ${pages.length}`);
       expect(p.text).toContain('Rev R1');
+      expect(textOverlaps(p), `page ${i + 1} has overlapping text`).toEqual([]);
       for (const it of p.items) {
         if (!it.str.trim()) continue;
         expect(it.x).toBeGreaterThanOrEqual(0);

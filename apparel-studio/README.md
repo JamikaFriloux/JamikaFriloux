@@ -30,6 +30,8 @@ folder to start fresh (the demo is re-seeded; set `NO_DEMO=1` to skip it).
 | `npm test` | Unit + API integration tests (Vitest) |
 | `npm run test:e2e` | End-to-end browser tests (Playwright; starts its own servers on ports 4100/5174 with a throwaway data folder). First time: `npx playwright install chromium` unless a Chromium is preinstalled (`CHROME_PATH` env var is honoured). |
 | `npm run typecheck` | TypeScript check |
+| `npx playwright test e2e/demo.spec.ts` | Full demonstration on all three garments; writes screenshots + exports to `verification/` |
+| `npx tsx scripts/pdf-bounds.mts file.pdf` | Report text outside the page or overlapping text in a PDF |
 | `npm run seed` | Add another copy of the demo projects |
 | `npm run sample:techpack -- out.pdf` | Render the demo tech pack to a file without running the server |
 | `npm run build:ghost` | Regenerate ghost-mockup shading assets from `scripts/ghost/specs.ts` |
@@ -97,5 +99,7 @@ svg-to-pdfkit for vector PDFs with embedded DejaVu fonts.
 - **Ghost mockups** are appearance previews from a deterministic renderer using *procedurally authored*
   shading assets (not photographs). See `TEMPLATE_AUTHORING.md` and `PROGRESS.md` for the honest status.
 
-See `PRODUCT_REQUIREMENTS.md` (requirement IDs), `IMPLEMENTATION_PLAN.md`, `PROGRESS.md` (status per
+Keyboard in the Design Studio: arrows move the selected item (Shift ×10), `+`/`−` resize, `[`/`]` rotate, F2 renames a focused layer, Ctrl/⌘+D duplicates, Delete removes.
+
+See `verification/README.md` for the latest evidence, `ASSET_ACQUISITION_BRIEF.md` for photographic mockups, `PRODUCT_REQUIREMENTS.md` (requirement IDs), `IMPLEMENTATION_PLAN.md`, `PROGRESS.md` (status per
 requirement + continuation notes) and `TEMPLATE_AUTHORING.md`.

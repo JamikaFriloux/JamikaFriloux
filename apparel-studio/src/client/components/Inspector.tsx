@@ -28,7 +28,7 @@ export function ColorPicker({ doc, value, onPick, label }: { doc: ProjectDoc; va
     <div>
       <div className="row wrap" role="radiogroup" aria-label={label ?? 'Color'} style={{ gap: 4 }}>
         {doc.colors.map((c) => (
-          <button key={c.id} className="swatch-btn" role="radio" aria-checked={value === c.id} aria-pressed={value === c.id} title={c.name} aria-label={c.name} onClick={() => onPick(c.id)} data-testid={`color-${c.name}`}>
+          <button key={c.id} className="swatch-btn" role="radio" aria-checked={value === c.id} title={c.name} aria-label={c.name} onClick={() => onPick(c.id)} data-testid={`color-${c.name}`}>
             <span className="swatch lg" style={{ background: c.hex }} />
           </button>
         ))}
@@ -150,7 +150,7 @@ function ComponentInspector({ componentId }: { componentId: string }) {
       </div>
       <div className="section">
         <Field label="Material" hint="Used for the BOM. Changing it updates the BOM reference immediately.">
-          <select className="input" value={target?.materialId ?? ''} onChange={(e) => setFill({ materialId: e.target.value || null }, `mat-${componentId}`)} data-testid="part-material">
+          <select aria-label="Part material" className="input" value={target?.materialId ?? ''} onChange={(e) => setFill({ materialId: e.target.value || null }, `mat-${componentId}`)} data-testid="part-material">
             <option value="">— No material —</option>
             {doc.materials.filter((m) => m.kind === 'fabric' || m.kind === 'rib' || m.kind === 'other').map((m) => (
               <option key={m.id} value={m.id}>
@@ -260,6 +260,12 @@ function CommonLayerControls({ layer, update }: { layer: Layer; update: Update }
         </Field>
       )}
       {layer.locked && <div className="callout info small">Locked — unlock to move or edit on the canvas.</div>}
+      {!layer.locked && layer.type !== 'panelFill' && (
+        <p className="hint" data-testid="keyboard-hint">
+          Keyboard: arrows move ({layer.type === 'stitching' || layer.type === 'pattern' || layer.type === 'texture' ? 'not for this layer type' : 'Shift ×10'})
+          {(layer.type === 'artwork' || layer.type === 'hardware') && ' · + / − resize · [ ] rotate (Shift = 15°)'} · Ctrl/⌘+D duplicate · Delete removes.
+        </p>
+      )}
     </div>
   );
 }
@@ -394,7 +400,7 @@ function ArtworkInspector({ layer }: { layer: ArtworkLayer }) {
           </select>
         </Field>
         <Field label="Point on artwork">
-          <select className="input" value={layer.placement.reference} onChange={(e) => setPlacement({ reference: e.target.value as 'center' | 'top-center' })}>
+          <select aria-label="Point on artwork" className="input" value={layer.placement.reference} onChange={(e) => setPlacement({ reference: e.target.value as 'center' | 'top-center' })}>
             <option value="top-center">Top edge (center)</option>
             <option value="center">Center</option>
           </select>
@@ -437,7 +443,7 @@ function ArtworkInspector({ layer }: { layer: ArtworkLayer }) {
       <div className="section">
         <h3 style={{ marginBottom: 8 }}>Decoration</h3>
         <Field label="Method">
-          <select className="input" value={layer.decoration.method} onChange={(e) => setDeco({ method: e.target.value as DecorationMethod })} data-testid="decoration-method">
+          <select aria-label="Decoration method" className="input" value={layer.decoration.method} onChange={(e) => setDeco({ method: e.target.value as DecorationMethod })} data-testid="decoration-method">
             {Object.entries(DECORATION_METHOD_LABELS)
               .filter(([k]) => k !== 'rhinestone' && k !== 'stud')
               .map(([k, v]) => (
@@ -500,7 +506,7 @@ function PatternInspector({ layer }: { layer: Extract<Layer, { type: 'pattern' }
           </Field>
         </div>
         <Field label="Print method">
-          <select className="input" value={layer.method} onChange={(e) => set({ method: e.target.value as DecorationMethod })}>
+          <select aria-label="Pattern print method" className="input" value={layer.method} onChange={(e) => set({ method: e.target.value as DecorationMethod })}>
             {(['sublimation', 'screen-print', 'dtg', 'heat-transfer'] as DecorationMethod[]).map((m) => (
               <option key={m} value={m}>
                 {DECORATION_METHOD_LABELS[m]}
@@ -532,7 +538,7 @@ function TextureInspector({ layer }: { layer: Extract<Layer, { type: 'texture' }
     <>
       <div className="section">
         <Field label="Texture">
-          <select className="input" value={layer.textureId} onChange={(e) => set({ textureId: e.target.value })}>
+          <select aria-label="Texture" className="input" value={layer.textureId} onChange={(e) => set({ textureId: e.target.value })}>
             {TEXTURES.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -547,7 +553,7 @@ function TextureInspector({ layer }: { layer: Extract<Layer, { type: 'texture' }
           <input type="range" min={0} max={1} step={0.05} value={layer.strength} onChange={(e) => set({ strength: Number(e.target.value) }, `tst-${layer.id}`)} aria-label="Texture strength" />
         </Field>
         <Field label="Represents material" hint="Links this look to the material specification used in the BOM.">
-          <select className="input" value={layer.materialId ?? ''} onChange={(e) => set({ materialId: e.target.value || null })}>
+          <select aria-label="Material this texture represents" className="input" value={layer.materialId ?? ''} onChange={(e) => set({ materialId: e.target.value || null })}>
             <option value="">— Appearance only —</option>
             {doc!.materials.map((m) => (
               <option key={m.id} value={m.id}>
@@ -582,7 +588,7 @@ function StitchingInspector({ layer }: { layer: Extract<Layer, { type: 'stitchin
         <ColorPicker doc={doc!} value={layer.colorId} onPick={(colorId) => set({ colorId })} label="Thread color" />
       </Field>
       <Field label="Visual style">
-        <select className="input" value={layer.style} onChange={(e) => set({ style: e.target.value as StitchStyle })}>
+        <select aria-label="Stitch visual style" className="input" value={layer.style} onChange={(e) => set({ style: e.target.value as StitchStyle })}>
           {Object.entries(STITCH_STYLE_LABELS).map(([k, v]) => (
             <option key={k} value={k}>
               {v}
@@ -599,7 +605,11 @@ function StitchingInspector({ layer }: { layer: Extract<Layer, { type: 'stitchin
                 checked={layer.seamIds.includes(id)}
                 onChange={(e) => {
                   const next = e.target.checked ? [...layer.seamIds, id] : layer.seamIds.filter((s) => s !== id);
-                  if (next.length) set({ seamIds: next });
+                  if (!next.length) return;
+                  // Keep an auto-generated name in step with the chosen seams; custom names are left alone.
+                  const auto = layer.name.startsWith('Stitching — ');
+                  const names = [...new Set(next.map((s) => seams.get(s)!))];
+                  set({ seamIds: next, ...(auto ? { name: `Stitching — ${names.slice(0, 2).join(', ')}${names.length > 2 ? '…' : ''}` } : {}) });
                 }}
               />
               {name}
@@ -668,7 +678,7 @@ function EmbellishmentInspector({ layer }: { layer: Extract<Layer, { type: 'embe
           </div>
         )}
         <Field label="Size">
-          <select className="input" value={sizes.find((s) => Math.abs(s.diameterMm - layer.diameterMm) < 0.05)?.label ?? 'custom'} onChange={(e) => {
+          <select aria-label="Embellishment size" className="input" value={sizes.find((s) => Math.abs(s.diameterMm - layer.diameterMm) < 0.05)?.label ?? 'custom'} onChange={(e) => {
             const s = sizes.find((x) => x.label === e.target.value);
             if (s) set({ diameterMm: s.diameterMm });
           }}>
@@ -686,14 +696,14 @@ function EmbellishmentInspector({ layer }: { layer: Extract<Layer, { type: 'embe
           <LengthInput mm={layer.diameterMm} unit={unit} min={0.5} onCommit={(v) => v && set({ diameterMm: v })} ariaLabel="Diameter" />
         </Field>
         <Field label="Finish">
-          <select className="input" value={layer.finish} onChange={(e) => set({ finish: e.target.value })}>
+          <select aria-label="Embellishment finish" className="input" value={layer.finish} onChange={(e) => set({ finish: e.target.value })}>
             {finishes.map((f) => (
               <option key={f}>{f}</option>
             ))}
           </select>
         </Field>
         <Field label="Attachment">
-          <select className="input" value={layer.attachment} onChange={(e) => set({ attachment: e.target.value as typeof layer.attachment })}>
+          <select aria-label="Attachment method" className="input" value={layer.attachment} onChange={(e) => set({ attachment: e.target.value as typeof layer.attachment })}>
             <option value="hotfix">Hotfix (heat applied)</option>
             <option value="prong-set">Prong set</option>
             <option value="sew-on">Sew-on</option>
@@ -722,7 +732,7 @@ function EmbellishmentInspector({ layer }: { layer: Extract<Layer, { type: 'embe
         <Field label="Notes">
           <TextInput multiline value={layer.notes} onCommit={(notes) => set({ notes })} ariaLabel="Embellishment notes" />
         </Field>
-        <p className="hint">Placements stay editable. Alt+click a placed item to remove it. This is an appearance preview, not a machine file.</p>
+        <p className="hint">Placements stay editable: drag items or path points; click a blue “+” between path points to insert a point; Alt+click a placed item or path point to remove it; arrow keys move the whole layer. This is an appearance preview, not a machine file.</p>
       </div>
     </>
   );
@@ -743,7 +753,7 @@ function HardwareInspector({ layer }: { layer: Extract<Layer, { type: 'hardware'
         {def?.structuralNote ?? 'Visual placement only.'} Garment construction remains: {template!.structure.closure}.
       </div>
       <Field label="Component">
-        <select className="input" value={layer.hardwareId} onChange={(e) => {
+        <select aria-label="Hardware component" className="input" value={layer.hardwareId} onChange={(e) => {
           const nd = getHardware(e.target.value)!;
           set({ hardwareId: nd.id, finish: nd.finishes[0], name: nd.name });
         }}>
@@ -755,7 +765,7 @@ function HardwareInspector({ layer }: { layer: Extract<Layer, { type: 'hardware'
         </select>
       </Field>
       <Field label="Finish">
-        <select className="input" value={layer.finish} onChange={(e) => set({ finish: e.target.value })}>
+        <select aria-label="Hardware finish" className="input" value={layer.finish} onChange={(e) => set({ finish: e.target.value })}>
           {(def?.finishes ?? [layer.finish]).map((f) => (
             <option key={f}>{f}</option>
           ))}

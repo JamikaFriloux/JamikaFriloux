@@ -205,6 +205,8 @@ export function MeasurementsPage() {
                               onCommit={(mm) =>
                                 setPom(p.id, (x) => {
                                   x.values[s] = { mm, source: 'entered' };
+                                  // Once every value is typed by the user, the template-default label no longer applies.
+                                  if (/^Template default/.test(x.source) && Object.values(x.values).every((v) => v.source === 'entered')) x.source = 'Entered by user';
                                 })
                               }
                               ariaLabel={`${p.code} size ${s}`}

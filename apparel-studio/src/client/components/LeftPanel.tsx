@@ -95,7 +95,9 @@ export function LeftPanel() {
       testid: 'add-stitching',
       onClick: () => {
         const seams = template.views.flatMap((v) => v.seams);
-        const ids = selComp ? [...new Set(seams.filter((s) => s.componentIds.includes(selComp)).map((s) => s.id))] : [...new Set(seams.filter((s) => s.defaultStyle === 'coverstitch').map((s) => s.id))];
+        // Default to the garment's visible topstitch seams (hems, pocket, rise), never an arbitrary join seam.
+        const visible = ['coverstitch', 'double-needle', 'topstitch-contrast'];
+        const ids = selComp ? [...new Set(seams.filter((s) => s.componentIds.includes(selComp)).map((s) => s.id))] : [...new Set(seams.filter((s) => visible.includes(s.defaultStyle)).map((s) => s.id))];
         const dark = [...doc.colors].sort((a, b) => lum(a.hex) - lum(b.hex))[0];
         addLayer(makeStitchingLayer(template, ids.length ? ids : [seams[0].id], dark.id));
       },
@@ -140,11 +142,11 @@ export function LeftPanel() {
   return (
     <aside className="side left" aria-label="Garment parts and tools">
       <div className="section">
-        <div className="seg" role="tablist" style={{ width: '100%' }}>
-          <button role="tab" aria-pressed={ui.leftTab === 'parts'} aria-selected={ui.leftTab === 'parts'} style={{ flex: 1 }} onClick={() => ui.set({ leftTab: 'parts' })}>
+        <div className="seg" role="tablist" aria-label="Left panel" style={{ width: '100%' }}>
+          <button role="tab" aria-selected={ui.leftTab === 'parts'} style={{ flex: 1 }} onClick={() => ui.set({ leftTab: 'parts' })}>
             Parts
           </button>
-          <button role="tab" aria-pressed={ui.leftTab === 'layers'} aria-selected={ui.leftTab === 'layers'} style={{ flex: 1 }} onClick={() => ui.set({ leftTab: 'layers' })} data-testid="layers-tab">
+          <button role="tab" aria-selected={ui.leftTab === 'layers'} style={{ flex: 1 }} onClick={() => ui.set({ leftTab: 'layers' })} data-testid="layers-tab">
             Layers ({doc.layers.length})
           </button>
         </div>
@@ -161,7 +163,7 @@ export function LeftPanel() {
               {comps.map((c) => {
                 const f = resolveFill(doc, c.id, inView.has(c.id) ? ui.view : ui.view === 'front' ? 'back' : 'front', ui.colorwayId);
                 return (
-                  <button key={c.id} className="part-row" aria-selected={selComp === c.id} onClick={() => ui.selectComponent(c.id)} data-testid={`part-${c.id}`}>
+                  <button key={c.id} className="part-row" aria-pressed={selComp === c.id} onClick={() => ui.selectComponent(c.id)} data-testid={`part-${c.id}`}>
                     <span className="swatch" style={{ background: f.hex }} />
                     <span style={{ flex: 1 }}>{c.name}</span>
                     {!inView.has(c.id) && <span className="badge" title="Not visible in this view">{ui.view === 'front' ? 'back' : 'front'}</span>}
@@ -176,36 +178,12 @@ export function LeftPanel() {
         <div className="section">
           <div className="section-title">Layers (top first)</div>
           {doc.layers.length === 0 && <p className="hint">No layers.</p>}
-          {[...doc.layers].reverse().map((l) => {
-            const idx = doc.layers.indexOf(l);
-            return (
-              <div key={l.id} className="layer-row" aria-selected={ui.selectedLayerId === l.id} onClick={() => ui.selectLayer(l.id)} data-testid="layer-row" data-layer-type={l.type}>
-                <span aria-hidden style={{ width: 16, textAlign: 'center', color: 'var(--ink-3)' }}>
-                  {LAYER_ICON[l.type]}
-                </span>
-                <span className="name" title={`${layerTypeLabel(l.type)} · ${l.view === 'all' ? 'all views' : l.view}`} onDoubleClick={() => {
-                  const n = prompt('Rename layer', l.name);
-                  if (n && n.trim()) update((d) => { const x = d.layers.find((y) => y.id === l.id); if (x) x.name = n.trim().slice(0, 120); });
-                }}>
-                  {l.name}
-                  {l.view !== 'all' && <span className="small muted"> · {l.view}</span>}
-                </span>
-                <button className="ico" aria-label={l.visible ? 'Hide layer' : 'Show layer'} title={l.visible ? 'Hide' : 'Show'} onClick={(e) => { e.stopPropagation(); update((d) => { const x = d.layers.find((y) => y.id === l.id); if (x) x.visible = !x.visible; }); }}>
-                  <Icon name={l.visible ? 'eye' : 'eyeOff'} size={14} />
-                </button>
-                <button className="ico" aria-label={l.locked ? 'Unlock layer' : 'Lock layer'} title={l.locked ? 'Unlock' : 'Lock'} onClick={(e) => { e.stopPropagation(); update((d) => { const x = d.layers.find((y) => y.id === l.id); if (x) x.locked = !x.locked; }); }}>
-                  <Icon name={l.locked ? 'lock' : 'unlock'} size={14} />
-                </button>
-                <button className="ico" aria-label="Move layer up" title="Bring forward" disabled={idx === doc.layers.length - 1} onClick={(e) => { e.stopPropagation(); move(l.id, 1); }}>
-                  <Icon name="up" size={14} />
-                </button>
-                <button className="ico" aria-label="Move layer down" title="Send backward" disabled={idx === 0} onClick={(e) => { e.stopPropagation(); move(l.id, -1); }}>
-                  <Icon name="down" size={14} />
-                </button>
-              </div>
-            );
-          })}
-          <p className="hint" style={{ marginTop: 8 }}>Double-click a name to rename. Panel colors always sit under decorations of the same part.</p>
+          <ul role="list" aria-label="Layers" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {[...doc.layers].reverse().map((l) => (
+              <LayerRow key={l.id} layer={l} index={doc.layers.indexOf(l)} count={doc.layers.length} onMove={move} />
+            ))}
+          </ul>
+          <p className="hint" style={{ marginTop: 8 }}>Rename with the pencil button, a double-click, or F2. Panel colors always sit under decorations of the same part.</p>
         </div>
       )}
 
@@ -254,6 +232,86 @@ export function LeftPanel() {
         </Modal>
       )}
     </aside>
+  );
+}
+
+function LayerRow({ layer: l, index, count, onMove }: { layer: Layer; index: number; count: number; onMove: (id: string, dir: -1 | 1) => void }) {
+  const update = useProject((s) => s.update);
+  const ui = useUi();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(l.name);
+  const selected = ui.selectedLayerId === l.id;
+  const set = (fn: (x: Draft<Layer>) => void) =>
+    update((d) => {
+      const x = d.layers.find((y) => y.id === l.id);
+      if (x) fn(x);
+    });
+  const startEdit = () => {
+    setDraft(l.name);
+    setEditing(true);
+  };
+  const commit = () => {
+    const n = draft.trim().slice(0, 120);
+    if (n && n !== l.name) set((x) => void (x.name = n));
+    setEditing(false);
+  };
+  const where = l.view === 'all' ? 'all views' : `${l.view} view`;
+  return (
+    <li className="layer-row" data-selected={selected} data-testid="layer-row" data-layer-type={l.type} data-layer-id={l.id}>
+      <span aria-hidden style={{ width: 16, textAlign: 'center', color: 'var(--ink-3)' }}>
+        {LAYER_ICON[l.type]}
+      </span>
+      {editing ? (
+        <input
+          className="input sm"
+          style={{ flex: 1, minWidth: 0 }}
+          autoFocus
+          value={draft}
+          aria-label={`New name for layer ${l.name}`}
+          data-testid="layer-rename-input"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+        />
+      ) : (
+        <button
+          className="name"
+          style={{ border: 0, background: 'none', textAlign: 'left', cursor: 'pointer', padding: 0, font: 'inherit', color: 'inherit' }}
+          aria-pressed={selected}
+          aria-label={`${l.name}, ${layerTypeLabel(l.type)}, ${where}${l.visible ? '' : ', hidden'}${l.locked ? ', locked' : ''}`}
+          title={`${layerTypeLabel(l.type)} · ${where}`}
+          onClick={() => ui.selectLayer(l.id)}
+          onDoubleClick={startEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'F2') {
+              e.preventDefault();
+              startEdit();
+            }
+          }}
+        >
+          {l.name}
+          {l.view !== 'all' && <span className="small muted"> · {l.view}</span>}
+        </button>
+      )}
+      <button className="ico" aria-label={`Rename layer ${l.name}`} title="Rename" data-testid="layer-rename" onClick={startEdit}>
+        ✎
+      </button>
+      <button className="ico" aria-label={`${l.visible ? 'Hide' : 'Show'} layer ${l.name}`} title={l.visible ? 'Hide' : 'Show'} onClick={() => set((x) => void (x.visible = !x.visible))}>
+        <Icon name={l.visible ? 'eye' : 'eyeOff'} size={14} />
+      </button>
+      <button className="ico" aria-label={`${l.locked ? 'Unlock' : 'Lock'} layer ${l.name}`} title={l.locked ? 'Unlock' : 'Lock'} onClick={() => set((x) => void (x.locked = !x.locked))}>
+        <Icon name={l.locked ? 'lock' : 'unlock'} size={14} />
+      </button>
+      <button className="ico" aria-label={`Bring layer ${l.name} forward`} title="Bring forward" disabled={index === count - 1} onClick={() => onMove(l.id, 1)}>
+        <Icon name="up" size={14} />
+      </button>
+      <button className="ico" aria-label={`Send layer ${l.name} backward`} title="Send backward" disabled={index === 0} onClick={() => onMove(l.id, -1)}>
+        <Icon name="down" size={14} />
+      </button>
+    </li>
   );
 }
 

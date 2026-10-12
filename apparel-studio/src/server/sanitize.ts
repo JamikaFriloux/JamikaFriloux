@@ -74,7 +74,11 @@ export function sanitizeSvg(input: Buffer): SanitizedSvg {
     ADD_ATTR: ['xlink:href', 'href', 'viewBox', 'preserveAspectRatio'],
     RETURN_DOM: true,
   }) as unknown as HTMLElement;
-  const removed = DOMPurify.removed.length;
+  // DOMPurify reports its own HTML wrapper elements as "removed"; only count real SVG content.
+  const removed = DOMPurify.removed.filter((r) => {
+    const el = (r as { element?: Element }).element;
+    return !(el && ['BODY', 'HTML', 'HEAD'].includes(el.nodeName));
+  }).length;
   const svgEl = clean.querySelector('svg');
   if (!svgEl) throw new UploadError('No usable SVG content remained after removing unsafe parts.');
 

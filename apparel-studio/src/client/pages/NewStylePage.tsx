@@ -50,7 +50,7 @@ export function NewStylePage() {
             {templates.map((t) => {
               const doc = previews[t.id];
               return (
-                <button type="button" key={t.id} className="card garment-card" aria-pressed={t.id === templateId} role="radio" aria-checked={t.id === templateId} onClick={() => setTemplateId(t.id)} data-testid={`garment-${t.id}`}>
+                <button type="button" key={t.id} className="card garment-card" role="radio" aria-checked={t.id === templateId} onClick={() => setTemplateId(t.id)} data-testid={`garment-${t.id}`}>
                   <div className="row">
                     <h3 style={{ flex: 1 }}>{t.name}</h3>
                     {t.ghost ? (

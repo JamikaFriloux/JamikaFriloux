@@ -37,6 +37,7 @@ export function LengthInput({
   const [text, setText] = useState(shown);
   const [editing, setEditing] = useState(false);
   const [invalid, setInvalid] = useState(false);
+  const [typed, setTyped] = useState(false);
   useEffect(() => {
     if (!editing) {
       setText(shown);
@@ -54,7 +55,9 @@ export function LengthInput({
       }
       return;
     }
-    if (text === shown) return;
+    // Re-typing a template default's value is a deliberate entry; otherwise unchanged text is a no-op.
+    if (text === shown && !(isDefault && typed)) return;
+    setTyped(false);
     const v = parseLength(text, unit);
     if (v === null || (min !== undefined && v < min)) {
       setInvalid(true);
@@ -72,8 +75,15 @@ export function LengthInput({
       aria-invalid={invalid || undefined}
       title={invalid ? `Enter a number in ${unit}${unit === 'in' ? ' (e.g. 12.5 or 12 1/2)' : ''}` : isDefault ? 'Template default — not confirmed' : undefined}
       placeholder={placeholder ?? (allowEmpty ? '—' : '')}
-      onFocus={() => setEditing(true)}
-      onChange={(e) => setText(e.target.value)}
+      onFocus={() => {
+        setEditing(true);
+        setTyped(false);
+      }}
+      onChange={(e) => {
+        setText(e.target.value);
+        setTyped(true);
+      }}
+      onInput={() => setTyped(true)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();

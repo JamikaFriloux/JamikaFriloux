@@ -60,8 +60,8 @@ provides (`ghostViewAssetsSchema`):
 | `shadow` | grayscale image, white = no change | Multiplied over the garment (folds, creases, hem roll). |
 | `highlight` | grayscale image on black | Screen-blended (crests, shoulder/chest light). |
 | `displacement` | grayscale, mid-gray = none | Its gradient displaces printed/embroidered artwork so graphics bend with folds. |
-| `occlusion` | optional mask | Reserved for photographic sets; procedural sets derive occlusion from the z-ordered panel id-map. |
-| `foregroundComponents` | component ids | Parts that sit in front (hood, pocket, rib). |
+| `occlusion` | optional mask | **Currently not read by the renderer.** Occlusion comes from the z-ordered panel id-map. |
+| `foregroundComponents` | component ids | **Currently not read by the renderer** (documentation only). |
 
 Generated at render time from template geometry (so they always match): **neutral garment base / panel
 masks** (panel id-map rasterised from `views[].panels` in `z` order), **edge occlusion** (blurred
@@ -74,6 +74,9 @@ texture, edge light) → seams & stitching → edge occlusion, inner shadow, sha
 embellishments & hardware with contact shadows and glints → studio backdrop.
 
 ### Current asset quality: `procedural-v1`
+
+For sourcing photographic or rendered assets (licensing, PSD conversion, exact file list), see
+`ASSET_ACQUISITION_BRIEF.md`.
 
 V1 assets are **hand-authored vector folds** defined in `scripts/ghost/specs.ts` in *technical*
 coordinates, warped and rasterised by `npm run build:ghost` into `public/ghost/<template>-v<version>/` and a

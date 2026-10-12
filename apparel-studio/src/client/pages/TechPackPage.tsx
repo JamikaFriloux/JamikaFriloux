@@ -123,7 +123,7 @@ export function TechPackPage() {
           <h1>Tech Pack</h1>
           <span className="hint">Generated from this style’s saved design — nothing to re-enter.</span>
         </div>
-        <div className="split" style={{ gridTemplateColumns: 'minmax(360px, 1fr) 1.2fr' }}>
+        <div className="split" style={{ gridTemplateColumns: 'minmax(360px, 1fr) minmax(0, 1.2fr)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <section className="card" aria-labelledby="checks-h">
               <div className="section">
@@ -354,7 +354,7 @@ export function TechPackPage() {
                   <div className="grid2">
                     <div className="field">
                       <span className="label">Type</span>
-                      <select className="input" value={l.type} onChange={(e) => setLabel(l.id, { type: e.target.value as LabelItem['type'] })}>
+                      <select aria-label="Label or packaging type" className="input" value={l.type} onChange={(e) => setLabel(l.id, { type: e.target.value as LabelItem['type'] })}>
                         {LABEL_TYPES.map((t) => (
                           <option key={t} value={t}>
                             {t.replace(/-/g, ' ')}
@@ -374,7 +374,7 @@ export function TechPackPage() {
                   <div className="grid2">
                     <div className="field">
                       <span className="label">Material</span>
-                      <select className="input" value={l.materialId ?? ''} onChange={(e) => setLabel(l.id, { materialId: e.target.value || null })}>
+                      <select aria-label="Label material" className="input" value={l.materialId ?? ''} onChange={(e) => setLabel(l.id, { materialId: e.target.value || null })}>
                         <option value="">—</option>
                         {doc.materials.map((m) => (
                           <option key={m.id} value={m.id}>
@@ -385,7 +385,7 @@ export function TechPackPage() {
                     </div>
                     <div className="field">
                       <span className="label">Artwork file</span>
-                      <select className="input" value={l.assetId ?? ''} onChange={(e) => setLabel(l.id, { assetId: e.target.value || null })}>
+                      <select aria-label="Label artwork file" className="input" value={l.assetId ?? ''} onChange={(e) => setLabel(l.id, { assetId: e.target.value || null })}>
                         <option value="">—</option>
                         {doc.assets.map((a) => (
                           <option key={a.id} value={a.id}>

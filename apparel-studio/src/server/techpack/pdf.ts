@@ -121,10 +121,11 @@ function table(ctx: Ctx, cols: Col[], rows: Cell[][], opts: { fontSize?: number 
   ensure(ctx, 40);
   drawHeader();
   for (const row of rows) {
-    doc.font('Sans').fontSize(fs);
+    // Measure every cell with the font it is drawn in (bold text wraps sooner than regular).
     const heights = row.map((cell, i) => {
       const t = typeof cell === 'string' ? cell : cell.text;
       const sw = typeof cell !== 'string' && cell.swatch ? 12 : 0;
+      doc.font(typeof cell !== 'string' && cell.bold ? 'Sans-Bold' : 'Sans').fontSize(fs);
       return doc.heightOfString(t || ' ', { width: widths[i] - pad * 2 - sw });
     });
     const h = Math.max(...heights, fs) + pad * 2;
@@ -421,7 +422,11 @@ function materialsPage(ctx: Ctx) {
       { text: m.name, bold: true },
       m.kind,
       m.composition || { text: 'MISSING', color: '#b91c1c' },
-      m.weight ? `${m.weight.value} ${m.weight.unit === 'gsm' ? 'g/m²' : 'oz/yd²'}` : { text: 'MISSING', color: '#b91c1c' },
+      m.weight
+        ? `${m.weight.value} ${m.weight.unit === 'gsm' ? 'g/m²' : 'oz/yd²'}`
+        : m.kind === 'fabric' || m.kind === 'rib'
+          ? { text: 'MISSING', color: '#b91c1c' }
+          : 'n/a',
       m.finish || '—',
       [m.supplier, m.supplierRef].filter(Boolean).join(' / ') || '—',
       (usedOn.get(m.id) ?? []).join(', ') || '—',
@@ -432,10 +437,10 @@ function materialsPage(ctx: Ctx) {
   table(
     ctx,
     [
-      { header: 'Category', width: 64 },
-      { header: 'Component', width: 120 },
-      { header: 'Material / trim', width: 140 },
-      { header: 'Description', width: 120 },
+      { header: 'Category', width: 82 },
+      { header: 'Component', width: 116 },
+      { header: 'Material / trim', width: 136 },
+      { header: 'Description', width: 110 },
       { header: 'Qty', width: 40, align: 'right' },
       { header: 'Unit', width: 36 },
       { header: 'Qty type', width: 56 },
@@ -647,9 +652,14 @@ function constructionPage(ctx: Ctx) {
     ensure(ctx, boxH + 30);
     heading(ctx, 'Detail views');
     details.forEach((c, i) => {
+      // Close-up: frame the seam at the box's aspect ratio, capped so long seams (hems) still read as a detail.
       const b = pathBBox(c.d);
-      const size = Math.max(b.width, b.height, 80) + 60;
-      const vb: [number, number, number, number] = [b.x + b.width / 2 - size / 2, b.y + b.height / 2 - size / 2, size, size];
+      const aspect = boxW / boxH;
+      const mid = seamMidpoint(c.d);
+      let w = Math.min(Math.max(b.width, b.height * aspect) + 60, 280);
+      w = Math.max(w, 140);
+      const h = w / aspect;
+      const vb: [number, number, number, number] = [mid.x - w / 2, mid.y - h / 2, w, h];
       const x = LEFT + i * (boxW + 12);
       ctx.doc.rect(x, ctx.y, boxW, boxH).lineWidth(0.5).strokeColor(RULE).stroke();
       svgToPdf(ctx, techSvg(ctx, c.view, { viewBox: vb, decorations: false, embellishments: false, hardware: false, annotations: false }), x + 2, ctx.y + 2, boxW - 4, boxH - 4);

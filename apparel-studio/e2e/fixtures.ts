@@ -68,3 +68,20 @@ export async function createStyle(page: Page, garment: 'tshirt-boxy' | 'hoodie-p
   await page.getByTestId('canvas').waitFor();
   return projectIdFromUrl(page);
 }
+
+/** Convert template (SVG) coordinates on the editor canvas to page coordinates. */
+export async function svgToScreen(page: Page, x: number, y: number): Promise<{ x: number; y: number }> {
+  return page.evaluate(
+    ([sx, sy]) => {
+      const svg = document.querySelector('[data-testid=canvas] svg.stage') as SVGSVGElement;
+      const p = new DOMPoint(sx, sy).matrixTransform(svg.getScreenCTM()!);
+      return { x: p.x, y: p.y };
+    },
+    [x, y],
+  );
+}
+
+export async function clickSvg(page: Page, x: number, y: number) {
+  const p = await svgToScreen(page, x, y);
+  await page.mouse.click(p.x, p.y);
+}

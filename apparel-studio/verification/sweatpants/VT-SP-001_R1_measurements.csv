@@ -1,0 +1,12 @@
+﻿Style number,Revision,POM,Description,How to measure,Tolerance - (cm),Tolerance + (cm),XS (cm),S (cm),M (base) (cm),L (cm),XL (cm),Status,Source
+VT-SP-001,R1,A,Waist relaxed (half),"Across the top edge of the waistband, relaxed.",1.27,1.27,32,34,36,38,40,Confirmed,Entered by user
+VT-SP-001,R1,B,Waist extended (half),"Across the top edge of the waistband, fully stretched. Cannot be read from a drawing — enter from sample or factory spec.",1.27,1.27,46,48,50,52,54,Confirmed,Entered by user
+VT-SP-001,R1,C,"Hip (half), 180 mm below waist top","Straight across, edge to edge, 180 mm below the top of the waistband.",1.27,1.27,49.2,51.2,53.2,55.2,57.2,Confirmed,Entered by user
+VT-SP-001,R1,D,Front rise (incl. waistband),From the crotch seam junction to the top of the waistband at center front.,0.64,0.64,30,31,32,33,34,Confirmed,Entered by user
+VT-SP-001,R1,E,Back rise (incl. waistband),From the crotch seam junction to the top of the waistband at center back.,0.64,0.64,32.8,33.8,34.8,35.8,36.8,Confirmed,Entered by user
+VT-SP-001,R1,F,Inseam,From the crotch seam junction along the inseam to the leg opening.,0.95,0.95,72,72,72,72,72,Confirmed,Entered by user
+VT-SP-001,R1,G,Outseam (incl. waistband),From the top of the waistband along the side seam to the leg opening.,1.27,1.27,102.2,103.2,104.2,105.2,106.2,Confirmed,Entered by user
+VT-SP-001,R1,H,"Thigh (half), 25 mm below crotch",Straight across the leg 25 mm below the crotch seam junction.,0.64,0.64,23.8,24.3,24.8,25.3,25.8,Confirmed,Entered by user
+VT-SP-001,R1,I,Leg opening (half),"Straight across the hem edge, laid flat.",0.64,0.64,19.2,19.7,20.2,20.7,21.2,Confirmed,Entered by user
+VT-SP-001,R1,J,Waistband height,From waistband seam to top edge.,0.32,0.32,5,5,5,5,5,Confirmed,Entered by user
+VT-SP-001,R1,K,"Knee (half), 330 mm below crotch",Straight across the leg 330 mm below the crotch seam junction.,0.64,0.64,21.8,22.3,22.8,23.3,23.8,Confirmed,Entered by user

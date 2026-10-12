@@ -60,9 +60,9 @@ export function MaterialsPage() {
       <div className="page-inner" style={{ maxWidth: 1400 }}>
         <div className="title-row">
           <h1>Materials &amp; Colors</h1>
-          <div className="seg" role="tablist">
+          <div className="seg" role="tablist" aria-label="Materials and colors sections">
             {tabs.map(([k, label]) => (
-              <button key={k} role="tab" aria-pressed={tab === k} aria-selected={tab === k} onClick={() => setTab(k)} data-testid={`mc-tab-${k}`}>
+              <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} data-testid={`mc-tab-${k}`}>
                 {label}
               </button>
             ))}
@@ -224,7 +224,7 @@ export function MaterialsPage() {
                   </div>
                   <div className="field">
                     <span className="label">Type</span>
-                    <select className="input" value={m.kind} onChange={(e) => setMat(m.id, { kind: e.target.value as Material['kind'] })}>
+                    <select aria-label="Material type" className="input" value={m.kind} onChange={(e) => setMat(m.id, { kind: e.target.value as Material['kind'] })}>
                       {['fabric', 'rib', 'trim', 'thread', 'label', 'packaging', 'other'].map((k) => (
                         <option key={k}>{k}</option>
                       ))}
@@ -261,7 +261,7 @@ export function MaterialsPage() {
                   </div>
                   <div className="field">
                     <span className="label">Appearance texture</span>
-                    <select className="input" value={m.textureId ?? ''} onChange={(e) => setMat(m.id, { textureId: e.target.value || null })}>
+                    <select aria-label="Appearance texture" className="input" value={m.textureId ?? ''} onChange={(e) => setMat(m.id, { textureId: e.target.value || null })}>
                       <option value="">None</option>
                       {TEXTURES.map((t) => (
                         <option key={t.id} value={t.id}>
@@ -466,7 +466,7 @@ function BomEditor() {
                   <td>{r.derived ? <span className="badge info">from design</span> : <span className="badge">manual</span>}</td>
                   <td>
                     {manual ? (
-                      <select className="input sm" value={manual.category} onChange={(e) => setManual(manual.id, { category: e.target.value as BomItem['category'] })}>
+                      <select aria-label="BOM category" className="input sm" value={manual.category} onChange={(e) => setManual(manual.id, { category: e.target.value as BomItem['category'] })}>
                         {['fabric', 'trim', 'thread', 'label', 'packaging', 'embellishment', 'hardware', 'other'].map((c) => (
                           <option key={c}>{c}</option>
                         ))}

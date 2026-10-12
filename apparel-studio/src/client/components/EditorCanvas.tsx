@@ -107,12 +107,55 @@ export function EditorCanvas() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         duplicateLayer(layer.id);
-      } else if (e.key.startsWith('Arrow') && (layer.type === 'artwork' || layer.type === 'hardware')) {
-        e.preventDefault();
+      } else if (e.key.startsWith('Arrow')) {
+        // Keyboard move: 1 unit (= 1 mm at nominal scale), Shift = 10.
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        setTransform(layer.id, { ...layer.transform, x: layer.transform.x + dx, y: layer.transform.y + dy }, `nudge-${layer.id}`);
+        if (layer.type === 'artwork' || layer.type === 'hardware') {
+          e.preventDefault();
+          setTransform(layer.id, { ...layer.transform, x: layer.transform.x + dx, y: layer.transform.y + dy }, `nudge-${layer.id}`);
+        } else if (layer.type === 'embellishment' || layer.type === 'annotation') {
+          e.preventDefault();
+          update(
+            (d) => {
+              const l = findLayer(d, layer.id);
+              if (l?.type === 'embellishment') {
+                l.points = l.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+                l.paths.forEach((p) => (p.points = p.points.map((q) => ({ x: q.x + dx, y: q.y + dy }))));
+              } else if (l?.type === 'annotation') {
+                l.x += dx;
+                l.y += dy;
+              }
+            },
+            { coalesce: `nudge-${layer.id}` },
+          );
+        }
+      } else if ((e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') && (layer.type === 'artwork' || layer.type === 'hardware')) {
+        // Keyboard resize about the centre, proportions kept: 2% steps, Shift = 10%.
+        e.preventDefault();
+        const grow = e.key === '+' || e.key === '=';
+        const f = grow ? (e.shiftKey ? 1.1 : 1.02) : e.shiftKey ? 1 / 1.1 : 1 / 1.02;
+        const t = layer.transform;
+        if (t.width * f < 4 || t.height * f < 4) return;
+        if (layer.type === 'hardware') {
+          update(
+            (d) => {
+              const l = findLayer(d, layer.id);
+              if (l?.type !== 'hardware') return;
+              l.transform.width *= f;
+              l.transform.height *= f;
+              l.sizeMm = Math.round(l.sizeMm * f * 10) / 10;
+            },
+            { coalesce: `size-${layer.id}` },
+          );
+        } else setTransform(layer.id, { ...t, width: t.width * f, height: t.height * f }, `size-${layer.id}`);
+      } else if ((e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}') && (layer.type === 'artwork' || layer.type === 'hardware')) {
+        // Keyboard rotate: 1°, Shift = 15°.
+        e.preventDefault();
+        const step = (e.shiftKey ? 15 : 1) * (e.key === ']' || e.key === '}' ? 1 : -1);
+        const r = ((layer.transform.rotation + step + 540) % 360) - 180;
+        setTransform(layer.id, { ...layer.transform, rotation: r }, `rot-${layer.id}`);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -447,10 +490,55 @@ export function EditorCanvas() {
               strokeWidth={1.5 * upp}
               style={{ cursor: 'move' }}
               data-handle="path-point"
-              onPointerDown={(ev) => !e.locked && startHandle(ev, { kind: 'emb-path-point', layerId: e.id, pathIndex: pi, index: i, key: `pp-${Date.now()}` })}
+              aria-label={`Path ${pi + 1} point ${i + 1}`}
+              onPointerDown={(ev) => {
+                if (e.locked) return;
+                if (ev.altKey) {
+                  // Alt+click removes a point (a path keeps at least two).
+                  ev.stopPropagation();
+                  if (path.points.length <= 2) return ui.notify('warn', 'A path needs at least two points. Delete the whole path from the right panel instead.');
+                  return update((d) => {
+                    const l = findLayer(d, e.id);
+                    if (l?.type === 'embellishment') l.paths[pi].points.splice(i, 1);
+                  });
+                }
+                startHandle(ev, { kind: 'emb-path-point', layerId: e.id, pathIndex: pi, index: i, key: `pp-${Date.now()}` });
+              }}
             />,
           ),
         );
+        // Midpoint "+" handles insert a new point into the existing path and start dragging it.
+        if (!e.locked) {
+          path.points.slice(1).forEach((b, i) => {
+            const a = path.points[i];
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            overlays.push(
+              <g
+                key={`ins-${pi}-${i}`}
+                data-handle="path-insert"
+                data-testid="path-insert"
+                role="button"
+                aria-label={`Insert point between path ${pi + 1} points ${i + 1} and ${i + 2}`}
+                style={{ cursor: 'copy' }}
+                onPointerDown={(ev) => {
+                  const key = `ins-${Date.now()}`;
+                  update(
+                    (d) => {
+                      const l = findLayer(d, e.id);
+                      if (l?.type === 'embellishment') l.paths[pi].points.splice(i + 1, 0, { x: mx, y: my });
+                    },
+                    { coalesce: key },
+                  );
+                  startHandle(ev, { kind: 'emb-path-point', layerId: e.id, pathIndex: pi, index: i + 1, key });
+                }}
+              >
+                <circle cx={mx} cy={my} r={handleR * 0.75} fill="#2563eb" fillOpacity={0.85} stroke="#fff" strokeWidth={1.2 * upp} />
+                <path d={`M${mx - handleR * 0.4},${my} H${mx + handleR * 0.4} M${mx},${my - handleR * 0.4} V${my + handleR * 0.4}`} stroke="#fff" strokeWidth={1.4 * upp} />
+              </g>,
+            );
+          });
+        }
       });
       if (!e.points.length && !e.paths.length) {
         overlays.push(
@@ -516,6 +604,9 @@ export function EditorCanvas() {
       style={{ cursor: spaceDown || ui.tool.kind === 'pan' ? 'grab' : ui.tool.kind === 'select' ? 'default' : 'crosshair' }}
       data-testid="canvas"
       data-view={ui.view}
+      tabIndex={0}
+      role="region"
+      aria-label={`Design canvas, ${ui.view} view. Select parts and layers with the mouse or from the Parts and Layers lists; move or resize the selected item with the keyboard (arrows, + and −, [ and ]).`}
     >
       <TechView
         template={template}

@@ -156,3 +156,24 @@ describe('export validation', () => {
     expect(v.failedRequired.some((c) => c.id.startsWith('artwork.dimensions'))).toBe(true);
   });
 });
+
+describe('colorways', () => {
+  it('substitutes colors and materials explicitly per colorway and reflects them in the BOM', () => {
+    const doc = fresh();
+    const white = doc.colors[0];
+    const black = { id: newId('col'), name: 'Black', hex: '#111111', standard: null, approval: 'not-submitted' as const };
+    doc.colors.push(black);
+    const recycled = { ...doc.materials[0], id: newId('mat'), name: 'Recycled jersey' };
+    doc.materials.push(recycled);
+    doc.colorways.push({ id: 'cw_black', name: 'Black', code: 'BLK', colorSubs: { [white.id]: black.id }, materialSubs: { [doc.materials[0].id]: recycled.id }, notes: '' });
+    const base = doc.colorways[0].id;
+    expect(resolveFill(doc, 'body_front', 'front', base).hex).toBe(white.hex);
+    expect(resolveFill(doc, 'body_front', 'front', 'cw_black').hex).toBe('#111111');
+    expect(resolveFill(doc, 'body_front', 'front', 'cw_black').material?.name).toBe('Recycled jersey');
+    // The base design itself is unchanged by the colorway.
+    expect(fillOf(doc, 'body_front').colorId).toBe(white.id);
+    const rows = computeBom(doc, tee);
+    expect(rows.find((r) => r.materialId === recycled.id)!.colorwayIds).toEqual(['cw_black']);
+    expect(rows.find((r) => r.materialId === doc.materials[0].id)!.colorwayIds).toEqual([base]);
+  });
+});
