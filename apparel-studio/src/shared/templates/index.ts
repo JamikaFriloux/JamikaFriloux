@@ -20,6 +20,11 @@ export function listTemplates(): GarmentTemplate[] {
   return [...latest.values()];
 }
 
+/** Every installed version (including superseded ones still referenced by older projects). */
+export function allTemplateVersions(): GarmentTemplate[] {
+  return [...REGISTRY];
+}
+
 export function getTemplate(id: string, version: number): GarmentTemplate | undefined {
   return REGISTRY.find((t) => t.id === id && t.version === version);
 }

@@ -88,3 +88,17 @@ describe('garment library', () => {
     expect(hoodie.components.some((c) => /zip/.test(c.id))).toBe(false);
   });
 });
+
+describe('template immutability', () => {
+  it('published template versions match their locked content hash', async () => {
+    const crypto = await import('node:crypto');
+    const lock = (await import('../src/shared/templates/published-lock.json')).default as Record<string, string>;
+    const { allTemplateVersions } = await import('../src/shared/templates');
+    for (const t of allTemplateVersions()) {
+      const key = `${t.id}@${t.version}`;
+      expect(lock[key], `${key} is not locked — run scripts/lock-templates.ts when publishing`).toBeTruthy();
+      const hash = crypto.createHash('sha256').update(JSON.stringify(t)).digest('hex');
+      expect(hash, `${key} changed after publishing; create version ${t.version + 1} instead`).toBe(lock[key]);
+    }
+  });
+});

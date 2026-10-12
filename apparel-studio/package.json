@@ -11,7 +11,10 @@
     "seed": "tsx src/server/seed.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:ghost": "tsx scripts/build-ghost-assets.ts",
+    "lock:templates": "tsx scripts/lock-templates.ts",
+    "sample:techpack": "tsx scripts/sample-techpack.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
