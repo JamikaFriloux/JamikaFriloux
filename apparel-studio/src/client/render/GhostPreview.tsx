@@ -53,7 +53,7 @@ export function GhostPreview() {
   }
   return (
     <div className="canvas" style={{ display: 'grid', placeItems: 'center', background: '#e9e9e6' }} data-testid="ghost-preview" data-rendered-at={renderedAt}>
-      <canvas ref={ref} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} aria-label={`Realistic ${ui.view} mockup`} role="img" data-testid="ghost-canvas" />
+      <canvas ref={ref} style={{ position: 'absolute', inset: 0, margin: 'auto', maxWidth: 'calc(100% - 24px)', maxHeight: 'calc(100% - 24px)' }} aria-label={`Realistic ${ui.view} mockup`} role="img" data-testid="ghost-canvas" />
       <div className="canvas-badge row">
         {state === 'rendering' && <span className="badge info">Rendering…</span>}
         <span className="badge" title={template.ghost.notes}>

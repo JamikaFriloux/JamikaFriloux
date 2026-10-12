@@ -222,3 +222,22 @@ export function offsetPath(d: string, dist: number, steps = 12): string {
   }
   return 'M' + out.map((p) => `${Math.round(p[0] * 100) / 100},${Math.round(p[1] * 100) / 100}`).join(' L');
 }
+
+/** Circle as four cubic béziers (absolute commands only). */
+export function circlePath(cx: number, cy: number, r: number): string {
+  const k = 0.5523 * r;
+  return `M${cx - r},${cy} C${cx - r},${cy - k} ${cx - k},${cy - r} ${cx},${cy - r} C${cx + k},${cy - r} ${cx + r},${cy - k} ${cx + r},${cy} C${cx + r},${cy + k} ${cx + k},${cy + r} ${cx},${cy + r} C${cx - k},${cy + r} ${cx - r},${cy + k} ${cx - r},${cy} Z`;
+}
+
+/** Evenly spaced straight lines between two edges (for rib detail). */
+export function ribLines(top: [number, number][], bottom: [number, number][], count: number): string {
+  const lerp = (a: [number, number], b: [number, number], t: number): [number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const out: string[] = [];
+  for (let i = 1; i < count; i++) {
+    const t = i / count;
+    const a = lerp(top[0], top[1], t);
+    const b = lerp(bottom[0], bottom[1], t);
+    out.push(`M${Math.round(a[0] * 10) / 10},${Math.round(a[1] * 10) / 10} L${Math.round(b[0] * 10) / 10},${Math.round(b[1] * 10) / 10}`);
+  }
+  return out.join(' ');
+}

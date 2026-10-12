@@ -160,4 +160,150 @@ export const tshirtGhost: GarmentGhostSpec = {
   foregroundComponents: { front: ['neck_rib'], back: ['neck_rib'] },
 };
 
-export const GHOST_SPECS: GarmentGhostSpec[] = [tshirtGhost];
+/* ------------------------------------------------------------------ */
+/* Pullover hoodie                                                     */
+/* ------------------------------------------------------------------ */
+
+const hoodieShadows: Stroke[] = [
+  // Underarm drag and sleeve inner shadow.
+  { pts: [[204, 690], [250, 730], [300, 760]], width: 16, strength: 0.26, blur: 10 },
+  { pts: [[196, 700], [120, 770], [20, 850]], width: 30, strength: 0.28, blur: 14 },
+  // Elbow creases (fleece bunches toward the cuff).
+  { pts: [[60, 720], [20, 740]], width: 12, strength: 0.22, blur: 6 },
+  { pts: [[0, 790], [-50, 800]], width: 10, strength: 0.2, blur: 6 },
+  { pts: [[-70, 830], [-110, 838]], width: 9, strength: 0.18, blur: 5 },
+  // Body side drape and blouson over the hem band.
+  { pts: [[226, 700], [240, 820], [230, 960]], width: 30, strength: 0.14, blur: 18 },
+  { pts: [[260, 960], [500, 966], [740, 960]], width: 14, strength: 0.22, blur: 7 },
+  // Armhole valley.
+  { pts: [[205, 392], [203, 540], [201, 680]], width: 10, strength: 0.18, blur: 6 },
+];
+const hoodieHighlights: Stroke[] = [
+  { pts: [[398, 346], [300, 368], [210, 388]], width: 18, strength: 0.24, blur: 10 },
+  { pts: [[200, 392], [100, 520], [-110, 790]], width: 18, strength: 0.18, blur: 10 },
+  { pts: [[290, 950], [500, 956], [710, 950]], width: 10, strength: 0.14, blur: 6 },
+];
+
+export const hoodieGhost: GarmentGhostSpec = {
+  templateId: 'hoodie-pullover',
+  version: 1,
+  mockup: { width: 1000, height: 820, scale: 0.68, offsetX: 160, offsetY: 6 },
+  techBounds: [-200, 30, 1400, 1060],
+  mesh: { cols: 25, rows: 20 },
+  warp: (x, y) => {
+    let X = x;
+    let Y = y;
+    // Sleeves relax inward toward the body (ghost mannequin arms hang).
+    if (x < 205) {
+      const w = smooth(0, 120, 205 - x) * smooth(380, 520, y);
+      [X, Y] = rotateAbout(X, Y, 205, 385, -0.08 * w);
+    } else if (x > 795) {
+      const w = smooth(0, 120, x - 795) * smooth(380, 520, y);
+      [X, Y] = rotateAbout(X, Y, 795, 385, 0.08 * w);
+    }
+    // Blouson: body billows slightly above the hem band.
+    const bx = Math.min(1, Math.abs(x - 500) / 300);
+    if (x > 200 && x < 800) X += (x < 500 ? -1 : 1) * 8 * smooth(700, 940, y) * smooth(1000, 950, y) * smooth(150, 290, Math.abs(x - 500));
+    Y += 10 * (1 - bx * bx) * smooth(800, 1040, y);
+    // Hood stands with volume: widen slightly at the crown.
+    if (y < 340) X += (x - 500) * 0.05 * smooth(340, 120, y);
+    return [X, Y];
+  },
+  views: {
+    front: {
+      shadows: [
+        ...both(hoodieShadows),
+        // Hood interior depth (drawn inside the opening; masked to the garment).
+        { pts: [[430, 150], [420, 250], [450, 340]], width: 40, strength: 0.25, blur: 20 },
+        { pts: [[570, 150], [580, 250], [550, 340]], width: 40, strength: 0.25, blur: 20 },
+        // Hood edge rolls onto the shoulders.
+        { pts: [[390, 330], [440, 370], [500, 384]], width: 12, strength: 0.25, blur: 7 },
+        { pts: [[610, 330], [560, 370], [500, 384]], width: 12, strength: 0.25, blur: 7 },
+        // Pocket lip shadow.
+        { pts: [[283, 910], [312, 850], [362, 748]], width: 10, strength: 0.3, blur: 6 },
+        { pts: [[717, 910], [688, 850], [638, 748]], width: 10, strength: 0.3, blur: 6 },
+        { pts: [[272, 958], [500, 960], [728, 958]], width: 8, strength: 0.2, blur: 5 },
+      ],
+      shadowBlobs: bothBlobs([{ cx: 228, cy: 820, rx: 40, ry: 150, strength: 0.14 }]),
+      highlights: [
+        ...both(hoodieHighlights),
+        { pts: [[360, 110], [420, 70], [500, 60]], width: 22, strength: 0.18, blur: 14 },
+        { pts: [[640, 110], [580, 70], [500, 60]], width: 22, strength: 0.18, blur: 14 },
+      ],
+      highlightBlobs: [{ cx: 500, cy: 520, rx: 200, ry: 150, strength: 0.14 }],
+      displacement: both([{ pts: [[204, 690], [250, 730], [300, 760]], width: 18, strength: 0.6, blur: 10 }]),
+    },
+    back: {
+      shadows: [
+        ...both(hoodieShadows),
+        { pts: [[500, 80], [500, 200], [500, 340]], width: 20, strength: 0.14, blur: 10 },
+        { pts: [[380, 340], [440, 362], [500, 368], [560, 362], [620, 340]], width: 30, strength: 0.3, blur: 14 },
+      ],
+      shadowBlobs: bothBlobs([{ cx: 228, cy: 820, rx: 40, ry: 150, strength: 0.14 }]),
+      highlights: [...both(hoodieHighlights), ...both([{ pts: [[380, 120], [400, 220], [440, 300]], width: 30, strength: 0.14, blur: 18 }])],
+      highlightBlobs: bothBlobs([{ cx: 380, cy: 480, rx: 110, ry: 90, strength: 0.12 }]),
+      displacement: both([{ pts: [[226, 700], [240, 820], [230, 960]], width: 30, strength: 0.4, blur: 18 }]),
+    },
+  },
+  foregroundComponents: { front: ['hood', 'drawcord', 'kangaroo_pocket'], back: ['hood'] },
+};
+
+/* ------------------------------------------------------------------ */
+/* Straight-leg sweatpants                                             */
+/* ------------------------------------------------------------------ */
+
+const pantsShadows: Stroke[] = [
+  // Crotch/inseam drag and knee folds.
+  { pts: [[486, 368], [440, 420], [400, 460]], width: 16, strength: 0.24, blur: 9 },
+  { pts: [[470, 650], [400, 680], [330, 700]], width: 12, strength: 0.09, blur: 10 },
+  { pts: [[466, 760], [380, 790], [300, 805]], width: 10, strength: 0.07, blur: 9 },
+  // Stacking above the hem.
+  { pts: [[262, 960], [360, 975], [460, 962]], width: 10, strength: 0.18, blur: 7 },
+  { pts: [[262, 1010], [360, 1020], [462, 1008]], width: 8, strength: 0.14, blur: 6 },
+  // Side seam valley and waistband gather shadow.
+  { pts: [[240, 300], [250, 700], [260, 1070]], width: 18, strength: 0.14, blur: 12 },
+  { pts: [[318, 96], [500, 100], [682, 96]], width: 10, strength: 0.28, blur: 6 },
+  // Center crease side shadow.
+  { pts: [[372, 420], [372, 1040]], width: 14, strength: 0.07, blur: 10 },
+];
+const pantsHighlights: Stroke[] = [
+  { pts: [[356, 420], [356, 1040]], width: 10, strength: 0.14, blur: 7 },
+  { pts: [[262, 300], [300, 200], [330, 120]], width: 26, strength: 0.14, blur: 16 },
+  { pts: [[330, 50], [500, 48], [670, 50]], width: 10, strength: 0.16, blur: 6 },
+];
+
+export const pantsGhost: GarmentGhostSpec = {
+  templateId: 'sweatpants-straight',
+  version: 1,
+  mockup: { width: 760, height: 1000, scale: 0.86, offsetX: -59, offsetY: 18 },
+  techBounds: [150, 10, 700, 1110],
+  mesh: { cols: 14, rows: 26 },
+  warp: (x, y) => {
+    let X = x;
+    const Y = y;
+    // Legs taper a touch toward the hem as fabric falls; seat volume in the hip.
+    const side = x < 500 ? -1 : 1;
+    X += side * 6 * smooth(120, 300, y) * smooth(420, 300, y);
+    X -= side * 6 * smooth(600, 1080, y) * smooth(80, 240, Math.abs(x - 500));
+    return [X, Y];
+  },
+  views: {
+    front: {
+      shadows: [...both(pantsShadows), { pts: [[500, 100], [500, 300], [490, 360]], width: 10, strength: 0.16, blur: 6 }],
+      shadowBlobs: [],
+      highlights: both(pantsHighlights),
+      highlightBlobs: bothBlobs([{ cx: 370, cy: 330, rx: 90, ry: 120, strength: 0.1 }]),
+      displacement: both([{ pts: [[470, 650], [400, 680], [330, 700]], width: 16, strength: 0.5, blur: 9 }]),
+    },
+    back: {
+      shadows: [...both(pantsShadows), { pts: [[500, 100], [500, 320], [482, 390]], width: 14, strength: 0.2, blur: 8 }],
+      shadowBlobs: bothBlobs([{ cx: 400, cy: 380, rx: 100, ry: 40, strength: 0.14 }]),
+      highlights: both(pantsHighlights),
+      highlightBlobs: bothBlobs([{ cx: 380, cy: 250, rx: 110, ry: 110, strength: 0.14 }]),
+      displacement: both([{ pts: [[470, 650], [400, 680], [330, 700]], width: 16, strength: 0.5, blur: 9 }]),
+    },
+  },
+  foregroundComponents: { front: ['waistband', 'drawcord'], back: ['waistband', 'back_pocket'] },
+};
+
+export const GHOST_SPECS: GarmentGhostSpec[] = [tshirtGhost, hoodieGhost, pantsGhost];

@@ -5,7 +5,8 @@ import { projectDocSchema, type AssetRef, type ProjectDoc } from '../../shared/s
 import { listTemplates } from '../../shared/templates';
 import { createProjectDoc } from '../../shared/domain/factory';
 import { newId } from '../../shared/domain/ids';
-import { makeArtworkLayer, makeEmbellishmentLayer, makePatternLayer, makeStitchingLayer } from '../../shared/domain/layers';
+import { makeArtworkLayer, makeEmbellishmentLayer, makeHardwareLayer, makePatternLayer, makeStitchingLayer } from '../../shared/domain/layers';
+import type { GarmentTemplate } from '../../shared/schema/template';
 import { applyEnteredPlacement } from '../../shared/domain/placement';
 import { DEMO_BACK_SVG, DEMO_LOGO_SVG, DEMO_TILE_SVG } from './assets';
 
@@ -149,6 +150,68 @@ export async function seedDemo(db: DB, storage: StorageAdapter): Promise<string[
     );
     doc = projectDocSchema.parse(doc);
     save(db, id, doc);
+  }
+
+  // ---- Lounge set: hoodie + sweatpants grouped in one collection, separate specs/tech packs.
+  const setName = 'Sunset Club Lounge Set';
+  const navyHex = '#1b1b2f';
+  const setUp = async (t: GarmentTemplate, name: string, style: string) => {
+    const doc = createProjectDoc(t, { name, styleNumber: style, season: 'FW27', collection: setName });
+    const id = insert(db, doc);
+    ids.push(id);
+    const cream = doc.colors[0];
+    Object.assign(cream, { name: 'Oat cream', hex: '#ece3d2' });
+    const navy = { id: newId('col'), name: 'Midnight navy', hex: navyHex, standard: { system: 'Demo lab dip', code: 'LD-NAVY-01' }, approval: 'submitted' as const };
+    const coral = { id: newId('col'), name: 'Sunset coral', hex: '#ff6f61', standard: null, approval: 'not-submitted' as const };
+    doc.colors.push(navy, coral);
+    for (const m of doc.materials) {
+      if (m.kind === 'fabric') Object.assign(m, { name: '400 g brushed-back fleece', composition: '80% cotton, 20% polyester', weight: { value: 400, unit: 'gsm' }, finish: 'Brushed back, pre-shrunk', supplier: 'Demo Mill Co.', supplierRef: 'DM-F400', textureId: 'fleece' });
+      if (m.kind === 'rib') Object.assign(m, { name: '2x2 cotton rib', composition: '95% cotton, 5% elastane', weight: { value: 320, unit: 'gsm' }, finish: 'Dyed to match', supplier: 'Demo Mill Co.', supplierRef: 'DM-R2x2', textureId: 'rib-2x2' });
+      if (m.kind === 'trim') Object.assign(m, { name: 'Flat cotton drawcord 12 mm', composition: '100% cotton', finish: 'Metal aglets, 25 mm', supplier: 'Demo Trims', supplierRef: 'DT-DC12' });
+    }
+    for (const l of doc.layers) if (l.type === 'panelFill' && ['drawcord', 'cuff_left', 'cuff_right', 'hem_rib', 'waistband'].includes(l.targets[0])) l.colorId = navy.id;
+    doc.colorways.push({ id: newId('cw'), name: 'Navy / oat', code: 'CW02', colorSubs: { [cream.id]: navy.id, [navy.id]: cream.id }, materialSubs: {}, notes: 'Inverted colors.' });
+    const logo = await addSvgAsset(db, storage, id, DEMO_LOGO_SVG, 'sunset-club-logo.svg', 'artwork');
+    doc.assets.push(logo);
+    for (const p of doc.measurements) p.source = 'Template default (unconfirmed)';
+    doc.constructionNotes.push({ id: newId('cn'), title: 'General', text: '4-thread overlock on all joining seams. Coverstitch/twin-needle topstitch where shown.', componentIds: [], seamIds: [] });
+    return { doc, id, navy, cream, coral, logo };
+  };
+
+  const hoodie = templates.find((t) => t.id === 'hoodie-pullover');
+  if (hoodie) {
+    const { doc, id, coral, logo } = await setUp(hoodie, 'Sunset Club Hoodie (demo)', 'SC-HD-001');
+    let chest = makeArtworkLayer(hoodie, logo, { viewId: 'front', anchorId: 'center_chest', widthMm: 170, name: 'Embroidered chest logo' });
+    chest = applyEnteredPlacement(hoodie, chest, { widthMm: 170, offsetYmm: 150, toleranceMm: 5 });
+    chest.decoration = { method: 'embroidery', artworkCode: 'SC-EMB-001', colorIds: [coral.id], notes: 'Flat embroidery, satin fill; 3 thread colors.' };
+    chest.targets = ['body_front'];
+    doc.layers.push(chest);
+    const hood = makeArtworkLayer(hoodie, logo, { viewId: 'back', anchorId: 'hood_back', widthMm: 140, name: 'Hood puff print' });
+    hood.decoration = { method: 'puff-print', artworkCode: '', colorIds: [], notes: '' };
+    doc.layers.push(hood);
+    const stitch = makeStitchingLayer(hoodie, ['hood_center_seam', 'pocket_topstitch'], coral.id);
+    stitch.name = 'Contrast topstitch';
+    stitch.notes = 'Twin-needle 6 mm topstitch in contrast thread, 10 SPI.';
+    doc.layers.push(stitch);
+    const badge = makeHardwareLayer(hoodie, 'metal-badge', 'front', 700, 1005, ['hem_rib']);
+    badge.finish = 'Brushed silver';
+    badge.notes = 'Riveted badge on hem band, wearer’s left.';
+    doc.layers.push(badge);
+    save(db, id, projectDocSchema.parse(doc));
+  }
+
+  const pants = templates.find((t) => t.id === 'sweatpants-straight');
+  if (pants) {
+    const { doc, id, coral, logo } = await setUp(pants, 'Sunset Club Sweatpants (demo)', 'SC-SP-001');
+    let thigh = makeArtworkLayer(pants, logo, { viewId: 'front', anchorId: 'left_thigh', widthMm: 90, name: 'Left thigh logo' });
+    thigh = applyEnteredPlacement(pants, thigh, { widthMm: 90, offsetYmm: 20 });
+    thigh.decoration = { method: 'embroidery', artworkCode: 'SC-EMB-002', colorIds: [coral.id], notes: '' };
+    doc.layers.push(thigh);
+    const studs = makeEmbellishmentLayer('stud', 'front', ['leg_front_left']);
+    studs.name = 'Side stud stripe';
+    studs.paths = [{ id: newId('pth'), points: [{ x: 750, y: 420 }, { x: 734, y: 1000 }], spacingMm: 20 }];
+    doc.layers.push(studs);
+    save(db, id, projectDocSchema.parse(doc));
   }
   return ids;
 }

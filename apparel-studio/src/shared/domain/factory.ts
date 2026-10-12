@@ -63,9 +63,25 @@ export function createProjectDoc(template: GarmentTemplate, input: NewProjectInp
     textureId: 'rib-1x1',
     notes: '',
   };
+  const trim: Material = {
+    id: newId('mat'),
+    name: 'Drawcord (to be specified)',
+    kind: 'trim',
+    composition: '',
+    weight: null,
+    finish: '',
+    supplier: '',
+    supplierRef: '',
+    textureId: 'twill-tape',
+    notes: '',
+  };
   const materials: Material[] = [shell];
   const usesRib = template.components.some((c) => c.materialRole === 'rib');
   if (usesRib) materials.push(rib);
+  const usesTrim = template.components.some((c) => c.materialRole === 'trim');
+  if (usesTrim) materials.push(trim);
+  // Hood/pocket linings default to self fabric (the shell) until specified otherwise.
+  const materialFor = (role: string) => (role === 'rib' ? rib.id : role === 'trim' ? trim.id : shell.id);
 
   const layers: Layer[] = template.components.map((c) => ({
     id: newId('lyr'),
@@ -78,7 +94,7 @@ export function createProjectDoc(template: GarmentTemplate, input: NewProjectInp
     opacity: 1,
     bomItemId: null,
     colorId: white.id,
-    materialId: c.materialRole === 'rib' ? rib.id : shell.id,
+    materialId: materialFor(c.materialRole),
   }));
 
   const base = template.sizes.defaultBase;

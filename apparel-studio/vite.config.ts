@@ -8,7 +8,7 @@ export default defineConfig({
   build: { outDir: 'dist/client' },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:4000' },
+    proxy: { '/api': process.env.API_URL ?? 'http://localhost:4000' },
   },
   test: {
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],

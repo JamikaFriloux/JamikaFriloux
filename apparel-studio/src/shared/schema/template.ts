@@ -57,7 +57,7 @@ export const templateComponentSchema = z.object({
   name: z.string(),
   group: z.enum(['body', 'sleeve', 'hood', 'trim', 'pocket', 'leg', 'waistband', 'cuff']),
   /** Default material role used to propose the initial material. */
-  materialRole: z.enum(['shell', 'rib', 'lining']),
+  materialRole: z.enum(['shell', 'rib', 'lining', 'trim']),
   decorationMethods: z.array(decorationMethodSchema),
 });
 

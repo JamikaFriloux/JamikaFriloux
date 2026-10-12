@@ -90,7 +90,8 @@ export function validateProject(doc: ProjectDoc, template: GarmentTemplate): Val
     add({
       id: `materials.weight.${m.id}`,
       section: 'materials',
-      level: 'required',
+      // Weight is a fabric property; cords, tapes and other trims are specified by composition/notes.
+      level: m.kind === 'fabric' || m.kind === 'rib' ? 'required' : 'recommended',
       passed: m.weight !== null,
       message: m.weight ? `Material “${m.name}” has a fabric weight.` : `Material “${m.name}” needs a fabric weight (g/m² or oz/yd²).`,
       fix: { screen: 'materials', focus: m.id },

@@ -112,9 +112,9 @@ function affine(s: number[][], d: number[][]): [number, number, number, number, 
  * Draw `src` (technical space, `srcScale` px per unit) into `ctx` (mockup space, `outScale` px
  * per mockup unit) through the mesh, triangle by triangle.
  */
-function warp(ctx: CanvasRenderingContext2D, src: CanvasImageSource, mesh: GhostMesh, srcScale: number, outScale: number) {
+function warp(ctx: CanvasRenderingContext2D, src: CanvasImageSource, mesh: GhostMesh, srcScale: number, outScale: number, origin: [number, number]) {
   const [bx, by, bw, bh] = mesh.bounds;
-  const sp = (c: number, r: number) => [(bx + (bw * c) / (mesh.cols - 1)) * srcScale, (by + (bh * r) / (mesh.rows - 1)) * srcScale];
+  const sp = (c: number, r: number) => [(bx - origin[0] + (bw * c) / (mesh.cols - 1)) * srcScale, (by - origin[1] + (bh * r) / (mesh.rows - 1)) * srcScale];
   const dp = (c: number, r: number) => {
     const p = mesh.dst[r * mesh.cols + c];
     return [p[0] * outScale, p[1] * outScale];
@@ -301,7 +301,8 @@ export async function renderGhost(target: HTMLCanvasElement, opts: GhostRenderOp
   const assets: GhostViewAssets | undefined = template.ghost.views[view];
   if (!assets) throw new GhostRenderError(`No ${view} ghost assets for ${template.name}.`);
   const tv = getView(template, view);
-  const [, , vw, vh] = tv.viewBox;
+  const [vx, vy, vw, vh] = tv.viewBox;
+  const origin: [number, number] = [vx, vy];
   const W = assets.width * scale;
   const H = assets.height * scale;
   const outScale = scale;
@@ -379,7 +380,7 @@ export async function renderGhost(target: HTMLCanvasElement, opts: GhostRenderOp
   };
   const toMockup = (img: CanvasImageSource) => {
     const c = canvas(W, H);
-    warp(c.getContext('2d')!, raster(img), assets.mesh, srcScale, outScale);
+    warp(c.getContext('2d')!, raster(img), assets.mesh, srcScale, outScale, origin);
     return c;
   };
 
@@ -400,7 +401,7 @@ export async function renderGhost(target: HTMLCanvasElement, opts: GhostRenderOp
   {
     const ic = idWarped.getContext('2d')!;
     ic.imageSmoothingEnabled = false;
-    warp(ic, raster(idImg, false), assets.mesh, srcScale, outScale);
+    warp(ic, raster(idImg, false), assets.mesh, srcScale, outScale, origin);
   }
   const idData = idWarped.getContext('2d')!.getImageData(0, 0, W, H).data;
   const compMask = (pred: (idx: number, inner: boolean) => boolean) => {
