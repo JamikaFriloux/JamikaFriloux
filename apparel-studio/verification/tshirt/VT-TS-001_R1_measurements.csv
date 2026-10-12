@@ -1,0 +1,13 @@
+﻿Style number,Revision,POM,Description,How to measure,Tolerance - (cm),Tolerance + (cm),XS (cm),S (cm),M (base) (cm),L (cm),XL (cm),Status,Source
+VT-TS-001,R1,A,Body length from HPS,"From high point shoulder (where shoulder seam meets neck rib) straight down to the bottom edge of the hem, garment laid flat.",1.27,1.27,68,69,70,71.5,73,Confirmed,Entered by user
+VT-TS-001,R1,B,"Chest width (1"" below armhole)","Straight across the front, edge to edge, 25 mm below the underarm point.",1.27,1.27,55.2,57.2,59.2,61.2,63.2,Confirmed,Entered by user
+VT-TS-001,R1,C,Sweep (bottom width),"Straight across the bottom edge of the hem, edge to edge, relaxed.",1.27,1.27,55.2,57.2,59.2,61.2,63.2,Confirmed,Entered by user
+VT-TS-001,R1,D,Across shoulder,From shoulder point to shoulder point (where shoulder seam meets armhole seam).,0.95,0.95,53.6,55.6,57.6,59.6,61.6,Confirmed,Entered by user
+VT-TS-001,R1,E,Sleeve length from shoulder point,Along the top fold of the sleeve from shoulder point to sleeve hem edge.,0.64,0.64,20.9,21.3,21.7,22.1,22.5,Confirmed,Entered by user
+VT-TS-001,R1,F,Sleeve opening (half),"Straight across the sleeve hem edge, laid flat.",0.64,0.64,17.1,17.6,18.1,18.6,19.1,Confirmed,Entered by user
+VT-TS-001,R1,G,Armhole (straight),Straight line from shoulder point to underarm point along the armhole seam.,0.64,0.64,22.2,22.7,23.2,23.7,24.2,Confirmed,Entered by user
+VT-TS-001,R1,H,Neck width (seam to seam),Straight across from high point shoulder to high point shoulder at the neck seam.,0.64,0.64,18.4,18.7,19,19.3,19.6,Confirmed,Entered by user
+VT-TS-001,R1,I,Front neck drop,From an imaginary line between both HPS down to the center front neck seam.,0.32,0.32,10.6,10.8,11,11.2,11.4,Confirmed,Entered by user
+VT-TS-001,R1,J,Back neck drop,From an imaginary line between both HPS down to the center back neck seam.,0.32,0.32,1.8,1.8,1.8,1.8,1.8,Confirmed,Entered by user
+VT-TS-001,R1,K,Neck rib height,"Rib width at center front, from seam to finished edge.",0.16,0.16,2.2,2.2,2.2,2.2,2.2,Confirmed,Entered by user
+VT-TS-001,R1,L,Bicep (half),From the underarm point perpendicular to the top sleeve fold.,0.64,0.64,17.46,18.1,18.57,19.05,19.69,Confirmed,Entered by user
