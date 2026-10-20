@@ -1,0 +1,1595 @@
+//@version=6
+indicator("MEKA ALPHA PRO — Day Trader Signal Suite", shorttitle="MEKA ALPHA PRO", overlay=true, max_labels_count=200, max_lines_count=200, max_boxes_count=200, max_bars_back=5000)
+
+// =============================================================================================
+// MEKA ALPHA PRO — v3
+// Confluence-based intraday trade assistant. HARD GATES -> VALID SETUP -> QUALITY SCORE -> SIGNAL.
+// All decisions confirm only on closed bars. HTF values used for decisions are CONFIRMED HTF
+// bars only (expression[1] + lookahead_on trick — never the live/forming HTF candle).
+// Same-bar stop-vs-target ambiguity: OHLC alone cannot prove intrabar sequencing, so this script
+// always assumes the WORST CASE (invalidation checked before targets) on every bar. This is a
+// documented assumption, not a claim of true intrabar knowledge.
+// =============================================================================================
+
+// =============================================================================================
+// INPUTS
+// =============================================================================================
+gMode    = "Mode"
+gSession = "Session & Trade Window"
+gTrend   = "Trend Engine"
+gStruct  = "Market Structure"
+gMom     = "Momentum / Volume / Volatility"
+gScore   = "Confluence Scoring"
+gRoom    = "Room To Target"
+gInval   = "Invalidation"
+gTarget  = "Take Profit"
+gMgmt    = "Trade Management"
+gEntry   = "Entry & Orders"
+gSize    = "Position Sizing"
+gVisual  = "Visuals"
+gSR      = "Support / Resistance"
+gFVG     = "Fair Value Gaps"
+gDebug   = "Debug"
+
+modeInput = input.string("DAY TRADE", "Mode", options=["SCALP", "DAY TRADE"], group=gMode)
+
+// -- Session & trade window --------------------------------------------------------------------
+rthSession       = input.session("0930-1600", "Regular Session (RTH)", group=gSession)
+entryCutoff      = input.session("0930-1515", "Entry Window (no NEW entries after this)", group=gSession)
+flattenWindow    = input.session("1550-1600", "End-of-Day Flatten Window", group=gSession)
+primeSession     = input.session("0930-1100,1400-1530", "PRIME Trade Window", group=gSession)
+slowSession      = input.session("1130-1400", "SLOW Trade Window (e.g. lunch chop)", group=gSession)
+asiaSession      = input.session("2000-0400", "Asia Session", group=gSession)
+londonSession    = input.session("0300-1130", "London Session", group=gSession)
+sessionTZ        = input.string("America/New_York", "Session Timezone", group=gSession)
+allowOvernight   = input.bool(false, "Allow Entries/Holding Outside RTH", group=gSession)
+closeEOD         = input.bool(true, "Treat End-of-Day Flatten Window As Exit Trigger", group=gSession)
+
+// -- Trend engine ---------------------------------------------------------------------------
+emaFastLen = input.int(20, "EMA Fast", group=gTrend)
+emaMidLen  = input.int(50, "EMA Mid", group=gTrend)
+emaSlowLen = input.int(200, "EMA Slow", group=gTrend)
+
+// -- Structure ------------------------------------------------------------------------------
+pivotLeft         = input.int(5, "Pivot Left Bars", minval=2, group=gStruct)
+pivotRight        = input.int(5, "Pivot Right Bars (confirmation delay)", minval=2, group=gStruct)
+consolLen         = input.int(10, "Consolidation / Range Lookback (bars)", group=gStruct)
+retestWindow      = input.int(10, "Breakout Retest Window (bars)", group=gStruct)
+retestBufferATR   = input.float(0.25, "Retest Buffer (ATR)", group=gStruct)
+strongMoveLookAdd = input.int(5, "Extra Lookback For Prior-Impulse Check (bars)", group=gStruct)
+freshWinInput     = input.int(6, "Setup Freshness Window (bars)", minval=1, group=gStruct)
+
+// -- Momentum / Volume / Volatility -----------------------------------------------------------
+rsiLen      = input.int(14, "RSI Length", group=gMom)
+adxLen      = input.int(14, "ADX Smoothing", group=gMom)
+adxDiLen    = input.int(14, "ADX DI Length", group=gMom)
+atrLen      = input.int(14, "ATR Length", group=gMom)
+volAvgLen   = input.int(20, "Volume Average Length", group=gMom)
+adxTrendMin = input.float(18, "Minimum ADX For 'Trending' Regime", group=gMom)
+minATRPct   = input.float(0.04, "Minimum ATR% Of Price Required To Trade", group=gMom)
+
+// -- Scoring ------------------------------------------------------------------------------------
+scoreThreshold = input.float(78, "Minimum Quality Score To Signal", minval=0, maxval=100, group=gScore)
+extensionMaxATR  = input.float(2.5, "Extension Penalty Threshold (ATR from EMA20)", group=gScore)
+extensionHardATR = input.float(3.75, "Extension HARD BLOCK Threshold (ATR from EMA20)", group=gScore)
+
+// -- Room to target ---------------------------------------------------------------------------
+roomCheckEnabled = input.bool(true, "Enable Room-To-Target Filter", group=gRoom)
+minRoomATR = input.float(0.5, "Minimum Room To Nearest Structure (ATR)", group=gRoom)
+minRoomR   = input.float(0.4, "Minimum Room To Nearest Structure (R of TP1)", group=gRoom)
+
+// -- Invalidation (stop) ------------------------------------------------------------------------
+stopModeInput = input.string("SMART STOP", "Invalidation Mode", options=["SMART STOP", "ATR ONLY"], group=gInval)
+atrStopMult   = input.float(1.5, "ATR Multiple (ATR ONLY mode / fallback)", group=gInval)
+stopBufferATR = input.float(0.15, "Structure Buffer (ATR)", group=gInval)
+minStopATR    = input.float(0.6, "Minimum Distance (ATR)", group=gInval)
+maxStopATR    = input.float(3.0, "Maximum Distance (ATR)", group=gInval)
+
+// -- Take profit -----------------------------------------------------------------------------
+targetModeInput   = input.string("SMART STRUCTURE", "Take Profit Mode", options=["SMART STRUCTURE", "R MULTIPLE"], group=gTarget)
+tp1R = input.float(1.0, "TP1 R Multiple", group=gTarget)
+tp2R = input.float(1.8, "TP2 R Multiple", group=gTarget)
+tp3R = input.float(2.6, "TP3 R Multiple", group=gTarget)
+tp4R = input.float(3.4, "TP4 R Multiple", group=gTarget)
+tp5R = input.float(4.2, "TP5 R Multiple", group=gTarget)
+tpStructBufferATR = input.float(0.10, "Structure Target Buffer (ATR)", group=gTarget)
+minTpGapR = input.float(0.25, "Minimum Gap Between Targets (R)", group=gTarget)
+
+// -- Trade management --------------------------------------------------------------------------
+moveToBEafterTP1  = input.bool(true, "Move Invalidation To Breakeven After TP1", group=gMgmt)
+beBufferATR       = input.float(0.05, "Breakeven Buffer (entry-time ATR)", group=gMgmt)
+trailModeInput    = input.string("Off", "Trailing Mode", options=["Off", "ATR Trail", "EMA20 Trail", "Swing Structure Trail"], group=gMgmt)
+trailATRMult      = input.float(2.0, "ATR Trail Multiple", group=gMgmt)
+minBarsBeforeExit = input.int(2, "Minimum Bars Before Early-Exit Logic Applies", minval=0, group=gMgmt)
+cooldownBars      = input.int(3, "Cooldown Bars After A Trade Closes", minval=0, group=gMgmt)
+
+// -- Entry & orders --------------------------------------------------------------------------
+entryModeInput    = input.string("Signal Close", "Entry Price Mode", options=["Signal Close", "Small Limit Pullback", "Breakout Trigger"], group=gEntry)
+limitPullbackATR  = input.float(0.15, "Limit Pullback Distance (ATR)", group=gEntry)
+pendingExpireBars = input.int(3, "Pending Order Expiration (bars)", minval=1, group=gEntry)
+
+// -- Position sizing --------------------------------------------------------------------------
+accountSize = input.float(10000, "Account Size ($)", group=gSize)
+riskPctSize = input.float(1.0, "Risk % Per Trade", group=gSize)
+
+// -- Visuals ------------------------------------------------------------------------------------
+showEMA20   = input.bool(true, "Show EMA 20", group=gVisual)
+showEMA50   = input.bool(true, "Show EMA 50", group=gVisual)
+showEMA200  = input.bool(false, "Show EMA 200", group=gVisual)
+showVWAP    = input.bool(true, "Show VWAP", group=gVisual)
+showDashboard  = input.bool(true, "Show Dashboard", group=gVisual)
+showWatchLabel = input.bool(true, "Show Watch Label (single, updating)", group=gVisual)
+showLevels     = input.bool(true, "Show Entry / Invalidation / TP Lines", group=gVisual)
+showHistoricalTrades = input.bool(false, "Show Historical Trade Drawings", group=gVisual)
+showSessionShade = input.bool(false, "Shade RTH Session Background", group=gVisual)
+
+showSRZones   = input.bool(true, "Show Nearest Support/Resistance Zone", group=gSR)
+srZoneWidthATR = input.float(0.15, "Zone Half-Width (ATR)", group=gSR)
+
+showFVG    = input.bool(false, "Show Fair Value Gaps", group=gFVG)
+fvgMaxCount = input.int(3, "Max FVG Boxes Kept", minval=1, group=gFVG)
+
+debugMode = input.bool(false, "Enable Debug Rejection Counters", group=gDebug)
+
+// =============================================================================================
+// SESSION / TRADE WINDOW ENGINE
+// =============================================================================================
+inSession      = not na(time(timeframe.period, rthSession, sessionTZ))
+inEntryWindow  = not na(time(timeframe.period, entryCutoff, sessionTZ))
+inFlattenWindow = not na(time(timeframe.period, flattenWindow, sessionTZ))
+inPrime        = not na(time(timeframe.period, primeSession, sessionTZ))
+inSlow         = not na(time(timeframe.period, slowSession, sessionTZ))
+inAsia         = not na(time(timeframe.period, asiaSession, sessionTZ))
+inLondon       = not na(time(timeframe.period, londonSession, sessionTZ))
+
+sessionOK    = allowOvernight or inSession
+entryAllowed = (allowOvernight or inEntryWindow)
+
+string activeSession = "OFF HOURS / TRANSITION"
+if inSession
+    activeSession := "NEW YORK"
+else if inLondon
+    activeSession := "LONDON"
+else if inAsia
+    activeSession := "ASIA"
+
+string tradeWindow = "CLOSED"
+if entryAllowed
+    if inPrime
+        tradeWindow := "PRIME"
+    else if inSlow
+        tradeWindow := "SLOW"
+    else if inSession
+        tradeWindow := "GOOD"
+    else
+        tradeWindow := allowOvernight ? "SLOW" : "CLOSED"
+
+bgcolor(showSessionShade and inSession ? color.new(color.blue, 95) : na)
+
+// =============================================================================================
+// TICK ROUNDING HELPER
+// =============================================================================================
+f_tick(p) => math.round_to_mintick(p)
+
+// =============================================================================================
+// CORE PRICE SERIES
+// =============================================================================================
+ema20 = ta.ema(close, emaFastLen)
+ema50 = ta.ema(close, emaMidLen)
+ema200 = ta.ema(close, emaSlowLen)
+vwapVal = ta.vwap(hlc3)
+
+ema20Slope = ema20 - ema20[3]
+aboveVWAP = close > vwapVal
+belowVWAP = close < vwapVal
+vwapRisingSlope = vwapVal - vwapVal[3] > 0
+
+bullStack   = ema20 > ema50 and ema50 > ema200
+bearStack   = ema20 < ema50 and ema50 < ema200
+partialBull = (ema20 > ema50 or close > ema50) and close > ema200
+partialBear = (ema20 < ema50 or close < ema50) and close < ema200
+
+// =============================================================================================
+// MULTI-TIMEFRAME TREND ENGINE (5M / 15M / 1H / 4H / DAILY)
+// Uses CONFIRMED HTF bars only: expression[1] combined with lookahead_on — the standard
+// non-repainting MTF technique. Each timeframe needs only ONE request.security call (close,
+// EMA-fast and EMA-mid are fetched together as a tuple) instead of three separate calls, which
+// is both simpler and cheaper than fetching each series individually.
+// A row whose timeframe is BELOW the chart timeframe cannot be meaningfully sampled via
+// request.security (it would only ever see the single most-recently-closed lower-TF bar per
+// chart bar, not true intrabar coverage), so such rows are marked N/A and excluded from
+// scoring/gates rather than used as if they were reliable.
+// =============================================================================================
+f_secureTriple(tf) =>
+    request.security(syminfo.tickerid, tf, [close[1], ta.ema(close, emaFastLen)[1], ta.ema(close, emaMidLen)[1]], lookahead=barmerge.lookahead_on)
+
+[c5, e20_5, e50_5]     = f_secureTriple("5")
+[c15, e20_15, e50_15]  = f_secureTriple("15")
+[c60, e20_60, e50_60]  = f_secureTriple("60")
+[c240, e20_240, e50_240] = f_secureTriple("240")
+[cD, e20_D, e50_D]     = f_secureTriple("D")
+
+chartSec = timeframe.in_seconds(timeframe.period)
+sec5   = timeframe.in_seconds("5")
+sec15  = timeframe.in_seconds("15")
+sec60  = timeframe.in_seconds("60")
+sec240 = timeframe.in_seconds("240")
+secD   = timeframe.in_seconds("D")
+mtfUnusable = chartSec > secD
+
+f_trendFromVals(c, e20v, e50v) =>
+    string t = "NEUTRAL"
+    if c > e20v and e20v >= e50v
+        t := "BULL"
+    else if c < e20v and e20v <= e50v
+        t := "BEAR"
+    t
+
+f_rowTrend(tfSec, cHtf, e20Htf, e50Htf) =>
+    string t = "N/A"
+    if not mtfUnusable
+        if tfSec > chartSec
+            t := f_trendFromVals(cHtf, e20Htf, e50Htf)
+        else if tfSec == chartSec
+            t := f_trendFromVals(close, ema20, ema50)
+    t
+
+trend5   = f_rowTrend(sec5, c5, e20_5, e50_5)
+trend15  = f_rowTrend(sec15, c15, e20_15, e50_15)
+trend60  = f_rowTrend(sec60, c60, e20_60, e50_60)
+trend240 = f_rowTrend(sec240, c240, e20_240, e50_240)
+trendD   = f_rowTrend(secD, cD, e20_D, e50_D)
+
+// Severe conflict = the two BIGGEST usable pictures (4H + Daily) both oppose the trade.
+severeConflictLong  = trend240 == "BEAR" and trendD == "BEAR"
+severeConflictShort = trend240 == "BULL" and trendD == "BULL"
+
+// Chart-timeframe-based bias (used for the setup engine, replaces the old mislabeled "15M" calc)
+trendBullChart = bullStack or (partialBull and ema20Slope > 0)
+trendBearChart = bearStack or (partialBear and ema20Slope < 0)
+
+// =============================================================================================
+// MOMENTUM / VOLUME / VOLATILITY
+// =============================================================================================
+rsiVal = ta.rsi(close, rsiLen)
+rsiSlope = rsiVal - rsiVal[3]
+
+[diPlus, diMinus, adxVal] = ta.dmi(adxDiLen, adxLen)
+
+atrVal = ta.atr(atrLen)
+atrPct = atrVal / close * 100
+atrPctAvg = ta.sma(atrPct, 50)
+volExpansion   = atrPct > atrPctAvg * 1.4
+volContraction = atrPct < atrPctAvg * 0.6
+atrTooLow = atrPct < minATRPct
+
+volAvg = ta.sma(volume, volAvgLen)
+relVolume = volAvg > 0 ? volume / volAvg : 1.0
+volumeGood = relVolume >= 1.0
+
+momentumGoodLong  = rsiVal > 45 and rsiVal < 75 and rsiSlope > 0
+momentumGoodShort = rsiVal < 55 and rsiVal > 25 and rsiSlope < 0
+
+// =============================================================================================
+// MARKET REGIME
+// =============================================================================================
+string regime = "RANGE / CHOP"
+if adxVal >= adxTrendMin and bullStack and close > ema200
+    regime := "STRONG UPTREND"
+else if trendBullChart and adxVal >= adxTrendMin * 0.6
+    regime := "UPTREND"
+else if adxVal >= adxTrendMin and bearStack and close < ema200
+    regime := "STRONG DOWNTREND"
+else if trendBearChart and adxVal >= adxTrendMin * 0.6
+    regime := "DOWNTREND"
+else if volExpansion
+    regime := "HIGH VOLATILITY"
+else if volContraction
+    regime := "LOW VOLATILITY"
+
+choppy = regime == "RANGE / CHOP"
+
+// =============================================================================================
+// MARKET STRUCTURE — confirmed swing pivots + event-based freshness
+// Pivots require `pivotRight` bars of confirmation before they are known; nothing here ever
+// uses a pivot before that confirmation bar. HL/LH "events" fire for exactly ONE bar (the bar
+// the new pivot confirms), so continuation setups cannot fire off a stale relationship that has
+// quietly stayed true for dozens of bars.
+// =============================================================================================
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+pl = ta.pivotlow(low, pivotLeft, pivotRight)
+
+var float lastPivotHigh = na
+var float prevPivotHigh = na
+var float lastPivotLow  = na
+var float prevPivotLow  = na
+
+bool hlEventNow = false
+bool lhEventNow = false
+
+if not na(ph)
+    prevPivotHigh := lastPivotHigh
+    lastPivotHigh := ph
+    if not na(prevPivotHigh) and ph < prevPivotHigh
+        lhEventNow := true
+if not na(pl)
+    prevPivotLow := lastPivotLow
+    lastPivotLow := pl
+    if not na(prevPivotLow) and pl > prevPivotLow
+        hlEventNow := true
+
+var int hlEventBar = na
+var int lhEventBar = na
+if hlEventNow
+    hlEventBar := bar_index
+if lhEventNow
+    lhEventBar := bar_index
+
+freshWin = modeInput == "SCALP" ? math.max(2, freshWinInput - 3) : freshWinInput
+hlFresh = not na(hlEventBar) and (bar_index - hlEventBar) <= freshWin
+lhFresh = not na(lhEventBar) and (bar_index - lhEventBar) <= freshWin
+
+higherHigh = not na(lastPivotHigh) and not na(prevPivotHigh) and lastPivotHigh > prevPivotHigh
+lowerHigh  = not na(lastPivotHigh) and not na(prevPivotHigh) and lastPivotHigh < prevPivotHigh
+higherLow  = not na(lastPivotLow) and not na(prevPivotLow) and lastPivotLow > prevPivotLow
+lowerLow   = not na(lastPivotLow) and not na(prevPivotLow) and lastPivotLow < prevPivotLow
+
+// BULLISH requires a confirmed HH *and* HL together; a single HH or HL alone is only "developing".
+bullishStructure = higherHigh and higherLow
+bearishStructure = lowerHigh and lowerLow
+mixedStructure    = (higherHigh and lowerLow) or (lowerHigh and higherLow)
+developingBull    = (higherHigh or higherLow) and not bullishStructure and not mixedStructure
+developingBear     = (lowerHigh or lowerLow) and not bearishStructure and not mixedStructure
+neutralStructure  = not bullishStructure and not bearishStructure and not mixedStructure and not developingBull and not developingBear
+
+string structureLabel = "NEUTRAL"
+if bullishStructure
+    structureLabel := "BULLISH (HH+HL)"
+else if bearishStructure
+    structureLabel := "BEARISH (LH+LL)"
+else if mixedStructure
+    structureLabel := "MIXED"
+else if developingBull
+    structureLabel := "DEVELOPING BULL"
+else if developingBear
+    structureLabel := "DEVELOPING BEAR"
+
+// =============================================================================================
+// CANDLE CONFIRMATION / EXTENSION
+// =============================================================================================
+bullishCandle   = close > open and close > (high + low) / 2
+bearishCandle   = close < open and close < (high + low) / 2
+strongBullClose = close > open and (close - low) / (high - low + syminfo.mintick) > 0.6
+strongBearClose = close < open and (high - close) / (high - low + syminfo.mintick) > 0.6
+
+extensionATR = math.abs(close - ema20) / atrVal
+overExtendedLong  = extensionATR > extensionMaxATR and close > ema20
+overExtendedShort = extensionATR > extensionMaxATR and close < ema20
+severelyExtendedLong  = extensionATR > extensionHardATR and close > ema20
+severelyExtendedShort = extensionATR > extensionHardATR and close < ema20
+
+// =============================================================================================
+// KEY-ZONE PROXIMITY (EMA20 / EMA50 / VWAP)
+// =============================================================================================
+nearEMA20 = math.abs(low - ema20) <= atrVal * 0.5 or math.abs(high - ema20) <= atrVal * 0.5
+nearEMA50 = math.abs(low - ema50) <= atrVal * 0.5 or math.abs(high - ema50) <= atrVal * 0.5
+nearVWAP  = math.abs(low - vwapVal) <= atrVal * 0.5 or math.abs(high - vwapVal) <= atrVal * 0.5
+touchedKeyZone = nearEMA20 or nearEMA50 or nearVWAP
+recentTouch = ta.barssince(touchedKeyZone) <= 3
+
+// =============================================================================================
+// CONSOLIDATION / BREAKOUT / RETEST TRACKING (event based)
+// =============================================================================================
+recentRangeHigh = ta.highest(high, consolLen)[1]
+recentRangeLow  = ta.lowest(low, consolLen)[1]
+rangeWidthATR   = (recentRangeHigh - recentRangeLow) / atrVal
+tightConsolidation = rangeWidthATR < 3.0
+
+breakoutUpNow   = close > recentRangeHigh and volumeGood
+breakoutDownNow = close < recentRangeLow and volumeGood
+
+var float breakoutLevel = na
+var int   breakoutBarIdx = na
+var string breakoutDir = na
+
+if breakoutUpNow
+    breakoutLevel := recentRangeHigh
+    breakoutBarIdx := bar_index
+    breakoutDir := "UP"
+if breakoutDownNow
+    breakoutLevel := recentRangeLow
+    breakoutBarIdx := bar_index
+    breakoutDir := "DOWN"
+
+barsSinceBreakout = na(breakoutBarIdx) ? na : bar_index - breakoutBarIdx
+
+retestingUpNow = breakoutDir == "UP" and not na(barsSinceBreakout) and barsSinceBreakout <= retestWindow and barsSinceBreakout >= 1 and
+             low <= breakoutLevel + atrVal * retestBufferATR and close > breakoutLevel - atrVal * retestBufferATR
+retestingDownNow = breakoutDir == "DOWN" and not na(barsSinceBreakout) and barsSinceBreakout <= retestWindow and barsSinceBreakout >= 1 and
+             high >= breakoutLevel - atrVal * retestBufferATR and close < breakoutLevel + atrVal * retestBufferATR
+
+watchBreakoutRetestLong  = breakoutDir == "UP"   and not na(barsSinceBreakout) and barsSinceBreakout <= retestWindow and barsSinceBreakout >= 1 and not retestingUpNow   and low  <= breakoutLevel + atrVal * retestBufferATR * 2
+watchBreakoutRetestShort = breakoutDir == "DOWN" and not na(barsSinceBreakout) and barsSinceBreakout <= retestWindow and barsSinceBreakout >= 1 and not retestingDownNow and high >= breakoutLevel - atrVal * retestBufferATR * 2
+
+breakoutRetestLongNow  = retestingUpNow and bullishCandle and volumeGood
+breakoutRetestShortNow = retestingDownNow and bearishCandle and volumeGood
+
+// =============================================================================================
+// LONG SETUPS (each is a fresh, one-bar-triggered event)
+// =============================================================================================
+reclaimLongNow = recentTouch and close > ema20 and close > open and bullishCandle and rsiVal > 40 and rsiVal < 65
+pullbackReclaimLong = trendBullChart and reclaimLongNow and momentumGoodLong
+
+breakoutRetestLong = breakoutRetestLongNow and not trendBearChart
+
+higherLowContinuationLong = hlFresh and trendBullChart and close > ema50 and rsiSlope > 0
+
+priorImpulseUpLong = (close[1] - close[consolLen + strongMoveLookAdd]) > atrVal * 1.5
+momentumContinuationLong = priorImpulseUpLong and tightConsolidation and breakoutUpNow and trendBullChart
+
+confirmedLongPattern = (pullbackReclaimLong or breakoutRetestLong or higherLowContinuationLong or momentumContinuationLong) and not severelyExtendedLong
+roomExemptLong = breakoutRetestLong or momentumContinuationLong
+
+string setupNameLong = na
+if pullbackReclaimLong
+    setupNameLong := "EMA/VWAP PULLBACK RECLAIM"
+else if breakoutRetestLong
+    setupNameLong := "BREAKOUT + RETEST"
+else if higherLowContinuationLong
+    setupNameLong := "HIGHER-LOW CONTINUATION"
+else if momentumContinuationLong
+    setupNameLong := "MOMENTUM CONTINUATION"
+
+watchPullbackLong  = trendBullChart and touchedKeyZone and not pullbackReclaimLong and rsiVal > 35
+watchReclaimLong   = trendBullChart and close < ema20 and touchedKeyZone[1] and rsiSlope > 0 and not pullbackReclaimLong
+watchHigherLowLong = trendBullChart and not na(lastPivotLow) and low <= lastPivotLow + atrVal * 0.3 and close > lastPivotLow and not higherLowContinuationLong
+
+watchLongActive = watchBreakoutRetestLong or watchReclaimLong or watchPullbackLong or watchHigherLowLong
+
+string watchLongText = na
+if watchBreakoutRetestLong
+    watchLongText := "WATCH LONG — BREAKOUT RETEST"
+else if watchReclaimLong
+    watchLongText := "WATCH LONG — WAITING FOR RECLAIM"
+else if watchPullbackLong
+    watchLongText := "WATCH LONG — PULLBACK FORMING"
+else if watchHigherLowLong
+    watchLongText := "WATCH LONG — HIGHER LOW FORMING"
+
+// =============================================================================================
+// SHORT SETUPS (mirror)
+// =============================================================================================
+rejectShortNow = recentTouch and close < ema20 and close < open and bearishCandle and rsiVal < 60 and rsiVal > 35
+emaVwapRejectionShort = trendBearChart and rejectShortNow and momentumGoodShort
+
+breakdownRetestShort = breakoutRetestShortNow and not trendBullChart
+
+lowerHighContinuationShort = lhFresh and trendBearChart and close < ema50 and rsiSlope < 0
+
+priorImpulseDownShort = (close[consolLen + strongMoveLookAdd] - close[1]) > atrVal * 1.5
+momentumContinuationShort = priorImpulseDownShort and tightConsolidation and breakoutDownNow and trendBearChart
+
+confirmedShortPattern = (emaVwapRejectionShort or breakdownRetestShort or lowerHighContinuationShort or momentumContinuationShort) and not severelyExtendedShort
+roomExemptShort = breakdownRetestShort or momentumContinuationShort
+
+string setupNameShort = na
+if emaVwapRejectionShort
+    setupNameShort := "EMA/VWAP REJECTION"
+else if breakdownRetestShort
+    setupNameShort := "BREAKDOWN + RETEST"
+else if lowerHighContinuationShort
+    setupNameShort := "LOWER-HIGH CONTINUATION"
+else if momentumContinuationShort
+    setupNameShort := "BEARISH MOMENTUM CONTINUATION"
+
+watchRejectionShort  = trendBearChart and touchedKeyZone and not emaVwapRejectionShort and rsiVal < 65
+watchBreakdownShort  = trendBearChart and close > ema20 and touchedKeyZone[1] and rsiSlope < 0 and not emaVwapRejectionShort
+watchLowerHighShort  = trendBearChart and not na(lastPivotHigh) and high >= lastPivotHigh - atrVal * 0.3 and close < lastPivotHigh and not lowerHighContinuationShort
+
+watchShortActive = watchBreakoutRetestShort or watchBreakdownShort or watchRejectionShort or watchLowerHighShort
+
+string watchShortText = na
+if watchBreakoutRetestShort
+    watchShortText := "WATCH SHORT — BREAKDOWN RETEST"
+else if watchBreakdownShort
+    watchShortText := "WATCH SHORT — WAITING FOR BREAKDOWN"
+else if watchRejectionShort
+    watchShortText := "WATCH SHORT — REJECTION FORMING"
+else if watchLowerHighShort
+    watchShortText := "WATCH SHORT — LOWER HIGH FORMING"
+
+// =============================================================================================
+// ROOM-TO-TARGET FILTER
+// Nearest CONFIRMED opposing pivot must leave enough room for a sensible TP1. Skipped for
+// breakout/momentum-continuation setups, since those setups are explicitly clearing the level
+// that would otherwise be flagged as "in the way".
+// =============================================================================================
+roomAboveLong  = (not na(lastPivotHigh) and lastPivotHigh > close) ? (lastPivotHigh - close) : na
+roomBelowShort = (not na(lastPivotLow) and lastPivotLow < close) ? (close - lastPivotLow) : na
+
+f_roomOK(room, plannedR) =>
+    na(room) or room >= math.max(minRoomATR * atrVal, minRoomR * plannedR)
+
+// approximate 1R (pre-fill) used only for the room gate estimate
+approxR = atrVal * (stopModeInput == "SMART STOP" ? math.max(minStopATR, 1.0) : atrStopMult)
+roomOKLong  = not roomCheckEnabled or roomExemptLong  or f_roomOK(roomAboveLong, approxR)
+roomOKShort = not roomCheckEnabled or roomExemptShort or f_roomOK(roomBelowShort, approxR)
+
+// =============================================================================================
+// HARD GATES -> VALID SETUP
+// =============================================================================================
+lowVolume    = relVolume < 0.8
+weakMomentum = not momentumGoodLong and not momentumGoodShort
+
+hardGatesLong = sessionOK and entryAllowed and not severelyExtendedLong and not atrTooLow and
+     not severeConflictLong and not choppy and roomOKLong
+hardGatesShort = sessionOK and entryAllowed and not severelyExtendedShort and not atrTooLow and
+     not severeConflictShort and not choppy and roomOKShort
+
+validSetupLong  = hardGatesLong and confirmedLongPattern
+validSetupShort = hardGatesShort and confirmedShortPattern
+
+// =============================================================================================
+// CONFLUENCE SCORE (0-100) — each input counted exactly once.
+// MTF Trend Alignment 20 | Market Structure 20 | Setup Quality 20 | Momentum 10 | Volume 10
+// | Location/VWAP 10 | Market Environment 10  =  100
+// =============================================================================================
+f_alignContribution(wantLong, trend, weight) =>
+    float w = 0.0
+    float m = 0.0
+    if trend != "N/A"
+        w := weight
+        m := (wantLong and trend == "BULL") or (not wantLong and trend == "BEAR") ? weight : trend == "NEUTRAL" ? weight * 0.4 : 0.0
+    [w, m]
+
+f_alignScore(wantLong) =>
+    [w1, m1] = f_alignContribution(wantLong, trend5, 1.0)
+    [w2, m2] = f_alignContribution(wantLong, trend15, 1.5)
+    [w3, m3] = f_alignContribution(wantLong, trend60, 2.0)
+    [w4, m4] = f_alignContribution(wantLong, trend240, 2.5)
+    [w5, m5] = f_alignContribution(wantLong, trendD, 3.0)
+    totalW = w1 + w2 + w3 + w4 + w5
+    matchW = m1 + m2 + m3 + m4 + m5
+    totalW > 0 ? (matchW / totalW) * 20.0 : 10.0
+
+f_structureScore(wantLong) =>
+    float s = 4.0
+    if wantLong
+        s := bullishStructure ? 20.0 : mixedStructure ? 6.0 : developingBull ? 12.0 : neutralStructure ? 9.0 : 4.0
+    else
+        s := bearishStructure ? 20.0 : mixedStructure ? 6.0 : developingBear ? 12.0 : neutralStructure ? 9.0 : 4.0
+    s
+
+f_setupQuality(strongCandle, volGood, freshBonus) =>
+    q = 8.0 + (strongCandle ? 6.0 : 2.0) + (volGood ? 4.0 : 0.0) + freshBonus
+    math.min(q, 20.0)
+
+qualityLong = pullbackReclaimLong ? f_setupQuality(strongBullClose, volumeGood, recentTouch ? 2.0 : 0.0) :
+     breakoutRetestLong ? f_setupQuality(strongBullClose, volumeGood, rangeWidthATR < 2.0 ? 2.0 : 0.0) :
+     higherLowContinuationLong ? f_setupQuality(strongBullClose, volumeGood, (bar_index - hlEventBar) <= 2 ? 2.0 : 0.0) :
+     momentumContinuationLong ? f_setupQuality(strongBullClose, volumeGood, tightConsolidation ? 2.0 : 0.0) : 8.0
+
+qualityShort = emaVwapRejectionShort ? f_setupQuality(strongBearClose, volumeGood, recentTouch ? 2.0 : 0.0) :
+     breakdownRetestShort ? f_setupQuality(strongBearClose, volumeGood, rangeWidthATR < 2.0 ? 2.0 : 0.0) :
+     lowerHighContinuationShort ? f_setupQuality(strongBearClose, volumeGood, (bar_index - lhEventBar) <= 2 ? 2.0 : 0.0) :
+     momentumContinuationShort ? f_setupQuality(strongBearClose, volumeGood, tightConsolidation ? 2.0 : 0.0) : 8.0
+
+f_momentumScore(wantLong) =>
+    wantLong ? (momentumGoodLong ? 10.0 : (rsiVal >= 75 ? 2.0 : (rsiVal <= 45 and rsiSlope > 0) ? 6.0 : 4.0)) :
+               (momentumGoodShort ? 10.0 : (rsiVal <= 25 ? 2.0 : (rsiVal >= 55 and rsiSlope < 0) ? 6.0 : 4.0))
+
+volumeScore = math.min(relVolume / 1.5 * 10.0, 10.0)
+
+f_locationScore(wantLong) =>
+    aboveOk = wantLong ? aboveVWAP : belowVWAP
+    slopeOk = wantLong ? vwapRisingSlope : not vwapRisingSlope
+    aboveOk ? (slopeOk ? 10.0 : 7.0) : 3.0
+
+f_envScore(wantLong) =>
+    base = adxVal >= adxTrendMin ? 6.0 : math.max(adxVal / adxTrendMin * 6.0, 1.0)
+    base += tradeWindow == "PRIME" ? 4.0 : tradeWindow == "GOOD" ? 3.0 : tradeWindow == "SLOW" ? 1.0 : 0.0
+    base := math.min(base, 10.0)
+    ext = wantLong ? overExtendedLong : overExtendedShort
+    if ext
+        base := math.max(0.0, base - (extensionATR - extensionMaxATR) * 3.0)
+    base
+
+longScore  = math.round(f_alignScore(true)  + f_structureScore(true)  + qualityLong  + f_momentumScore(true)  + volumeScore + f_locationScore(true)  + f_envScore(true))
+shortScore = math.round(f_alignScore(false) + f_structureScore(false) + qualityShort + f_momentumScore(false) + volumeScore + f_locationScore(false) + f_envScore(false))
+
+f_grade(score, validSetup) =>
+    string g = "NO TRADE"
+    if validSetup
+        if score >= 90
+            g := "A+"
+        else if score >= 80
+            g := "A"
+        else if score >= 65
+            g := "B"
+        else
+            g := "WATCH"
+    g
+
+gradeLong  = f_grade(longScore, validSetupLong)
+gradeShort = f_grade(shortScore, validSetupShort)
+
+longSignalNow  = validSetupLong  and longScore  >= scoreThreshold and longScore  >= shortScore
+shortSignalNow = validSetupShort and shortScore >= scoreThreshold and shortScore >  longScore
+
+// =============================================================================================
+// WHY WAIT
+// =============================================================================================
+noStructure = neutralStructure
+
+string whyWait = "WAIT — NO CONFIRMED SETUP"
+if not sessionOK
+    whyWait := "WAIT — OUTSIDE SESSION"
+else if not entryAllowed
+    whyWait := "WAIT — ENTRY WINDOW CLOSED"
+else if choppy
+    whyWait := "WAIT — CHOPPY MARKET"
+else if severeConflictLong or severeConflictShort
+    whyWait := "WAIT — HTF CONFLICT"
+else if atrTooLow
+    whyWait := "WAIT — VOLATILITY TOO LOW"
+else if lowVolume
+    whyWait := "WAIT — LOW VOLUME"
+else if noStructure
+    whyWait := "WAIT — NO CONFIRMED STRUCTURE"
+else if overExtendedLong or overExtendedShort
+    whyWait := "WAIT — PRICE OVEREXTENDED"
+else if weakMomentum
+    whyWait := "WAIT — MOMENTUM TOO WEAK"
+else if not roomOKLong and not roomOKShort
+    whyWait := "WAIT — INSUFFICIENT ROOM TO TARGET"
+else if longScore < scoreThreshold and shortScore < scoreThreshold
+    whyWait := "WAIT — SETUP QUALITY BELOW THRESHOLD"
+
+// =============================================================================================
+// INVALIDATION (STOP) ENGINE — structure-aware with ATR fallback. Renamed for the user-facing
+// dashboard/labels; internally still a stop-loss level used to size and protect the trade.
+// =============================================================================================
+f_smartStopLong(entry) =>
+    swingRef = na(lastPivotLow) ? entry - atrVal * atrStopMult : lastPivotLow - atrVal * stopBufferATR
+    minStop = entry - atrVal * minStopATR
+    maxStop = entry - atrVal * maxStopATR
+    stop = math.min(swingRef, minStop)
+    stop := math.max(stop, maxStop)
+    f_tick(stop)
+
+f_smartStopShort(entry) =>
+    swingRef = na(lastPivotHigh) ? entry + atrVal * atrStopMult : lastPivotHigh + atrVal * stopBufferATR
+    minStop = entry + atrVal * minStopATR
+    maxStop = entry + atrVal * maxStopATR
+    stop = math.max(swingRef, minStop)
+    stop := math.min(stop, maxStop)
+    f_tick(stop)
+
+f_atrStopLong(entry) => f_tick(entry - atrVal * atrStopMult)
+f_atrStopShort(entry) => f_tick(entry + atrVal * atrStopMult)
+
+f_stopLong(entry) => stopModeInput == "SMART STOP" ? f_smartStopLong(entry) : f_atrStopLong(entry)
+f_stopShort(entry) => stopModeInput == "SMART STOP" ? f_smartStopShort(entry) : f_atrStopShort(entry)
+
+// =============================================================================================
+// TAKE PROFIT ENGINE — TP1..TP5, monotonic and tick-rounded. Smart-structure only nudges TP1
+// (the nearest target most likely to run into an obvious level); TP2-5 stay R-based extensions
+// but are always forced to remain strictly beyond the previous target by at least minTpGapR.
+// =============================================================================================
+f_targetsLong(entry, stop) =>
+    r = entry - stop
+    t1 = entry + r * tp1R
+    t2 = entry + r * tp2R
+    t3 = entry + r * tp3R
+    t4 = entry + r * tp4R
+    t5 = entry + r * tp5R
+    if targetModeInput == "SMART STRUCTURE"
+        if not na(lastPivotHigh) and lastPivotHigh > entry
+            structTarget = lastPivotHigh - atrVal * tpStructBufferATR
+            if structTarget > entry + r * 0.4
+                t1 := math.min(t1, structTarget)
+    t2 := math.max(t2, t1 + r * minTpGapR)
+    t3 := math.max(t3, t2 + r * minTpGapR)
+    t4 := math.max(t4, t3 + r * minTpGapR)
+    t5 := math.max(t5, t4 + r * minTpGapR)
+    [f_tick(t1), f_tick(t2), f_tick(t3), f_tick(t4), f_tick(t5), r]
+
+f_targetsShort(entry, stop) =>
+    r = stop - entry
+    t1 = entry - r * tp1R
+    t2 = entry - r * tp2R
+    t3 = entry - r * tp3R
+    t4 = entry - r * tp4R
+    t5 = entry - r * tp5R
+    if targetModeInput == "SMART STRUCTURE"
+        if not na(lastPivotLow) and lastPivotLow < entry
+            structTarget = lastPivotLow + atrVal * tpStructBufferATR
+            if structTarget < entry - r * 0.4
+                t1 := math.max(t1, structTarget)
+    t2 := math.min(t2, t1 - r * minTpGapR)
+    t3 := math.min(t3, t2 - r * minTpGapR)
+    t4 := math.min(t4, t3 - r * minTpGapR)
+    t5 := math.min(t5, t4 - r * minTpGapR)
+    [f_tick(t1), f_tick(t2), f_tick(t3), f_tick(t4), f_tick(t5), r]
+
+// =============================================================================================
+// ENTRY ORDER PRICE
+// =============================================================================================
+f_entryPrice(isLong) =>
+    price = close
+    if entryModeInput == "Small Limit Pullback"
+        price := isLong ? close - atrVal * limitPullbackATR : close + atrVal * limitPullbackATR
+    else if entryModeInput == "Breakout Trigger"
+        price := isLong ? high + syminfo.mintick : low - syminfo.mintick
+    f_tick(price)
+
+// =============================================================================================
+// POSITION SIZING — futures-aware. Uses syminfo.pointvalue so the same formula works for shares
+// (pointvalue = 1) and futures contracts (e.g. MGC, MNQ, NQ, ES, MES) alike. Informational only —
+// this indicator never places or sizes real orders.
+// =============================================================================================
+f_qty(entry, stop) =>
+    riskPerUnit = math.abs(entry - stop) * syminfo.pointvalue
+    dollarRisk = accountSize * riskPctSize / 100
+    riskPerUnit > 0 ? math.floor(dollarRisk / riskPerUnit) : na
+
+// =============================================================================================
+// EARLY EXIT LOGIC
+// =============================================================================================
+structureFailureLong  = close < ema50 and close[1] >= ema50[1] and bearishCandle
+momentumReversalLong  = rsiVal < 45 and rsiVal[1] >= 45 and strongBearClose
+vwapEmaFailLong       = belowVWAP and close < ema20 and close[1] >= ema20[1]
+htfInvalidationLong   = trend60 == "BEAR" and trendBearChart
+earlyExitLong = structureFailureLong or momentumReversalLong or vwapEmaFailLong or htfInvalidationLong
+
+string exitReasonLong = na
+if structureFailureLong
+    exitReasonLong := "EXIT — STRUCTURE FAILURE"
+else if momentumReversalLong
+    exitReasonLong := "EXIT — MOMENTUM REVERSAL"
+else if vwapEmaFailLong
+    exitReasonLong := "EXIT — VWAP/EMA STRUCTURE LOST"
+else if htfInvalidationLong
+    exitReasonLong := "EXIT — HTF INVALIDATION"
+
+structureFailureShort = close > ema50 and close[1] <= ema50[1] and bullishCandle
+momentumReversalShort = rsiVal > 55 and rsiVal[1] <= 55 and strongBullClose
+vwapEmaFailShort       = aboveVWAP and close > ema20 and close[1] <= ema20[1]
+htfInvalidationShort  = trend60 == "BULL" and trendBullChart
+earlyExitShort = structureFailureShort or momentumReversalShort or vwapEmaFailShort or htfInvalidationShort
+
+string exitReasonShort = na
+if structureFailureShort
+    exitReasonShort := "EXIT — STRUCTURE FAILURE"
+else if momentumReversalShort
+    exitReasonShort := "EXIT — MOMENTUM REVERSAL"
+else if vwapEmaFailShort
+    exitReasonShort := "EXIT — VWAP/EMA STRUCTURE LOST"
+else if htfInvalidationShort
+    exitReasonShort := "EXIT — HTF INVALIDATION"
+
+// Pending-order invalidation reuses the same structural-failure logic: if the market already
+// shows the opposite bias while an order is still resting, the setup is stale before it even fills.
+pendingInvalidLong  = severelyExtendedShort or earlyExitLong
+pendingInvalidShort = severelyExtendedLong  or earlyExitShort
+
+// =============================================================================================
+// TRAILING (optional, off by default)
+// =============================================================================================
+f_trailStopLong(currentStop) =>
+    newStop = currentStop
+    if trailModeInput == "ATR Trail"
+        newStop := math.max(newStop, close - atrVal * trailATRMult)
+    else if trailModeInput == "EMA20 Trail"
+        newStop := math.max(newStop, ema20 - atrVal * stopBufferATR)
+    else if trailModeInput == "Swing Structure Trail"
+        if not na(lastPivotLow)
+            newStop := math.max(newStop, lastPivotLow - atrVal * stopBufferATR)
+    f_tick(newStop)
+
+f_trailStopShort(currentStop) =>
+    newStop = currentStop
+    if trailModeInput == "ATR Trail"
+        newStop := math.min(newStop, close + atrVal * trailATRMult)
+    else if trailModeInput == "EMA20 Trail"
+        newStop := math.min(newStop, ema20 + atrVal * stopBufferATR)
+    else if trailModeInput == "Swing Structure Trail"
+        if not na(lastPivotHigh)
+            newStop := math.min(newStop, lastPivotHigh + atrVal * stopBufferATR)
+    f_tick(newStop)
+
+f_pendingFilled(isLong, price) =>
+    entryModeInput == "Small Limit Pullback" ? (isLong ? low <= price : high >= price) : (isLong ? high >= price : low <= price)
+
+// =============================================================================================
+// ORDER STATE MACHINE
+// States: WAIT, WATCH LONG, WATCH SHORT, PENDING LONG, PENDING SHORT, ACTIVE LONG, ACTIVE SHORT.
+// A PENDING order never has TP/invalidation evaluated against it — only a FILLED (ACTIVE) trade
+// does. "Signal Close" mode fills immediately (no PENDING stage); the other two modes create a
+// real resting order that must actually trade through its price before it is treated as a
+// position, and auto-expires / self-cancels on setup invalidation.
+// =============================================================================================
+var string orderState = "WAIT"
+var string direction  = na
+var string stage      = na
+var float  pendingPrice = na
+var int    pendingBar   = na
+var float  entryPrice = na
+var float  slPrice    = na
+var float  tp1Price = na
+var float  tp2Price = na
+var float  tp3Price = na
+var float  tp4Price = na
+var float  tp5Price = na
+var float  initialRisk = na
+var float  atrAtEntry  = na
+var bool   tp1Hit = false
+var bool   tp2Hit = false
+var bool   tp3Hit = false
+var bool   tp4Hit = false
+var bool   beApplied = false
+var int    entryBarIndex = na
+var int    lastTradeCloseBar = na
+var float  mfe = na
+var string lockedSetup = na
+var string lockedGrade = na
+var float  lockedScore = na
+
+var int rejTrend = 0
+var int rejHTF = 0
+var int rejStructure = 0
+var int rejMomentum = 0
+var int rejVolume = 0
+var int rejADX = 0
+var int rejRoom = 0
+var int rejExtension = 0
+var int rejSession = 0
+var int rejCooldown = 0
+
+bool evFilled = false
+string evFilledDir = na
+bool evStopped = false
+string evStoppedDir = na
+bool evTpMid = false
+string evTpDir = na
+string evTpText = na
+bool evFullExit = false
+string evFullExitDir = na
+bool evExit = false
+string evExitDir = na
+string evExitText = na
+bool evPendingCancelled = false
+string evPendingCancelledDir = na
+string evPendingCancelledReason = na
+bool evArmed = false
+string evArmedDir = na
+string closeEventText = na
+
+if barstate.isconfirmed
+    // ---------------------------------------------------------------------------------------
+    // 1) MANAGE PENDING ORDERS
+    // ---------------------------------------------------------------------------------------
+    if orderState == "PENDING LONG"
+        if f_pendingFilled(true, pendingPrice)
+            entryPrice := pendingPrice
+            atrAtEntry := atrVal
+            slPrice := f_stopLong(entryPrice)
+            [t1, t2, t3, t4, t5, r] = f_targetsLong(entryPrice, slPrice)
+            tp1Price := t1
+            tp2Price := t2
+            tp3Price := t3
+            tp4Price := t4
+            tp5Price := t5
+            initialRisk := r
+            orderState := "ACTIVE LONG"
+            stage := "BEFORE TP1"
+            entryBarIndex := bar_index
+            tp1Hit := false
+            tp2Hit := false
+            tp3Hit := false
+            tp4Hit := false
+            beApplied := false
+            mfe := 0.0
+            evFilled := true
+            evFilledDir := "LONG"
+        else if (bar_index - pendingBar) >= pendingExpireBars
+            direction := na
+            pendingPrice := na
+            orderState := "WAIT"
+            evPendingCancelled := true
+            evPendingCancelledDir := "LONG"
+            evPendingCancelledReason := "EXPIRED"
+        else if pendingInvalidLong
+            direction := na
+            pendingPrice := na
+            orderState := "WAIT"
+            evPendingCancelled := true
+            evPendingCancelledDir := "LONG"
+            evPendingCancelledReason := "SETUP INVALIDATED"
+
+    else if orderState == "PENDING SHORT"
+        if f_pendingFilled(false, pendingPrice)
+            entryPrice := pendingPrice
+            atrAtEntry := atrVal
+            slPrice := f_stopShort(entryPrice)
+            [t1, t2, t3, t4, t5, r] = f_targetsShort(entryPrice, slPrice)
+            tp1Price := t1
+            tp2Price := t2
+            tp3Price := t3
+            tp4Price := t4
+            tp5Price := t5
+            initialRisk := r
+            orderState := "ACTIVE SHORT"
+            stage := "BEFORE TP1"
+            entryBarIndex := bar_index
+            tp1Hit := false
+            tp2Hit := false
+            tp3Hit := false
+            tp4Hit := false
+            beApplied := false
+            mfe := 0.0
+            evFilled := true
+            evFilledDir := "SHORT"
+        else if (bar_index - pendingBar) >= pendingExpireBars
+            direction := na
+            pendingPrice := na
+            orderState := "WAIT"
+            evPendingCancelled := true
+            evPendingCancelledDir := "SHORT"
+            evPendingCancelledReason := "EXPIRED"
+        else if pendingInvalidShort
+            direction := na
+            pendingPrice := na
+            orderState := "WAIT"
+            evPendingCancelled := true
+            evPendingCancelledDir := "SHORT"
+            evPendingCancelledReason := "SETUP INVALIDATED"
+
+    // ---------------------------------------------------------------------------------------
+    // 2) MANAGE ACTIVE TRADES — worst-case ordering: invalidation is always checked before
+    //    targets on the same bar, since OHLC alone cannot prove intrabar sequencing.
+    // ---------------------------------------------------------------------------------------
+    if orderState == "ACTIVE LONG"
+        mfe := math.max(nz(mfe), high - entryPrice)
+        if low <= slPrice
+            evStopped := true
+            evStoppedDir := "LONG"
+            lastTradeCloseBar := bar_index
+            direction := na
+            orderState := "WAIT"
+            stage := na
+        else
+            if not tp1Hit and high >= tp1Price
+                tp1Hit := true
+                evTpMid := true
+                evTpDir := "LONG"
+                evTpText := "TP1 HIT"
+                stage := "TP1 HIT"
+                if moveToBEafterTP1
+                    slPrice := f_tick(entryPrice + atrAtEntry * beBufferATR)
+                    beApplied := true
+            if tp1Hit and not tp2Hit and high >= tp2Price
+                tp2Hit := true
+                evTpMid := true
+                evTpDir := "LONG"
+                evTpText := "TP2 HIT"
+                stage := "TP2 HIT"
+            if tp2Hit and not tp3Hit and high >= tp3Price
+                tp3Hit := true
+                evTpMid := true
+                evTpDir := "LONG"
+                evTpText := "TP3 HIT"
+                stage := "TP3 HIT"
+            if tp3Hit and not tp4Hit and high >= tp4Price
+                tp4Hit := true
+                evTpMid := true
+                evTpDir := "LONG"
+                evTpText := "TP4 HIT"
+                stage := "TP4 HIT"
+            if tp4Hit and high >= tp5Price
+                evFullExit := true
+                evFullExitDir := "LONG"
+                lastTradeCloseBar := bar_index
+                direction := na
+                orderState := "WAIT"
+                stage := na
+
+            if not na(direction) and trailModeInput != "Off"
+                slPrice := f_trailStopLong(slPrice)
+            if not na(direction)
+                barsInTrade = bar_index - entryBarIndex
+                if closeEOD and inFlattenWindow
+                    evExit := true
+                    evExitDir := "LONG"
+                    evExitText := "EXIT — END OF SESSION"
+                    lastTradeCloseBar := bar_index
+                    direction := na
+                    orderState := "WAIT"
+                    stage := na
+                else if barsInTrade >= minBarsBeforeExit and earlyExitLong
+                    evExit := true
+                    evExitDir := "LONG"
+                    evExitText := exitReasonLong
+                    lastTradeCloseBar := bar_index
+                    direction := na
+                    orderState := "WAIT"
+                    stage := na
+
+    else if orderState == "ACTIVE SHORT"
+        mfe := math.max(nz(mfe), entryPrice - low)
+        if high >= slPrice
+            evStopped := true
+            evStoppedDir := "SHORT"
+            lastTradeCloseBar := bar_index
+            direction := na
+            orderState := "WAIT"
+            stage := na
+        else
+            if not tp1Hit and low <= tp1Price
+                tp1Hit := true
+                evTpMid := true
+                evTpDir := "SHORT"
+                evTpText := "TP1 HIT"
+                stage := "TP1 HIT"
+                if moveToBEafterTP1
+                    slPrice := f_tick(entryPrice - atrAtEntry * beBufferATR)
+                    beApplied := true
+            if tp1Hit and not tp2Hit and low <= tp2Price
+                tp2Hit := true
+                evTpMid := true
+                evTpDir := "SHORT"
+                evTpText := "TP2 HIT"
+                stage := "TP2 HIT"
+            if tp2Hit and not tp3Hit and low <= tp3Price
+                tp3Hit := true
+                evTpMid := true
+                evTpDir := "SHORT"
+                evTpText := "TP3 HIT"
+                stage := "TP3 HIT"
+            if tp3Hit and not tp4Hit and low <= tp4Price
+                tp4Hit := true
+                evTpMid := true
+                evTpDir := "SHORT"
+                evTpText := "TP4 HIT"
+                stage := "TP4 HIT"
+            if tp4Hit and low <= tp5Price
+                evFullExit := true
+                evFullExitDir := "SHORT"
+                lastTradeCloseBar := bar_index
+                direction := na
+                orderState := "WAIT"
+                stage := na
+
+            if not na(direction) and trailModeInput != "Off"
+                slPrice := f_trailStopShort(slPrice)
+            if not na(direction)
+                barsInTrade = bar_index - entryBarIndex
+                if closeEOD and inFlattenWindow
+                    evExit := true
+                    evExitDir := "SHORT"
+                    evExitText := "EXIT — END OF SESSION"
+                    lastTradeCloseBar := bar_index
+                    direction := na
+                    orderState := "WAIT"
+                    stage := na
+                else if barsInTrade >= minBarsBeforeExit and earlyExitShort
+                    evExit := true
+                    evExitDir := "SHORT"
+                    evExitText := exitReasonShort
+                    lastTradeCloseBar := bar_index
+                    direction := na
+                    orderState := "WAIT"
+                    stage := na
+
+    // ---------------------------------------------------------------------------------------
+    // 3) FLAT / WATCH — look for new signals (only while WAIT or WATCH, never while
+    //    PENDING or ACTIVE, and never twice for the same direction at once)
+    // ---------------------------------------------------------------------------------------
+    flatState = orderState == "WAIT" or orderState == "WATCH LONG" or orderState == "WATCH SHORT"
+    if flatState
+        cooldownOK = na(lastTradeCloseBar) or (bar_index - lastTradeCloseBar) >= cooldownBars
+
+        if cooldownOK and longSignalNow
+            lockedSetup := setupNameLong
+            lockedGrade := gradeLong
+            lockedScore := longScore
+            if entryModeInput == "Signal Close"
+                entryPrice := f_entryPrice(true)
+                atrAtEntry := atrVal
+                slPrice := f_stopLong(entryPrice)
+                [t1, t2, t3, t4, t5, r] = f_targetsLong(entryPrice, slPrice)
+                tp1Price := t1
+                tp2Price := t2
+                tp3Price := t3
+                tp4Price := t4
+                tp5Price := t5
+                initialRisk := r
+                direction := "LONG"
+                orderState := "ACTIVE LONG"
+                stage := "BEFORE TP1"
+                entryBarIndex := bar_index
+                tp1Hit := false
+                tp2Hit := false
+                tp3Hit := false
+                tp4Hit := false
+                beApplied := false
+                mfe := 0.0
+                evFilled := true
+                evFilledDir := "LONG"
+            else
+                pendingPrice := f_entryPrice(true)
+                pendingBar := bar_index
+                direction := "LONG"
+                orderState := "PENDING LONG"
+                evArmed := true
+                evArmedDir := "LONG"
+
+        else if cooldownOK and shortSignalNow
+            lockedSetup := setupNameShort
+            lockedGrade := gradeShort
+            lockedScore := shortScore
+            if entryModeInput == "Signal Close"
+                entryPrice := f_entryPrice(false)
+                atrAtEntry := atrVal
+                slPrice := f_stopShort(entryPrice)
+                [t1, t2, t3, t4, t5, r] = f_targetsShort(entryPrice, slPrice)
+                tp1Price := t1
+                tp2Price := t2
+                tp3Price := t3
+                tp4Price := t4
+                tp5Price := t5
+                initialRisk := r
+                direction := "SHORT"
+                orderState := "ACTIVE SHORT"
+                stage := "BEFORE TP1"
+                entryBarIndex := bar_index
+                tp1Hit := false
+                tp2Hit := false
+                tp3Hit := false
+                tp4Hit := false
+                beApplied := false
+                mfe := 0.0
+                evFilled := true
+                evFilledDir := "SHORT"
+            else
+                pendingPrice := f_entryPrice(false)
+                pendingBar := bar_index
+                direction := "SHORT"
+                orderState := "PENDING SHORT"
+                evArmed := true
+                evArmedDir := "SHORT"
+
+        else if watchLongActive and not watchShortActive
+            orderState := "WATCH LONG"
+        else if watchShortActive
+            orderState := "WATCH SHORT"
+        else
+            orderState := "WAIT"
+
+        if debugMode
+            if not trendBullChart and not trendBearChart
+                rejTrend += 1
+            if severeConflictLong or severeConflictShort
+                rejHTF += 1
+            if noStructure
+                rejStructure += 1
+            if weakMomentum
+                rejMomentum += 1
+            if lowVolume
+                rejVolume += 1
+            if adxVal < adxTrendMin
+                rejADX += 1
+            if not roomOKLong and not roomOKShort
+                rejRoom += 1
+            if overExtendedLong or overExtendedShort
+                rejExtension += 1
+            if not sessionOK or not entryAllowed
+                rejSession += 1
+            if not cooldownOK
+                rejCooldown += 1
+
+    closeEventText := evStopped ? ("STOPPED (" + evStoppedDir + ")") :
+         evFullExit ? ("TP5 FULL EXIT (" + evFullExitDir + ")") :
+         evExit ? (evExitText + " (" + evExitDir + ")") :
+         evPendingCancelled ? ("PENDING CANCELLED — " + evPendingCancelledReason + " (" + evPendingCancelledDir + ")") : na
+
+// =============================================================================================
+// VISUALS — LEVEL LINES (persistent objects, updated in place; optionally cleared on new/closed
+// trades so history does not accumulate)
+// =============================================================================================
+var line entryLine = na
+var line slLine = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line tp4Line = na
+var line tp5Line = na
+var float slLineLevel = na
+
+wasActiveThisBar = orderState == "ACTIVE LONG" or orderState == "ACTIVE SHORT" or evStopped or evFullExit or evExit
+
+if showLevels
+    if evFilled
+        if not showHistoricalTrades
+            if not na(entryLine)
+                line.delete(entryLine)
+            if not na(slLine)
+                line.delete(slLine)
+            if not na(tp1Line)
+                line.delete(tp1Line)
+            if not na(tp2Line)
+                line.delete(tp2Line)
+            if not na(tp3Line)
+                line.delete(tp3Line)
+            if not na(tp4Line)
+                line.delete(tp4Line)
+            if not na(tp5Line)
+                line.delete(tp5Line)
+        entryLine := line.new(bar_index, entryPrice, bar_index, entryPrice, color=color.new(color.yellow, 0), width=1)
+        slLine := line.new(bar_index, slPrice, bar_index, slPrice, color=color.new(color.red, 0), width=1)
+        slLineLevel := slPrice
+        tp1Line := line.new(bar_index, tp1Price, bar_index, tp1Price, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        tp2Line := line.new(bar_index, tp2Price, bar_index, tp2Price, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        tp3Line := line.new(bar_index, tp3Price, bar_index, tp3Price, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        tp4Line := line.new(bar_index, tp4Price, bar_index, tp4Price, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        tp5Line := line.new(bar_index, tp5Price, bar_index, tp5Price, color=color.new(color.green, 0), width=2, style=line.style_dashed)
+
+    if wasActiveThisBar
+        line.set_x2(entryLine, bar_index)
+        if slPrice != slLineLevel
+            line.set_x2(slLine, bar_index)
+            slLineLevel := slPrice
+            slLine := line.new(bar_index, slPrice, bar_index, slPrice, color=color.new(color.red, 0), width=1)
+        else
+            line.set_x2(slLine, bar_index)
+        if not tp1Hit
+            line.set_x2(tp1Line, bar_index)
+        if not tp2Hit
+            line.set_x2(tp2Line, bar_index)
+        if not tp3Hit
+            line.set_x2(tp3Line, bar_index)
+        if not tp4Hit
+            line.set_x2(tp4Line, bar_index)
+        line.set_x2(tp5Line, bar_index)
+
+    if not showHistoricalTrades and (evStopped or evFullExit or evExit)
+        if not na(entryLine)
+            line.delete(entryLine)
+            entryLine := na
+        if not na(slLine)
+            line.delete(slLine)
+            slLine := na
+        if not na(tp1Line)
+            line.delete(tp1Line)
+            tp1Line := na
+        if not na(tp2Line)
+            line.delete(tp2Line)
+            tp2Line := na
+        if not na(tp3Line)
+            line.delete(tp3Line)
+            tp3Line := na
+        if not na(tp4Line)
+            line.delete(tp4Line)
+            tp4Line := na
+        if not na(tp5Line)
+            line.delete(tp5Line)
+            tp5Line := na
+        slLineLevel := na
+
+// =============================================================================================
+// VISUALS — LABELS. Favorable events (targets) render on the favorable side of price; adverse
+// events (invalidation) render on the adverse side — correct for BOTH directions.
+// =============================================================================================
+f_eventLabel(dir, kind, txt, col) =>
+    isLong = dir == "LONG"
+    favorable = kind == "target"
+    above = (isLong and favorable) or (not isLong and not favorable)
+    yPos = above ? high : low
+    styleVal = above ? label.style_label_down : label.style_label_up
+    label.new(bar_index, yPos, txt, style=styleVal, color=color.new(col, 0), textcolor=color.white, size=size.small)
+
+if evFilled
+    label.new(bar_index, evFilledDir == "LONG" ? low : high, (evFilledDir == "LONG" ? "BUY " : "SELL ") + lockedGrade,
+         style=evFilledDir == "LONG" ? label.style_label_up : label.style_label_down,
+         color=color.new(evFilledDir == "LONG" ? color.green : color.red, 0), textcolor=color.white, size=size.small)
+if evArmed
+    label.new(bar_index, evArmedDir == "LONG" ? low : high, evArmedDir == "LONG" ? "PENDING BUY" : "PENDING SELL",
+         style=evArmedDir == "LONG" ? label.style_label_up : label.style_label_down,
+         color=color.new(color.yellow, 30), textcolor=color.black, size=size.tiny)
+if evTpMid
+    f_eventLabel(evTpDir, "target", evTpText, color.teal)
+if evFullExit
+    f_eventLabel(evFullExitDir, "target", "TP5 FULL EXIT", color.teal)
+if evStopped
+    f_eventLabel(evStoppedDir, "stop", "STOPPED", color.maroon)
+if evExit
+    f_eventLabel(evExitDir, "stop", evExitText, color.orange)
+if evPendingCancelled
+    label.new(bar_index, evPendingCancelledDir == "LONG" ? low : high, "CANCELLED",
+         style=evPendingCancelledDir == "LONG" ? label.style_label_up : label.style_label_down,
+         color=color.new(color.gray, 20), textcolor=color.white, size=size.tiny)
+
+// -- Single persistent, updateable WATCH label (never spammed bar-by-bar) ----------------------
+var label watchLbl = na
+var string lastWatchAlertText = na
+string watchTextNow = orderState == "WATCH LONG" ? watchLongText : orderState == "WATCH SHORT" ? watchShortText : na
+
+if showWatchLabel
+    if not na(watchTextNow)
+        wYPos = orderState == "WATCH LONG" ? low - atrVal * 0.3 : high + atrVal * 0.3
+        wStyle = orderState == "WATCH LONG" ? label.style_label_up : label.style_label_down
+        if na(watchLbl)
+            watchLbl := label.new(bar_index, wYPos, watchTextNow, style=wStyle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
+        else
+            label.set_xy(watchLbl, bar_index, wYPos)
+            label.set_text(watchLbl, watchTextNow)
+            label.set_style(watchLbl, wStyle)
+    else if not na(watchLbl)
+        label.delete(watchLbl)
+        watchLbl := na
+
+watchChanged = not na(watchTextNow) and watchTextNow != lastWatchAlertText
+if barstate.isconfirmed
+    if not na(watchTextNow)
+        if watchChanged
+            lastWatchAlertText := watchTextNow
+    else
+        lastWatchAlertText := na
+
+// =============================================================================================
+// SUPPORT / RESISTANCE ZONES — only the single nearest confirmed level per side
+// =============================================================================================
+var box resBox = na
+var box supBox = na
+
+if showSRZones and barstate.isconfirmed
+    if not na(lastPivotHigh) and lastPivotHigh > close
+        topR = lastPivotHigh + atrVal * srZoneWidthATR
+        botR = lastPivotHigh - atrVal * srZoneWidthATR
+        if na(resBox)
+            resBox := box.new(bar_index, topR, bar_index, botR, border_color=color.new(color.red, 40), bgcolor=color.new(color.red, 88), extend=extend.right)
+        else
+            box.set_top(resBox, topR)
+            box.set_bottom(resBox, botR)
+            box.set_left(resBox, bar_index)
+    else if not na(resBox)
+        box.delete(resBox)
+        resBox := na
+
+    if not na(lastPivotLow) and lastPivotLow < close
+        topS = lastPivotLow + atrVal * srZoneWidthATR
+        botS = lastPivotLow - atrVal * srZoneWidthATR
+        if na(supBox)
+            supBox := box.new(bar_index, topS, bar_index, botS, border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 88), extend=extend.right)
+        else
+            box.set_top(supBox, topS)
+            box.set_bottom(supBox, botS)
+            box.set_left(supBox, bar_index)
+    else if not na(supBox)
+        box.delete(supBox)
+        supBox := na
+
+// =============================================================================================
+// FAIR VALUE GAPS (optional, off by default) — only confirmed historical bars are used; only the
+// most recent `fvgMaxCount` unmitigated gaps are kept.
+// =============================================================================================
+var box[] fvgBoxes = array.new<box>()
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+if showFVG and barstate.isconfirmed
+    if array.size(fvgBoxes) > 0
+        fi = array.size(fvgBoxes) - 1
+        while fi >= 0
+            fbx = array.get(fvgBoxes, fi)
+            ftop = box.get_top(fbx)
+            fbot = box.get_bottom(fbx)
+            if close <= ftop and close >= fbot
+                box.delete(fbx)
+                array.remove(fvgBoxes, fi)
+            fi -= 1
+    if bullFVG
+        fb = box.new(bar_index[2], high[2], bar_index, low, border_color=color.new(color.teal, 60), bgcolor=color.new(color.teal, 85))
+        array.push(fvgBoxes, fb)
+    if bearFVG
+        fb2 = box.new(bar_index[2], low[2], bar_index, high, border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 85))
+        array.push(fvgBoxes, fb2)
+    while array.size(fvgBoxes) > fvgMaxCount
+        oldb = array.shift(fvgBoxes)
+        box.delete(oldb)
+
+// =============================================================================================
+// PLOTS
+// =============================================================================================
+plot(showEMA20 ? ema20 : na, "EMA 20", color=color.new(color.aqua, 0))
+plot(showEMA50 ? ema50 : na, "EMA 50", color=color.new(color.orange, 0))
+plot(showEMA200 ? ema200 : na, "EMA 200", color=color.new(color.purple, 0))
+plot(showVWAP ? vwapVal : na, "VWAP", color=color.new(color.yellow, 0), style=plot.style_circles)
+
+// =============================================================================================
+// ALERTS
+// =============================================================================================
+f_alertMsg(dirText, setupText, gradeText, score, entry, sl, t1, t2, t3, t4, t5) =>
+    "MEKA ALPHA PRO — " + dirText + "\n" +
+     syminfo.ticker + " | " + timeframe.period + "\n" +
+     "Setup: " + setupText + "\n" +
+     "Grade: " + gradeText + " (" + str.tostring(score, "#") + "/100)\n" +
+     "Entry: " + str.tostring(entry, format.mintick) + "\n" +
+     "Invalidation: " + str.tostring(sl, format.mintick) + "\n" +
+     "TP1: " + str.tostring(t1, format.mintick) + "\n" +
+     "TP2: " + str.tostring(t2, format.mintick) + "\n" +
+     "TP3: " + str.tostring(t3, format.mintick) + "\n" +
+     "TP4: " + str.tostring(t4, format.mintick) + "\n" +
+     "TP5: " + str.tostring(t5, format.mintick) + "\n" +
+     "Session: " + activeSession + "\n" +
+     "Trade Window: " + tradeWindow
+
+if evFilled
+    alert(f_alertMsg(evFilledDir, lockedSetup, lockedGrade, lockedScore, entryPrice, slPrice, tp1Price, tp2Price, tp3Price, tp4Price, tp5Price), alert.freq_once_per_bar_close)
+if evArmed
+    alert("MEKA ALPHA PRO — SETUP ARMED (" + evArmedDir + ")\n" + syminfo.ticker + " | " + timeframe.period + "\nPending @ " + str.tostring(pendingPrice, format.mintick), alert.freq_once_per_bar_close)
+if evTpMid
+    alert("MEKA ALPHA PRO — " + evTpText + " (" + evTpDir + ")\n" + syminfo.ticker + " | " + timeframe.period, alert.freq_once_per_bar_close)
+if evFullExit
+    alert("MEKA ALPHA PRO — TP5 FULL EXIT (" + evFullExitDir + ")\n" + syminfo.ticker + " | " + timeframe.period, alert.freq_once_per_bar_close)
+if evStopped
+    alert("MEKA ALPHA PRO — STOPPED (" + evStoppedDir + ")\n" + syminfo.ticker + " | " + timeframe.period, alert.freq_once_per_bar_close)
+if evExit
+    alert("MEKA ALPHA PRO — " + evExitText + " (" + evExitDir + ")\n" + syminfo.ticker + " | " + timeframe.period, alert.freq_once_per_bar_close)
+if watchChanged
+    alert("MEKA ALPHA PRO — " + watchTextNow, alert.freq_once_per_bar_close)
+
+alertcondition(evFilled, title="ENTRY FILLED", message="MEKA ALPHA PRO — Entry filled")
+alertcondition(evArmed, title="SETUP ARMED", message="MEKA ALPHA PRO — Pending order armed")
+alertcondition(evTpMid, title="TARGET HIT", message="MEKA ALPHA PRO — Target hit")
+alertcondition(evFullExit, title="TP5 FULL EXIT", message="MEKA ALPHA PRO — Full exit at TP5")
+alertcondition(evStopped, title="STOPPED", message="MEKA ALPHA PRO — Stopped out")
+alertcondition(evExit, title="EARLY EXIT", message="MEKA ALPHA PRO — Early exit")
+
+// =============================================================================================
+// DASHBOARD — ONE primary panel. Table object is created exactly once (na-check) and only its
+// cells are updated on every barstate.islast tick, so it never multiplies on realtime updates.
+// Deleted (not just left stale) when the user disables it.
+// =============================================================================================
+var table dashTbl = na
+
+if barstate.islast
+    if showDashboard
+        if na(dashTbl)
+            dashTbl := table.new(position.top_right, 2, 21, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 50))
+
+        hasTrade = orderState == "ACTIVE LONG" or orderState == "ACTIVE SHORT" or orderState == "PENDING LONG" or orderState == "PENDING SHORT"
+        isPending = orderState == "PENDING LONG" or orderState == "PENDING SHORT"
+
+        float previewStop = na
+        float pt1 = na
+        float pt2 = na
+        float pt3 = na
+        float pt4 = na
+        float pt5 = na
+        if orderState == "PENDING LONG"
+            previewStop := f_stopLong(pendingPrice)
+            [pa, pb, pc, pd, pe, pr] = f_targetsLong(pendingPrice, previewStop)
+            pt1 := pa
+            pt2 := pb
+            pt3 := pc
+            pt4 := pd
+            pt5 := pe
+        else if orderState == "PENDING SHORT"
+            previewStop := f_stopShort(pendingPrice)
+            [pa2, pb2, pc2, pd2, pe2, pr2] = f_targetsShort(pendingPrice, previewStop)
+            pt1 := pa2
+            pt2 := pb2
+            pt3 := pc2
+            pt4 := pd2
+            pt5 := pe2
+
+        dispEntry = hasTrade ? (isPending ? pendingPrice : entryPrice) : na
+        dispStop  = hasTrade ? (isPending ? previewStop : slPrice) : na
+        dispTp1 = hasTrade ? (isPending ? pt1 : tp1Price) : na
+        dispTp2 = hasTrade ? (isPending ? pt2 : tp2Price) : na
+        dispTp3 = hasTrade ? (isPending ? pt3 : tp3Price) : na
+        dispTp4 = hasTrade ? (isPending ? pt4 : tp4Price) : na
+        dispTp5 = hasTrade ? (isPending ? pt5 : tp5Price) : na
+
+        qty = hasTrade and not na(dispEntry) and not na(dispStop) ? f_qty(dispEntry, dispStop) : na
+        string qtyText = "—"
+        if not na(qty)
+            qtyText := qty < 1 ? "RISK TOO HIGH FOR 1 CONTRACT" : str.tostring(qty, "#")
+
+        tradeText = not na(closeEventText) ? closeEventText : (orderState + (not na(stage) ? " — " + stage : ""))
+        setupText = hasTrade ? lockedSetup : (not na(setupNameLong) ? setupNameLong : not na(setupNameShort) ? setupNameShort : whyWait)
+
+        moveVal = (orderState == "ACTIVE LONG" or orderState == "ACTIVE SHORT") ? (direction == "LONG" ? close - entryPrice : entryPrice - close) : na
+        string moveText = "—"
+        if not na(moveVal)
+            moveText := (moveVal >= 0 ? "+" : "") + str.tostring(moveVal, "#.##") + " pts (MFE " + str.tostring(nz(mfe), "#.##") + ")"
+
+        table.cell(dashTbl, 0, 0, "MEKA ALPHA PRO", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.small)
+        table.cell(dashTbl, 1, 0, modeInput, text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.small)
+
+        table.cell(dashTbl, 0, 1, "Daily Trend", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 1, trendD, text_color=trendD == "BULL" ? color.lime : trendD == "BEAR" ? color.red : color.gray, text_size=size.small)
+        table.cell(dashTbl, 0, 2, "4H Trend", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 2, trend240, text_color=trend240 == "BULL" ? color.lime : trend240 == "BEAR" ? color.red : color.gray, text_size=size.small)
+        table.cell(dashTbl, 0, 3, "1H Trend", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 3, trend60, text_color=trend60 == "BULL" ? color.lime : trend60 == "BEAR" ? color.red : color.gray, text_size=size.small)
+        table.cell(dashTbl, 0, 4, "15M Trend", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 4, trend15, text_color=trend15 == "BULL" ? color.lime : trend15 == "BEAR" ? color.red : color.gray, text_size=size.small)
+        table.cell(dashTbl, 0, 5, "5M Trend", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 5, trend5, text_color=trend5 == "BULL" ? color.lime : trend5 == "BEAR" ? color.red : color.gray, text_size=size.small)
+
+        table.cell(dashTbl, 0, 6, "Structure", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 6, structureLabel, text_color=color.white, text_size=size.small)
+
+        table.cell(dashTbl, 0, 7, "Trade", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 7, tradeText, text_color=direction == "LONG" ? color.lime : direction == "SHORT" ? color.red : color.yellow, text_size=size.small)
+
+        table.cell(dashTbl, 0, 8, "Setup", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 8, setupText, text_color=color.white, text_size=size.small)
+
+        table.cell(dashTbl, 0, 9, "Bias", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 9, "LONG " + str.tostring(longScore, "#") + " (" + gradeLong + ")  /  SHORT " + str.tostring(shortScore, "#") + " (" + gradeShort + ")", text_color=color.white, text_size=size.small)
+
+        table.cell(dashTbl, 0, 10, "Session", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 10, activeSession, text_color=color.white, text_size=size.small)
+        table.cell(dashTbl, 0, 11, "Trade Window", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 11, tradeWindow, text_color=tradeWindow == "PRIME" ? color.lime : tradeWindow == "GOOD" ? color.yellow : tradeWindow == "SLOW" ? color.orange : color.gray, text_size=size.small)
+
+        table.cell(dashTbl, 0, 12, "Entry", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 12, hasTrade ? str.tostring(dispEntry, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
+        table.cell(dashTbl, 0, 13, "TP1", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 13, hasTrade ? str.tostring(dispTp1, format.mintick) + (tp1Hit ? " ✓" : "") : "—", text_color=color.lime, text_size=size.small)
+        table.cell(dashTbl, 0, 14, "TP2", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 14, hasTrade ? str.tostring(dispTp2, format.mintick) + (tp2Hit ? " ✓" : "") : "—", text_color=color.lime, text_size=size.small)
+        table.cell(dashTbl, 0, 15, "TP3", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 15, hasTrade ? str.tostring(dispTp3, format.mintick) + (tp3Hit ? " ✓" : "") : "—", text_color=color.lime, text_size=size.small)
+        table.cell(dashTbl, 0, 16, "TP4", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 16, hasTrade ? str.tostring(dispTp4, format.mintick) + (tp4Hit ? " ✓" : "") : "—", text_color=color.lime, text_size=size.small)
+        table.cell(dashTbl, 0, 17, "TP5", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 17, hasTrade ? str.tostring(dispTp5, format.mintick) : "—", text_color=color.lime, text_size=size.small)
+        table.cell(dashTbl, 0, 18, "Invalidation", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 18, hasTrade ? str.tostring(dispStop, format.mintick) : "—", text_color=color.red, text_size=size.small)
+
+        table.cell(dashTbl, 0, 19, "Move", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 19, moveText, text_color=na(moveVal) ? color.gray : (moveVal >= 0 ? color.lime : color.red), text_size=size.small)
+        table.cell(dashTbl, 0, 20, "Quantity", text_color=color.silver, text_size=size.small)
+        table.cell(dashTbl, 1, 20, qtyText, text_color=color.yellow, text_size=size.small)
+    else if not na(dashTbl)
+        table.delete(dashTbl)
+        dashTbl := na
+
+// =============================================================================================
+// DEBUG PANEL (optional, off by default)
+// =============================================================================================
+var table dbgTbl = na
+
+if barstate.islast
+    if debugMode
+        if na(dbgTbl)
+            dbgTbl := table.new(position.middle_left, 2, 11, bgcolor=color.new(color.black, 10), border_width=1, border_color=color.new(color.gray, 50))
+        table.cell(dbgTbl, 0, 0, "Debug — Rejections", text_color=color.white, bgcolor=color.new(color.maroon, 30), text_size=size.small)
+        table.cell(dbgTbl, 1, 0, "", bgcolor=color.new(color.maroon, 30))
+        table.cell(dbgTbl, 0, 1, "Trend", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 1, str.tostring(rejTrend), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 2, "HTF Conflict", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 2, str.tostring(rejHTF), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 3, "Structure", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 3, str.tostring(rejStructure), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 4, "Momentum", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 4, str.tostring(rejMomentum), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 5, "Volume", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 5, str.tostring(rejVolume), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 6, "ADX", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 6, str.tostring(rejADX), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 7, "Room To Target", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 7, str.tostring(rejRoom), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 8, "Extension", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 8, str.tostring(rejExtension), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 9, "Session/Window", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 9, str.tostring(rejSession), text_color=color.white, text_size=size.tiny)
+        table.cell(dbgTbl, 0, 10, "Cooldown", text_color=color.silver, text_size=size.tiny)
+        table.cell(dbgTbl, 1, 10, str.tostring(rejCooldown), text_color=color.white, text_size=size.tiny)
+    else if not na(dbgTbl)
+        table.delete(dbgTbl)
+        dbgTbl := na
