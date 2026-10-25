@@ -181,3 +181,17 @@ def test_extended_hours_minute_bars_are_not_stored(db):
     assert result.ok and result.bars_written == 5
     stored = {b.ts.replace(tzinfo=UTC) for b in db.scalars(select(Bar)).all()}
     assert pre.ts not in stored and post.ts not in stored
+
+
+def test_rest_minute_ingestion_backfills_gap_behind_streamed_bars(db):
+    # REST covered up to 9:31; the stream then wrote 9:35 (missing 9:32-9:34 during a drop).
+    upsert_bars(db, [minute(9, 30), minute(9, 31)])
+    streamed = minute(9, 35).model_copy(update={"source": "alpaca_iex_stream"})
+    upsert_bars(db, [streamed])
+    now = datetime(2026, 10, 22, 9, 36, 10, tzinfo=NY)
+    src = FakeBarSource({"SPY": [minute(9, m) for m in range(30, 36)]})
+    result = run(db, src, tf="1Min", now=now)
+    # Starts from REST coverage (9:31), not the newest streamed bar (9:35).
+    assert src.calls[0][2] == datetime(2026, 10, 22, 9, 31, tzinfo=NY)
+    assert result.ok and result.bars_written == 5
+    assert len(db.scalars(select(Bar)).all()) == 6

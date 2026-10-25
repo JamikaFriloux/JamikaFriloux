@@ -84,7 +84,8 @@ services:
   executor:
     <<: *backend
     env_file: [.env, broker.env]
-    command: ["celery", "-A", "atlas.apps.worker.celery_app", "worker", "-Q", "execution", "-n", "executor@%h", "--concurrency", "1"]
+    # Celery `execution` worker + live market-data stream (both need the broker keys).
+    command: ["python", "-m", "atlas.apps.executor.run"]
 
   dashboard:
     build:

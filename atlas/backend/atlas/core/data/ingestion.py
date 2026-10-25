@@ -160,13 +160,18 @@ def ingestion_symbols(session: Session, defaults: Iterable[str]) -> list[str]:
 
 
 def latest_stored(
-    session: Session, symbols: Sequence[str], timeframe: str, adjustment: str
+    session: Session,
+    symbols: Sequence[str],
+    timeframe: str,
+    adjustment: str,
+    source: str | None = None,
 ) -> dict[str, datetime]:
-    rows = session.execute(
-        select(Bar.symbol, func.max(Bar.ts))
-        .where(Bar.symbol.in_(symbols), Bar.timeframe == timeframe, Bar.adjustment == adjustment)
-        .group_by(Bar.symbol)
-    ).all()
+    query = select(Bar.symbol, func.max(Bar.ts)).where(
+        Bar.symbol.in_(symbols), Bar.timeframe == timeframe, Bar.adjustment == adjustment
+    )
+    if source is not None:
+        query = query.where(Bar.source == source)
+    rows = session.execute(query.group_by(Bar.symbol)).all()
     return {sym: _utc(ts) for sym, ts in rows if ts is not None}
 
 
@@ -235,9 +240,9 @@ def ingest_bars(
 ) -> IngestionResult:
     """Fetch, validate and store bars for ``symbols``; write one report row per symbol.
 
-    ``incremental`` fetches from each batch's oldest latest-stored bar (inclusive, so the last
-    stored bar is refreshed) instead of the full ``lookback`` window. Daily bars use the full
-    window so split/dividend adjustments to history are picked up.
+    ``incremental`` fetches from the oldest bar this source last stored for the batch
+    (inclusive, so that bar is refreshed) instead of the full ``lookback`` window. Daily bars
+    use the full window so split/dividend adjustments to history are picked up.
     """
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise ValueError(f"unsupported ingestion timeframe {timeframe}")
@@ -252,9 +257,12 @@ def ingest_bars(
     for i in range(0, len(symbols), _BATCH_SYMBOLS):
         batch = list(symbols[i : i + _BATCH_SYMBOLS])
         stored = latest_stored(session, batch, timeframe, adjustment)
+        # Resume from what this source has covered, not from the newest bar of any source:
+        # streamed bars must not hide a gap the stream missed during a disconnect.
+        covered = latest_stored(session, batch, timeframe, adjustment, source.source)
         start = floor
-        if incremental and len(stored) == len(batch):
-            start = max(floor, min(stored.values()))
+        if incremental and len(covered) == len(batch):
+            start = max(floor, min(covered.values()))
         fetch_error: str | None = None
         fetched: dict[str, list[BarRecord]] = {}
         try:

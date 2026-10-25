@@ -161,3 +161,29 @@ def test_data_quality_endpoint_returns_latest_report_per_series(client, session_
     assert client.get("/api/v1/data/quality").status_code == 401
     rows = client.get("/api/v1/data/quality", headers=_auth(client, "viewer")).json()
     assert [(r["symbol"], r["ok"]) for r in rows] == [("QQQ", True), ("SPY", True)]
+
+
+def test_market_live_endpoint(client):
+    import fakeredis
+
+    from atlas.core.data.live import LiveSnapshot, LiveStore, Quote
+
+    assert client.get("/api/v1/market/live").status_code == 401
+    headers = _auth(client, "viewer")
+    # The test app has no Redis: say so instead of inventing data.
+    assert client.get("/api/v1/market/live", headers=headers).status_code == 503
+
+    r = fakeredis.FakeRedis()
+    store = LiveStore(r)
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    old = datetime(2026, 10, 22, 15, 0, tzinfo=UTC)
+    store.write([LiveSnapshot("SPY", Quote("SPY", Decimal("1"), Decimal("1.01"), Decimal(1),
+                                           Decimal(1), old))])  # fmt: skip
+    store.write_status({"status": "ok", "state": "subscribed"})
+    client.app.state.redis = r
+    body = client.get("/api/v1/market/live", headers=headers).json()
+    assert body["trading_mode"] == "PAPER" and body["stream"]["state"] == "subscribed"
+    (q,) = body["quotes"]
+    assert q["symbol"] == "SPY" and q["bid"] == "1" and q["fresh"] is False and q["last"] is None

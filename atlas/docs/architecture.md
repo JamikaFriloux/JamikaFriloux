@@ -11,10 +11,16 @@
   ┌─────▼─────┐           ┌─────▼──────┐      Alpaca PAPER API
   │  worker   │           │  executor  │ ───▶ paper-api.alpaca.markets
   │ research, │  (no      │ broker sync│      data.alpaca.markets
-  │ LLM agents│  broker   │ orders,    │
+  │ LLM agents│  broker   │ orders,    │      stream.data.alpaca.markets (WebSocket)
   │ reports   │  creds)   │ kill switch│
-  └───────────┘           └────────────┘
+  └───────────┘           │ bar ingest │
+                          │ live stream│ ──▶ Redis (latest quotes) ──▶ api /market/live
+                          └────────────┘
 ```
+
+The executor process (`python -m atlas.apps.executor.run`) runs the Celery `execution`
+worker and the live market-data stream side by side, because both need the broker keys
+and only this container has them. If either exits, both stop and the container restarts.
 
 ## Order lifecycle (deterministic)
 `CANDIDATE → VALIDATED → RISK_APPROVED → SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED / FILLED / CANCELLED / REJECTED / EXPIRED`

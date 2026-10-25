@@ -58,6 +58,11 @@ class AtlasSettings(BaseSettings):
     ingest_daily_lookback_days: int = Field(default=400, ge=30, le=3650)
     ingest_minute_lookback_days: int = Field(default=5, ge=1, le=30)
 
+    # Live market-data stream (executor). Alpaca's free IEX plan allows 30 streamed symbols.
+    stream_enabled: bool = True
+    stream_max_symbols: int = Field(default=30, ge=1, le=1000)
+    stream_data_timeout_seconds: float = Field(default=60.0, ge=10, le=600)
+
     @model_validator(mode="after")
     def _require_strong_secret_outside_dev(self) -> AtlasSettings:
         secret = self.jwt_secret.get_secret_value()

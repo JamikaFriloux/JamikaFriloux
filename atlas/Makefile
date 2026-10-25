@@ -1,5 +1,5 @@
 # Convenience targets. Run from the atlas/ directory.
-.PHONY: setup test lint typecheck migrate api worker executor beat dashboard up down
+.PHONY: setup test lint typecheck migrate api worker executor stream beat dashboard up down
 
 setup:
 	cd backend && uv sync
@@ -24,8 +24,11 @@ api:
 worker:
 	cd backend && uv run celery -A atlas.apps.worker.celery_app worker -Q default -n worker@%h
 
-executor:
-	cd backend && uv run celery -A atlas.apps.worker.celery_app worker -Q execution -n executor@%h --concurrency 1
+executor:  # Celery execution worker + live stream, as in Docker
+	cd backend && uv run python -m atlas.apps.executor.run
+
+stream:  # live stream only
+	cd backend && uv run python -m atlas.apps.executor.stream_service
 
 beat:
 	cd backend && uv run celery -A atlas.apps.worker.celery_app beat

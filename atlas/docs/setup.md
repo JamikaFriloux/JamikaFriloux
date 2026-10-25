@@ -83,4 +83,8 @@ enables the gate; no orders are generated.
 | Executor: `LiveEnvironmentDetected` | Keys belong to a live account. Generate paper keys. |
 | Overview says "No broker data yet" | Executor not running, or `broker.env` missing; check `docker compose logs executor`. |
 | Broker status `error` in Settings | Alpaca unreachable or keys revoked; a Telegram alert is sent if configured. |
+| Stream status `error`, last error `402: auth failed` | Paper keys wrong or revoked. The stream retries every 5 min; fix `broker.env` and restart the executor. |
+| Stream last error `406: connection limit exceeded` | Alpaca allows one data stream per account. Stop any other client (another ATLAS instance, a notebook) using the same keys. |
+| Stream last error `InvalidProxyStatus` / never connects | Outbound WebSocket to `stream.data.alpaca.markets:443` is blocked by a firewall or proxy. |
+| Stream `degraded` with symbols in `stale` | No quote within `max_quote_age_seconds` during market hours. Normal for thinly traded names on the free IEX feed. Trading treats them as unavailable. |
 | Calendar discrepancies in `check_alpaca` | Update `exchange-calendars` (new holiday rules) and re-run. |

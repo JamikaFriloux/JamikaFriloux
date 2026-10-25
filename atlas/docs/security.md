@@ -42,6 +42,7 @@
   proxy (Caddy/nginx/cloud LB) with HTTPS.
 * Docker bridge networks permit outbound traffic. In production, restrict egress at the
   host/cloud firewall: executor → `paper-api.alpaca.markets`, `data.alpaca.markets`,
+  `stream.data.alpaca.markets` (WebSocket),
   `api.telegram.org`; worker → LLM provider, data sources; api → none (Sentry if used).
 
 ## Supply chain
