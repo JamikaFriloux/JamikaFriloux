@@ -13,6 +13,7 @@ from atlas.core.execution.state_machine import OPEN_BROKER_STATES
 from atlas.core.models.db import (
     AccountSnapshot,
     AuditLog,
+    DataQualityReport,
     Order,
     Position,
     Role,
@@ -172,6 +173,42 @@ def audit_log(
             "action": r.action,
             "target": r.target,
             "details": r.details,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/data/quality")
+def data_quality(
+    db: Session = Depends(get_db), _user: User = Depends(require_role(Role.VIEWER))
+) -> list[dict[str, Any]]:
+    """Latest ingestion report for each symbol and timeframe."""
+    latest = (
+        select(
+            DataQualityReport.symbol,
+            DataQualityReport.timeframe,
+            func.max(DataQualityReport.id).label("id"),
+        )
+        .group_by(DataQualityReport.symbol, DataQualityReport.timeframe)
+        .subquery()
+    )
+    rows = db.scalars(
+        select(DataQualityReport)
+        .join(latest, DataQualityReport.id == latest.c.id)
+        .order_by(DataQualityReport.symbol, DataQualityReport.timeframe)
+    ).all()
+    return [
+        {
+            "symbol": r.symbol,
+            "timeframe": r.timeframe,
+            "checked_at": _iso(r.ts),
+            "source": r.source,
+            "ok": r.ok,
+            "stale": r.stale,
+            "latest_bar_ts": _iso(r.latest_bar_ts),
+            "expected_latest_ts": _iso(r.expected_latest_ts),
+            "bars_written": r.bars_written,
+            "issues": r.issues,
         }
         for r in rows
     ]

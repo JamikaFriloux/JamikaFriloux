@@ -140,3 +140,24 @@ def test_deactivated_user_token_rejected(client, session_factory):
         s.execute(update(User).where(User.username == "viewer").values(is_active=False))
         s.commit()
     assert client.get("/api/v1/status", headers=headers).status_code == 401
+
+
+def test_data_quality_endpoint_returns_latest_report_per_series(client, session_factory):
+    import uuid
+    from datetime import UTC, datetime
+
+    from atlas.core.models.db import DataQualityReport
+
+    def report(symbol, ok, ts):
+        return DataQualityReport(
+            run_id=uuid.uuid4(), ts=ts, symbol=symbol, timeframe="1Day", source="alpaca_iex",
+            window_start=ts, window_end=ts, ok=ok, stale=not ok, issues=[],
+        )  # fmt: skip
+
+    t1, t2 = datetime(2026, 10, 21, tzinfo=UTC), datetime(2026, 10, 22, tzinfo=UTC)
+    with session_factory() as s:
+        s.add_all([report("SPY", False, t1), report("SPY", True, t2), report("QQQ", True, t2)])
+        s.commit()
+    assert client.get("/api/v1/data/quality").status_code == 401
+    rows = client.get("/api/v1/data/quality", headers=_auth(client, "viewer")).json()
+    assert [(r["symbol"], r["ok"]) for r in rows] == [("QQQ", True), ("SPY", True)]

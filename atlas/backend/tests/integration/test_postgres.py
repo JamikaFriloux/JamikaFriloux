@@ -85,3 +85,39 @@ def test_kill_switch_singleton_enforced(engine):
                 text("INSERT INTO kill_switch (id, engaged, version) VALUES (2, false, 0)")
             )
         conn.rollback()
+
+
+def test_bar_upsert_on_conflict_and_quality_report(engine):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from atlas.core.data.calendar import NY, MarketCalendar
+    from atlas.core.data.ingestion import ingest_bars
+    from atlas.core.models.db import Bar, DataQualityReport
+    from tests.fakes import FakeBarSource, make_bar
+
+    now = datetime(2026, 10, 22, 17, 0, tzinfo=NY)
+    days = [make_bar("PGTST", datetime(2026, 10, d, tzinfo=NY)) for d in (21, 22)]
+    src = FakeBarSource({"PGTST": days})
+    with sessionmaker(bind=engine)() as s:
+        for close in ("100", "101.25"):
+            src.bars["PGTST"][-1] = make_bar(
+                "PGTST", datetime(2026, 10, 22, tzinfo=NY), close=close
+            )
+            result = ingest_bars(
+                s,
+                src,
+                ["PGTST"],
+                "1Day",
+                now=now,
+                lookback=timedelta(days=30),
+                incremental=False,
+                calendar=MarketCalendar(),
+            )
+            assert result.ok
+        rows = s.scalars(select(Bar).where(Bar.symbol == "PGTST").order_by(Bar.ts)).all()
+        assert len(rows) == 2 and rows[-1].close == Decimal("101.25")
+        reports = s.scalars(select(DataQualityReport).where(DataQualityReport.symbol == "PGTST"))
+        assert [r.ok for r in reports] == [True, True]
+        s.rollback()

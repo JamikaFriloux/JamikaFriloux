@@ -52,6 +52,18 @@ celery_app.conf.update(
             "schedule": 60.0,
             "options": {"expires": 55},
         },
+        # Daily bars: after the close (also catches early closes) and a premarket catch-up.
+        "ingest-daily-bars": {
+            "task": "atlas.execution.ingest_daily_bars",
+            "schedule": crontab(hour="7,16", minute=20, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
+        # Minute bars: every 5 minutes; the task itself skips outside session + 30 minutes.
+        "ingest-minute-bars": {
+            "task": "atlas.execution.ingest_minute_bars",
+            "schedule": crontab(minute="*/5", hour="9-16", day_of_week="mon-fri"),
+            "options": {"expires": 240},
+        },
         "premarket-readiness": {
             "task": "atlas.worker.premarket_readiness",
             "schedule": crontab(hour=8, minute=30, day_of_week="mon-fri"),

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from decimal import Decimal
 
+from atlas.core.data.bars import BarRecord
 from atlas.core.execution.broker import (
     AccountInfo,
     BrokerOrder,
@@ -104,7 +106,68 @@ class FakeBroker:
 class RecordingNotifier:
     def __init__(self) -> None:
         self.messages: list[tuple[str, bool]] = []
+        self.events: list[object] = []
 
     def send(self, text: str, *, critical: bool = False) -> bool:
         self.messages.append((text, critical))
         return True
+
+    def notify(self, event: object, text: str, *, critical: bool = False) -> bool:
+        self.events.append(event)
+        return self.send(text, critical=critical)
+
+
+class FakeBarSource:
+    """In-memory bar source. ``bars`` maps symbol -> full history; requests are windowed."""
+
+    source = "fake_feed"
+
+    def __init__(self, bars: dict[str, list[BarRecord]] | None = None) -> None:
+        self.bars = bars or {}
+        self.calls: list[tuple[list[str], str, datetime, datetime]] = []
+        self.error: Exception | None = None
+
+    def get_bars(
+        self,
+        symbols: list[str],
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        adjustment: str = "all",
+    ) -> dict[str, list[BarRecord]]:
+        self.calls.append((list(symbols), timeframe, start, end))
+        if self.error is not None:
+            raise self.error
+        out = {}
+        for sym in symbols:
+            series = [
+                b
+                for b in self.bars.get(sym, [])
+                if b.timeframe == timeframe and start <= b.ts <= end
+            ]
+            if series:
+                out[sym] = series
+        return out
+
+
+def make_bar(
+    symbol: str,
+    ts: datetime,
+    timeframe: str = "1Day",
+    close: str = "100",
+    *,
+    high: str | None = None,
+) -> BarRecord:
+    c = Decimal(close)
+    return BarRecord(
+        symbol=symbol,
+        timeframe=timeframe,  # type: ignore[arg-type]
+        ts=ts,
+        open=c,
+        high=Decimal(high) if high else c + 1,
+        low=c - 1,
+        close=c,
+        volume=Decimal(1000),
+        source="fake_feed",
+        adjustment="all",
+    )

@@ -53,6 +53,11 @@ class AtlasSettings(BaseSettings):
 
     timezone: str = "America/New_York"
 
+    # Bar ingestion (executor). Benchmarks always ingested; watchlist symbols are added.
+    ingest_default_symbols: list[str] = ["SPY", "QQQ", "IWM", "DIA"]
+    ingest_daily_lookback_days: int = Field(default=400, ge=30, le=3650)
+    ingest_minute_lookback_days: int = Field(default=5, ge=1, le=30)
+
     @model_validator(mode="after")
     def _require_strong_secret_outside_dev(self) -> AtlasSettings:
         secret = self.jwt_secret.get_secret_value()

@@ -224,3 +224,31 @@ class Watchlist(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class DataQualityReport(Base):
+    """Outcome of one ingestion/validation pass for a symbol and timeframe.
+
+    ``ok`` is false when any critical issue was found; bars from such a pass are not written.
+    ``stale`` is true when the newest stored bar is older than the calendar says it should be.
+    """
+
+    __tablename__ = "data_quality_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    symbol: Mapped[str] = mapped_column(String(16))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(32))
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    bars_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    bars_written: Mapped[int] = mapped_column(Integer, default=0)
+    latest_bar_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expected_latest_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ok: Mapped[bool] = mapped_column(Boolean)
+    stale: Mapped[bool] = mapped_column(Boolean)
+    issues: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+
+    __table_args__ = (Index("ix_dq_reports_symbol_tf_ts", "symbol", "timeframe", "ts"),)
