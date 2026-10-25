@@ -52,6 +52,12 @@ celery_app.conf.update(
             "schedule": 60.0,
             "options": {"expires": 55},
         },
+        # Universe: premarket, from the previous session's consolidated daily bars.
+        "refresh-universe": {
+            "task": "atlas.execution.refresh_universe",
+            "schedule": crontab(hour=6, minute=45, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
         # Daily bars: after the close (also catches early closes) and a premarket catch-up.
         "ingest-daily-bars": {
             "task": "atlas.execution.ingest_daily_bars",

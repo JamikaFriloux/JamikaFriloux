@@ -80,3 +80,22 @@ def test_lookup_404_returns_none():
             raise _api_error(404, "order not found")
 
     assert AlpacaPaperGateway(C()).get_order_by_client_id("x") is None  # type: ignore[arg-type]
+
+
+def test_list_assets_parses_raw_json_including_unknown_exchanges():
+    from atlas.integrations.alpaca.trading import AlpacaPaperGateway
+
+    class Client:
+        def get(self, path, params):
+            assert path == "/assets" and params == {"status": "active", "asset_class": "us_equity"}
+            return [
+                {"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "class": "us_equity",
+                 "status": "active", "tradable": True, "fractionable": True, "shortable": True,
+                 "easy_to_borrow": True},
+                {"symbol": "NEWCO", "name": None, "exchange": "TXSE", "class": "us_equity",
+                 "status": "active", "tradable": True},
+            ]  # fmt: skip
+
+    assets = AlpacaPaperGateway(Client()).list_assets()  # type: ignore[arg-type]
+    assert [a.symbol for a in assets] == ["AAPL", "NEWCO"]
+    assert assets[1].exchange == "TXSE" and assets[1].name == "" and not assets[1].shortable

@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from atlas.core.data.bars import BarRecord
+from atlas.core.data.universe import AssetInfo
 from atlas.core.execution.broker import (
     AccountInfo,
     BrokerOrder,
@@ -171,3 +172,52 @@ def make_bar(
         source="fake_feed",
         adjustment="all",
     )
+
+
+class FakeAssetSource:
+    def __init__(self, assets: list[AssetInfo]) -> None:
+        self.assets = assets
+        self.error: Exception | None = None
+
+    def list_assets(self) -> list[AssetInfo]:
+        if self.error is not None:
+            raise self.error
+        return list(self.assets)
+
+
+def make_asset(symbol: str, exchange: str = "NASDAQ", **kw: object) -> AssetInfo:
+    fields: dict[str, object] = {
+        "symbol": symbol,
+        "name": f"{symbol} Inc",
+        "exchange": exchange,
+        "asset_class": "us_equity",
+        "status": "active",
+        "tradable": True,
+        "fractionable": True,
+    }
+    fields.update(kw)
+    return AssetInfo(**fields)  # type: ignore[arg-type]
+
+
+def daily_series(
+    symbol: str, days: list, close: str = "50", volume: str = "1000000"
+) -> list[BarRecord]:
+    """One raw daily bar per session date, stamped at midnight New York like Alpaca."""
+    from atlas.core.data.calendar import NY
+
+    c = Decimal(close)
+    return [
+        BarRecord(
+            symbol=symbol,
+            timeframe="1Day",
+            ts=datetime(d.year, d.month, d.day, tzinfo=NY),
+            open=c,
+            high=c + 1,
+            low=c - 1,
+            close=c,
+            volume=Decimal(volume),
+            source="fake_sip",
+            adjustment="raw",
+        )
+        for d in days
+    ]

@@ -121,3 +121,34 @@ def test_bar_upsert_on_conflict_and_quality_report(engine):
         reports = s.scalars(select(DataQualityReport).where(DataQualityReport.symbol == "PGTST"))
         assert [r.ok for r in reports] == [True, True]
         s.rollback()
+
+
+def test_universe_snapshots_are_immutable_but_deletable(engine):
+    from datetime import date
+
+    from atlas.core.models.db import UniverseMember, UniverseSnapshot
+
+    with sessionmaker(bind=engine)() as s:
+        snap = UniverseSnapshot(as_of=date(2026, 10, 23), source="t", criteria={}, assets_seen=1,
+                                member_count=1, exclusions={})  # fmt: skip
+        s.add(snap)
+        s.flush()
+        s.add(UniverseMember(snapshot_id=snap.id, symbol="AAA", name="A", exchange="NYSE",
+                             last_close=Decimal(1), adv_usd=Decimal(1), sessions=20,
+                             fractionable=True, shortable=False, easy_to_borrow=False))  # fmt: skip
+        s.commit()
+        snap_id = snap.id
+    with engine.connect() as conn:
+        for sql in (
+            "UPDATE universe_snapshots SET member_count = 99",
+            "UPDATE universe_members SET adv_usd = 0",
+        ):
+            with pytest.raises(DBAPIError, match="immutable"):
+                conn.execute(text(sql))
+            conn.rollback()
+        conn.execute(text("DELETE FROM universe_snapshots WHERE id = :i"), {"i": snap_id})
+        left = conn.execute(
+            text("SELECT count(*) FROM universe_members WHERE snapshot_id = :i"), {"i": snap_id}
+        ).scalar()
+        assert left == 0  # members cascade with their snapshot
+        conn.commit()

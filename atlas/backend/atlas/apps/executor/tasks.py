@@ -26,6 +26,11 @@ from atlas.core.data.ingestion import (
     ingestion_symbols,
     last_completed_session,
 )
+from atlas.core.data.universe import (
+    UniverseBuildError,
+    UniverseCriteria,
+    build_universe_snapshot,
+)
 from atlas.core.execution.broker import BrokerGateway
 from atlas.core.execution.reconciliation import reconcile
 from atlas.core.models.session import session_scope
@@ -90,6 +95,53 @@ def _run_ingestion(timeframe: Timeframe, now: datetime) -> dict[str, object]:
             f"stale={result.stale_symbols[:10]}",
         )
     return {"ok": result.ok, **summary}
+
+
+@lru_cache(maxsize=1)
+def get_universe_bar_source() -> BarSource:
+    """Consolidated (SIP) daily bars: IEX volume alone would understate dollar volume ~30x."""
+    from atlas.integrations.alpaca.market_data import AlpacaMarketData
+
+    return AlpacaMarketData.from_settings(BrokerSettings(), feed="sip")  # type: ignore[call-arg]
+
+
+@celery_app.task(name="atlas.execution.refresh_universe", soft_time_limit=840, time_limit=900)
+def refresh_universe(force: bool = False) -> dict[str, object]:
+    now = datetime.now(UTC)
+    try:
+        gateway = get_gateway()
+        source = get_universe_bar_source()
+        with session_scope() as s:
+            snap, created = build_universe_snapshot(
+                s,
+                gateway,  # type: ignore[arg-type]
+                source,
+                UniverseCriteria.from_policy(get_policy().policy),
+                now=now,
+                force=force,
+            )
+            summary: dict[str, object] = {
+                "snapshot_id": snap.id,
+                "as_of": snap.as_of.isoformat(),
+                "members": snap.member_count,
+                "assets_seen": snap.assets_seen,
+                "created": created,
+            }
+            beat(s, "universe", "ok", **summary)
+    except Exception as exc:
+        # Our own build errors carry a safe reason; anything else is logged by type only.
+        reason = str(exc)[:200] if isinstance(exc, UniverseBuildError) else type(exc).__name__
+        log.error("universe_refresh_failed", error=reason)
+        with session_scope() as s:
+            beat(s, "universe", "error", error=type(exc).__name__)
+        build_notifier().notify(
+            Event.CRITICAL_ERROR,
+            f"[PAPER TRADING] Universe refresh failed ({type(exc).__name__}); "
+            "the previous snapshot stays in use.",
+        )
+        return {"ok": False, "error": type(exc).__name__}
+    log.info("universe_refreshed", **summary)
+    return {"ok": True, **summary}
 
 
 @celery_app.task(name="atlas.execution.ingest_daily_bars")

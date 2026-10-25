@@ -39,12 +39,12 @@ class AlpacaMarketData:
         self._feed = DataFeed(feed)
 
     @classmethod
-    def from_settings(cls, settings: BrokerSettings) -> AlpacaMarketData:
+    def from_settings(cls, settings: BrokerSettings, feed: str | None = None) -> AlpacaMarketData:
         client = StockHistoricalDataClient(
             api_key=settings.api_key_id.get_secret_value(),
             secret_key=settings.api_secret_key.get_secret_value(),
         )
-        return cls(client, settings.data_feed)
+        return cls(client, feed or settings.data_feed)
 
     @property
     def source(self) -> str:

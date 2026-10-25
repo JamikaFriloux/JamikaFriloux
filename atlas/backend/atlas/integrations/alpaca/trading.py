@@ -19,6 +19,7 @@ from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest
 
 from atlas.core.configuration.settings import PAPER_TRADING_BASE_URL, BrokerSettings
+from atlas.core.data.universe import AssetInfo
 from atlas.core.execution.broker import (
     AccountInfo,
     BrokerError,
@@ -161,3 +162,24 @@ class AlpacaPaperGateway:
     def cancel_all_open_orders(self) -> list[str]:
         responses = self._call(self._client.cancel_orders) or []
         return [str(getattr(r, "id", "")) for r in responses]
+
+    def list_assets(self) -> list[AssetInfo]:
+        """Active US equities. Read as raw JSON: alpaca-py's Asset model rejects exchange codes
+        it doesn't know yet (e.g. "TXSE"), which would fail the whole listing."""
+        raw = self._call(
+            self._client.get, "/assets", {"status": "active", "asset_class": "us_equity"}
+        )
+        return [
+            AssetInfo(
+                symbol=str(a["symbol"]),
+                name=str(a.get("name") or ""),
+                exchange=str(a.get("exchange") or ""),
+                asset_class=str(a.get("class") or ""),
+                status=str(a.get("status") or ""),
+                tradable=bool(a.get("tradable")),
+                fractionable=bool(a.get("fractionable")),
+                shortable=bool(a.get("shortable")),
+                easy_to_borrow=bool(a.get("easy_to_borrow")),
+            )
+            for a in raw or []
+        ]

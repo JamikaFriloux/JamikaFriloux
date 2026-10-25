@@ -61,11 +61,19 @@ def test_login_failure_generic(client):
 
 
 def test_login_rate_limited(client, settings):
-    codes = [
-        client.post("/api/v1/auth/login", json={"username": "x", "password": "y"}).status_code
-        for _ in range(settings.login_rate_limit_per_minute + 2)
-    ]
-    assert 429 in codes
+    from unittest.mock import patch
+
+    # Freeze the clock mid-window: the limiter uses fixed 60 s windows, so a burst that
+    # straddled a minute boundary would split across two windows and never hit the limit.
+    with patch("atlas.core.security.rate_limit.time.time", return_value=1_800_000_030.0):
+        codes = [
+            client.post("/api/v1/auth/login", json={"username": "x", "password": "y"}).status_code
+            for _ in range(settings.login_rate_limit_per_minute + 2)
+        ]
+    assert codes[: settings.login_rate_limit_per_minute] == [401] * (
+        settings.login_rate_limit_per_minute
+    )
+    assert codes[-2:] == [429, 429]
 
 
 def test_status_requires_auth_and_shows_paper(client):
@@ -187,3 +195,40 @@ def test_market_live_endpoint(client):
     assert body["trading_mode"] == "PAPER" and body["stream"]["state"] == "subscribed"
     (q,) = body["quotes"]
     assert q["symbol"] == "SPY" and q["bid"] == "1" and q["fresh"] is False and q["last"] is None
+
+
+def test_universe_and_watchlist_endpoints(client, session_factory):
+    from tests.unit.test_watchlists import seed_universe
+
+    viewer, operator = _auth(client, "viewer"), _auth(client, "operator")
+    assert client.get("/api/v1/universe", headers=viewer).json()["snapshot"] is None
+    # No universe yet: additions are refused, not silently accepted.
+    r = client.post("/api/v1/watchlists", json={"name": "core", "symbols": ["AAPL"]},
+                    headers=operator)  # fmt: skip
+    assert r.status_code == 409
+
+    with session_factory() as s:
+        seed_universe(s, ["AAPL", "MSFT", "NVDA"])
+        s.commit()
+    body = client.get("/api/v1/universe?q=ms", headers=viewer).json()
+    assert body["snapshot"]["member_count"] == 3 and [m["symbol"] for m in body["members"]] == [
+        "MSFT"
+    ]
+
+    new = {"name": "core", "symbols": ["aapl", "MSFT"]}
+    assert client.post("/api/v1/watchlists", json=new, headers=viewer).status_code == 403
+    r = client.post("/api/v1/watchlists", json=new, headers=operator)
+    assert r.status_code == 201 and r.json()["symbols"] == ["AAPL", "MSFT"]
+    assert client.post("/api/v1/watchlists", json=new, headers=operator).status_code == 400
+    r = client.put("/api/v1/watchlists/core", json={"symbols": ["PENNY"]}, headers=operator)
+    assert r.status_code == 422 and "PENNY" in r.json()["detail"]["rejected"]
+    r = client.put("/api/v1/watchlists/nope", json={"symbols": ["AAPL"]}, headers=operator)
+    assert r.status_code == 404
+    r = client.put("/api/v1/watchlists/core", json={"symbols": ["NVDA"]}, headers=operator)
+    assert r.status_code == 200
+
+    view = client.get("/api/v1/watchlists", headers=viewer).json()
+    assert view["watchlists"][0]["symbols"] == [{"symbol": "NVDA", "in_universe": True}]
+    assert view["stream"] == {"symbols": 5, "capacity": 30}  # NVDA + 4 benchmarks
+    assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 204
+    assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 404

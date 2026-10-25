@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -18,6 +18,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -252,3 +253,41 @@ class DataQualityReport(Base):
     issues: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
 
     __table_args__ = (Index("ix_dq_reports_symbol_tf_ts", "symbol", "timeframe", "ts"),)
+
+
+class UniverseSnapshot(Base):
+    """Point-in-time tradable universe, built from data up to and including ``as_of``.
+
+    Rows are written once and never updated, so research can ask "what was tradable on day
+    D?" without survivorship bias (for days on or after the first snapshot).
+    """
+
+    __tablename__ = "universe_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    as_of: Mapped[date] = mapped_column(Date, index=True)  # last session in the data window
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    source: Mapped[str] = mapped_column(String(32))
+    criteria: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    assets_seen: Mapped[int] = mapped_column(Integer)
+    member_count: Mapped[int] = mapped_column(Integer)
+    exclusions: Mapped[dict[str, int]] = mapped_column(JSONType, default=dict)
+
+
+class UniverseMember(Base):
+    __tablename__ = "universe_members"
+
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("universe_snapshots.id", ondelete="CASCADE"), primary_key=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    exchange: Mapped[str] = mapped_column(String(16))
+    last_close: Mapped[Decimal] = mapped_column(Money)
+    adv_usd: Mapped[Decimal] = mapped_column(Numeric(20, 2))  # mean daily close*volume
+    sessions: Mapped[int] = mapped_column(Integer)
+    fractionable: Mapped[bool] = mapped_column(Boolean)
+    shortable: Mapped[bool] = mapped_column(Boolean)
+    easy_to_borrow: Mapped[bool] = mapped_column(Boolean)
+
+    __table_args__ = (Index("ix_universe_members_symbol", "symbol"),)
