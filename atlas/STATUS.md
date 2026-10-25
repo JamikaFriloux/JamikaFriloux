@@ -1,11 +1,11 @@
 # ATLAS project status
 
-_Last updated: 2026-10-25 — Phase 2 in progress (Alpaca verified live; bar ingestion, live streaming, universe and watchlists built)._
+_Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked by this environment's network policy)._
 
 | Phase | State |
 |---|---|
 | 1 Foundation | **Complete** |
-| 2 Market data | **In progress**: Alpaca paper connectivity verified live (`check_alpaca` passes). Daily and minute bar ingestion with stored quality reports is built and tested live. The live WebSocket stream is built and tested against a local fake server, but not yet against Alpaca (this environment blocks the stream host). The universe screen with point-in-time snapshots and watchlist management is built and tested live. The dashboard data view is not built yet |
+| 2 Market data | **Built; one live check outstanding**: Alpaca paper connectivity verified live (`check_alpaca` passes). Daily and minute bar ingestion with stored quality reports is built and tested live. The live WebSocket stream is built and tested against a local fake server, but not yet against Alpaca (this environment blocks the stream host). The universe screen with point-in-time snapshots, watchlist management and the Live Trading dashboard are built and tested live |
 | 3 Trading engine | Partially pre-built: order state machine, idempotent submission, kill switch. No strategies, signal engine or risk engine yet |
 | 4–8 | Not started |
 
@@ -33,6 +33,15 @@ _Last updated: 2026-10-25 — Phase 2 in progress (Alpaca verified live; bar ing
   - Symbols that later leave the universe may stay on a list but show `in_universe: false`. Trading must check membership itself.
   - Watchlist symbols feed minute ingestion and the live stream (benchmarks first, stream capacity reported).
   - `GET /api/v1/universe` returns the latest snapshot summary and its members, sorted by dollar volume and searchable.
+- Live Trading page (`dashboard/app/(console)/live`):
+  - Market and stream status strip.
+  - Quote board for benchmarks and each watchlist: bid, ask, spread, last, quote age and a fresh/stale/unavailable badge. Fresh means market open and a recent, two-sided, uncrossed quote, decided by the API's `fresh_quote()` rule.
+  - The board polls a same-origin route every 2 s. If polls fail it marks every quote as not fresh. A one-sided quote (Alpaca sends 0 for the missing side) shows "—", not $0.
+  - Open positions show the broker-synced P/L, plus a live mark only while the quote is fresh.
+  - Watchlist editor (operator/admin): create, delete and remove symbols, and add from a universe search by symbol or name showing dollar volume. API rejection reasons are shown inline.
+  - There is no manual order entry; orders arrive with the Phase 3 signal and risk engines.
+  - New route handlers (`/api/live`, `/api/universe`, `/api/watchlists[/name]`) go through a shared `lib/proxy.ts` that adds the httpOnly session token and requires same-origin requests for writes. The API enforces roles.
+- `/health/ready` reports each service's own status (ok/degraded/error). The 3-minute staleness rule applies only to continuously reporting services (worker, executor, broker, stream). Before, a failing stream read as "ok" and scheduled jobs read as "stale" between runs.
 - REST minute ingestion now resumes from its own coverage (rows with its source), so a gap the stream missed during a disconnect is backfilled.
 - Data prep: NYSE (XNYS) calendar covering holidays, early closes and DST; bar validation (ordering, duplicates, OHLC consistency, stale data, gaps, future timestamps, extreme moves); Alpaca bar adapter.
 - Integrations: Telegram notifier (redaction, dedupe, per-event preferences); provider-agnostic LLM interface with an Anthropic structured-output adapter and an untrusted-content policy.
@@ -45,7 +54,14 @@ _Last updated: 2026-10-25 — Phase 2 in progress (Alpaca verified live; bar ing
 - Migrations 0002 and 0003: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
 - **Live Alpaca paper (2026-10-25):** `check_alpaca` passed all 5 checks (paper endpoint, ACTIVE paper account, clock, 22-session calendar cross-check against XNYS, SPY daily bars validated). Live ingestion into PostgreSQL: 1,100 daily bars and 4,312 regular-hours minute bars across 4 symbols, all OK and none stale. An immediate re-run fetched incrementally (4 bars rewritten).
 - `ruff check`, `ruff format --check`, `mypy atlas`: clean. `pip-audit`: no known vulnerabilities.
-- Dashboard: `tsc --noEmit` and `next build` pass; `npm audit`: 0 vulnerabilities.
+- Dashboard: `tsc --noEmit` and `next build` pass.
+- **Live Trading page end-to-end (Playwright, 26/26 checks)**, against the production build, the real API, PostgreSQL (the live 2,684-symbol universe) and Redis. Redis held Alpaca's real latest quotes, fetched over REST because the stream host is blocked, and the stream service's real status. Checked:
+  - quotes render and are correctly stale with the market closed; one-sided quotes show "—"
+  - the board polls, and a simulated API outage un-vouches all quotes
+  - create a watchlist, add AMD by searching "advanced micro", remove it, delete the list
+  - duplicate-name error is shown
+  - viewer sees no edit controls, and the API refuses a viewer write (403)
+  - no horizontal scroll at 390 px; no console errors besides the deliberately provoked 400/503
 - End-to-end, run by hand with Playwright against local Postgres, Redis, API, worker, beat and the dashboard:
   - login (a wrong password is rejected)
   - httpOnly cookie that page scripts can't read
@@ -73,7 +89,9 @@ _Last updated: 2026-10-25 — Phase 2 in progress (Alpaca verified live; bar ing
 2. ~~Bar ingestion jobs (daily and minute)~~ — done.
 3. ~~Live quotes/bars over the Alpaca WebSocket~~ — built; needs a live run once `stream.data.alpaca.markets` is reachable.
 4. ~~Universe and watchlist management with point-in-time snapshots~~ — done.
-5. Dashboard: watchlist and live prices on the Live Trading page.
+5. ~~Dashboard: watchlist and live prices on the Live Trading page~~ — done.
+
+Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX during market hours) once `stream.data.alpaca.markets` is allowed.
 
 ## Required user action
 - Alpaca paper keys: in place and verified. For Docker, make sure they are in `atlas/broker.env` (never in chat or git).

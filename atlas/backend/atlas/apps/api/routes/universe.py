@@ -102,7 +102,9 @@ def list_watchlists(
     view = wl.watchlists_view(db)
     settings = request.app.state.settings
     unique = {s["symbol"] for w in view["watchlists"] for s in w["symbols"]}
-    unique |= {s.upper() for s in settings.ingest_default_symbols}
+    benchmarks = [s.upper() for s in settings.ingest_default_symbols]
+    unique |= set(benchmarks)
+    view["benchmarks"] = benchmarks
     # The stream carries at most stream_max_symbols; the rest still get REST bars.
     view["stream"] = {"symbols": len(unique), "capacity": settings.stream_max_symbols}
     return view

@@ -10,6 +10,9 @@ from atlas.core.models.db import ServiceHeartbeat
 router = APIRouter(tags=["health"])
 
 HEARTBEAT_STALE_AFTER = timedelta(minutes=3)
+# Services that heartbeat continuously (every 15-60 s). Scheduled jobs (ingestion, universe)
+# heartbeat only when they run, so an old heartbeat is normal for them and not "stale".
+CONTINUOUS_SERVICES = frozenset({"worker", "executor", "broker", "stream"})
 
 
 @router.get("/health/live")
@@ -27,15 +30,14 @@ def ready(request: Request, response: Response) -> dict[str, object]:
             beats = s.scalars(select(ServiceHeartbeat)).all()
         checks["database"] = "ok"
         now = datetime.now(UTC)
-        checks["services"] = {
-            b.service: (
-                "ok"
-                if now - (b.last_seen if b.last_seen.tzinfo else b.last_seen.replace(tzinfo=UTC))
-                < HEARTBEAT_STALE_AFTER
-                else "stale"
-            )
-            for b in beats
-        }
+        services: dict[str, str] = {}
+        for b in beats:
+            seen = b.last_seen if b.last_seen.tzinfo else b.last_seen.replace(tzinfo=UTC)
+            stale = b.service in CONTINUOUS_SERVICES and now - seen >= HEARTBEAT_STALE_AFTER
+            # Report what the service itself said (ok / degraded / error), not just that it
+            # is alive: a connected-but-failing stream must not read as "ok".
+            services[b.service] = "stale" if stale else b.status
+        checks["services"] = services
     except Exception:
         checks["database"] = "unavailable"
         ok = False

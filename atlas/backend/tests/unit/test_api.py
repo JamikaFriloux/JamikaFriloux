@@ -46,6 +46,30 @@ def test_health(client):
     assert r.status_code == 200 and r.json()["checks"]["database"] == "ok"
 
 
+def test_ready_reports_service_status_and_staleness(client, session_factory):
+    from datetime import UTC, datetime, timedelta
+
+    from atlas.core.models.db import ServiceHeartbeat
+
+    now = datetime.now(UTC)
+    old = now - timedelta(hours=5)
+    with session_factory() as s:
+        s.add_all([
+            ServiceHeartbeat(service="stream", status="error", last_seen=now),
+            ServiceHeartbeat(service="worker", status="ok", last_seen=old),
+            ServiceHeartbeat(service="universe", status="ok", last_seen=old),
+            ServiceHeartbeat(service="ingest_1min", status="degraded", last_seen=old),
+        ])  # fmt: skip
+        s.commit()
+    services = client.get("/health/ready").json()["checks"]["services"]
+    assert services == {
+        "stream": "error",  # alive but failing must not read as ok
+        "worker": "stale",  # continuous service that stopped reporting
+        "universe": "ok",  # scheduled job: an old heartbeat is normal
+        "ingest_1min": "degraded",
+    }
+
+
 def test_security_headers(client):
     r = client.get("/health/live")
     assert r.headers["X-Frame-Options"] == "DENY"
@@ -230,5 +254,6 @@ def test_universe_and_watchlist_endpoints(client, session_factory):
     view = client.get("/api/v1/watchlists", headers=viewer).json()
     assert view["watchlists"][0]["symbols"] == [{"symbol": "NVDA", "in_universe": True}]
     assert view["stream"] == {"symbols": 5, "capacity": 30}  # NVDA + 4 benchmarks
+    assert view["benchmarks"] == ["SPY", "QQQ", "IWM", "DIA"]
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 204
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 404
