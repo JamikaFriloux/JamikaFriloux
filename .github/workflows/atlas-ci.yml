@@ -1,0 +1,88 @@
+name: atlas-ci
+
+on:
+  push:
+    paths: ["atlas/**", ".github/workflows/atlas-ci.yml"]
+  pull_request:
+    paths: ["atlas/**", ".github/workflows/atlas-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: atlas/backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U atlas" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      ATLAS_TEST_DATABASE_URL: postgresql+psycopg://atlas:atlas@localhost:5432/atlas_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy atlas
+      - name: Tests (unit, failure scenarios, PostgreSQL integration)
+        run: uv run pytest -q --cov=atlas --cov-report=term-missing:skip-covered
+      - name: Dependency audit
+        run: |
+          uv export --no-dev --no-hashes --no-emit-project --format requirements-txt > /tmp/req.txt
+          uv run pip-audit -r /tmp/req.txt --disable-pip --no-deps
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: atlas/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: atlas/dashboard/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  compose:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: atlas
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: |
+          cp .env.example .env && cp broker.env.example broker.env && cp llm.env.example llm.env
+          docker compose config --quiet
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan (gitleaks)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 detect --source /repo --redact --no-banner

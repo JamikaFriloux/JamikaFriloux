@@ -1,0 +1,50 @@
+# ATLAS architecture
+
+```
+              ┌──────────────┐  httpOnly cookie   ┌──────────┐
+  operator ──▶│  dashboard   │ ─────────────────▶ │   api    │── PostgreSQL (system of record)
+              │  (Next.js)   │   Bearer token     │ FastAPI  │── Redis (rate limits)
+              └──────────────┘                    └────┬─────┘
+                                                       │ send_task (kill switch follow-up)
+                     ┌───────── Redis (Celery) ◀───────┘
+        ┌────────────┴──────────┐
+  ┌─────▼─────┐           ┌─────▼──────┐      Alpaca PAPER API
+  │  worker   │           │  executor  │ ───▶ paper-api.alpaca.markets
+  │ research, │  (no      │ broker sync│      data.alpaca.markets
+  │ LLM agents│  broker   │ orders,    │
+  │ reports   │  creds)   │ kill switch│
+  └───────────┘           └────────────┘
+```
+
+## Order lifecycle (deterministic)
+`CANDIDATE → VALIDATED → RISK_APPROVED → SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED / FILLED / CANCELLED / REJECTED / EXPIRED`
+
+Implemented in `atlas/core/execution/state_machine.py`; every transition writes an
+`order_events` row. Illegal transitions raise.
+
+## Idempotent submission
+`atlas/core/execution/broker.py::submit_idempotent`:
+1. Look up the client order id at the broker; if present, return it.
+2. Submit.
+3. On an uncertain outcome (timeout/5xx), query by client order id with backoff. Found → done.
+   Confirmed absent → one retry with the **same** client order id. Still unknown → raise
+   `SubmissionUncertain`; the order stays `SUBMITTED` and reconciliation resolves it.
+
+## Repository layout
+The spec's layout is followed with two justified adjustments:
+* Python code lives in the `atlas` package under `backend/` (`backend/atlas/{apps,agents,core,integrations}`)
+  so imports are namespaced (`atlas.core.risk`) instead of generic top-level names like `core`.
+* The dashboard is `dashboard/` (spec: `apps/dashboard`) because it is a separate Node project
+  with its own toolchain; Python CLI scripts are `atlas.scripts.*` so they run with `python -m`.
+
+| Spec path             | Location |
+|-----------------------|----------|
+| apps/api, apps/worker | `backend/atlas/apps/{api,worker,executor}` |
+| apps/dashboard        | `dashboard/` |
+| agents/*              | `backend/atlas/agents/*` (Phase 5) |
+| core/*                | `backend/atlas/core/*` |
+| integrations/*        | `backend/atlas/integrations/{alpaca,llm,telegram}` |
+| database/migrations   | `backend/migrations` |
+| tests/*               | `backend/tests/{unit,integration,backtesting,failure_scenarios}` |
+| infrastructure        | `infrastructure/` |
+| scripts               | `backend/atlas/scripts` |

@@ -1,0 +1,58 @@
+# ATLAS risk & trading policy — PAPER TRADING environment.
+#
+# These are conservative engineering defaults for simulation, NOT guarantees of safety.
+# The risk engine enforces these values deterministically; no LLM or agent can change them
+# at runtime. Edits require a code-reviewed commit and a service restart. The loaded file's
+# SHA-256 is written to the audit log on every startup.
+#
+# Values are also bounded by hard ceilings in
+# backend/atlas/core/configuration/policy.py (HARD_LIMITS). A file that exceeds a ceiling
+# is rejected at startup.
+
+version: 1
+trading_mode: paper
+
+account:
+  starting_equity_usd: 10000
+
+instruments:
+  allowed_asset_classes: [us_equity]   # stocks and ETFs
+  long_only: true
+  allow_short_selling: false
+  allow_margin: false
+  allow_leverage: false
+  allow_options: false
+  allow_crypto: false
+  allow_otc: false
+  min_price_usd: 10.0
+  min_avg_daily_dollar_volume_usd: 20000000
+  max_spread_bps: 25
+
+session:
+  regular_hours_only: true
+  no_new_positions_minutes_after_open: 5
+  no_new_positions_minutes_before_close: 15
+  block_entries_before_earnings_days: 2
+
+limits:
+  max_risk_per_trade_pct: 0.25         # % of current equity at risk (entry - stop) per trade
+  max_daily_loss_pct: 1.0              # % of starting-day equity
+  max_drawdown_pct: 5.0                # % from high-water mark
+  max_position_allocation_pct: 10.0    # % of equity per position
+  max_concurrent_positions: 5
+  max_sector_exposure_pct: 25.0
+  max_gross_exposure_pct: 50.0
+  max_new_trades_per_day: 5
+  max_order_notional_usd: 1000
+  min_cash_buffer_usd: 100
+
+data_quality:
+  max_quote_age_seconds: 15
+  max_bar_age_seconds: 120
+  reject_on_missing_data: true
+
+execution:
+  default_order_type: limit
+  limit_offset_bps: 5
+  stop_slippage_assumption_bps: 20
+  order_time_in_force: day

@@ -1,0 +1,112 @@
+# ATLAS — PAPER TRADING deployment.
+#
+# Trust boundaries:
+#   * Only `executor` receives broker.env (Alpaca PAPER credentials).
+#   * Only `worker` receives llm.env (LLM provider key). It has no broker credentials.
+#   * `api` and `dashboard` hold neither.
+#   * PostgreSQL and Redis live on an internal-only network with no published ports.
+#   * `api` is not on the egress network. Docker bridge networks still permit outbound
+#     traffic, so production egress allow-lists belong in the host/cloud firewall.
+# See docs/security.md.
+
+name: atlas
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: infrastructure/docker/backend.Dockerfile
+  image: atlas-backend:local
+  env_file: [.env]
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+  networks: [internal, egress]
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: atlas
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["alembic", "upgrade", "head"]
+    networks: [internal]
+
+  api:
+    <<: *backend
+    ports: ["127.0.0.1:8000:8000"]
+    networks: [internal, frontend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 15s
+      retries: 5
+
+  worker:
+    <<: *backend
+    env_file: [.env, llm.env]
+    command: ["celery", "-A", "atlas.apps.worker.celery_app", "worker", "-Q", "default", "-n", "worker@%h", "--concurrency", "2"]
+
+  beat:
+    <<: *backend
+    read_only: false
+    command: ["celery", "-A", "atlas.apps.worker.celery_app", "beat", "--schedule", "/tmp/celerybeat-schedule"]
+    networks: [internal]
+
+  executor:
+    <<: *backend
+    env_file: [.env, broker.env]
+    command: ["celery", "-A", "atlas.apps.worker.celery_app", "worker", "-Q", "execution", "-n", "executor@%h", "--concurrency", "1"]
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/dashboard.Dockerfile
+    environment:
+      ATLAS_API_URL: http://api:8000
+      NODE_ENV: production
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    networks: [frontend]
+
+networks:
+  internal:
+    internal: true
+  egress: {}    # outbound internet (Alpaca, Telegram, LLM provider)
+  frontend: {}  # published dashboard/API ports (bound to 127.0.0.1)
+
+volumes:
+  pgdata: {}
+  redisdata: {}
