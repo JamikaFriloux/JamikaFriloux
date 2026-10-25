@@ -17,3 +17,4 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 celerybeat-schedule*
+dump.rdb
