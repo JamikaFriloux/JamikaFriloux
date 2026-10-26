@@ -134,6 +134,18 @@ docker compose exec executor python -m atlas.scripts.check_reference
 
 Then **Strategy Lab → Run validation** for each strategy (5-7 min each).
 
+## 6b. Telegram alerts
+
+1. In Telegram, message **@BotFather** → `/newbot` → copy the token.
+2. Send your new bot any message (bots can't message you first).
+3. On **your own computer** (not in chat), open
+   `https://api.telegram.org/bot<token>/getUpdates` and copy `"chat":{"id": ...}`.
+4. On the server: `nano .env` → set `ATLAS_TELEGRAM_BOT_TOKEN` and `ATLAS_TELEGRAM_CHAT_ID`.
+5. Recreate the services so they read it: `docker compose up -d`.
+6. Test: `docker compose exec executor python -m atlas.scripts.send_test_alert`.
+   `OK` means Telegram accepted it; otherwise the output says whether the token or the chat id
+   is wrong. Neither is printed.
+
 ## 7. Readiness (before any promotion)
 
 ```bash

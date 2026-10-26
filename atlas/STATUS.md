@@ -176,6 +176,19 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-26)
+- **Cost stress test** (read-only reruns of the production simulator, 2017-02-13..2026-10-23, policy limit offset scaled with slippage):
+
+  | Costs | trend_breakout CAGR / Sharpe / PF / max DD | rsi_pullback CAGR / Sharpe / PF / max DD |
+  |---|---|---|
+  | 1× (policy) | 4.2% / 0.80 / 2.72 / 6.9% | 1.75% / 0.84 / 1.37 / 4.7% |
+  | 2× | 4.0% / 0.76 / 2.55 / 7.0% | 0.8% / 0.39 / 1.16 / 5.5% (fails Sharpe and PF gates) |
+  | 3× | 3.6% / 0.69 / 2.30 / 7.4% | −0.1% / −0.02 / 0.99 / 7.8% |
+  | 4× | 3.1% / 0.60 / 1.99 / 8.0% | −1.0% / −0.43 / 0.84 / 13.5% |
+
+  - trend_breakout is robust to costs. rsi_pullback's edge (+0.05R per trade) is gone at 2–3× the assumed costs.
+  - SPY buy-and-hold over the same span: CAGR 14.7%, max DD 33.8%. Both strategies return far less, with far smaller drawdowns, while exposing 10–50% of a $10k budget.
+  - **Fill-model knife-edge** (backtest limitation): limits are priced `limit_offset_bps` (5) through the quote and the simulator's fill price adds `slippage_bps` (5). Every entry and signal exit therefore fills at exactly its limit price. At slippage above the offset, nothing fills: entries are skipped and signal exits stop working, leaving only stops. In live paper trading some orders will go unfilled; the paper record's fill rate is the real measure. The cost model's `limit_offset` field is unused; the risk engine reads the policy value.
+- `send_test_alert` script (Telegram delivery test that diagnoses the token or chat id without printing either): 4 new tests; backend **417 passed**.
 - **Docker deployment rehearsal** (`docker-compose.prod.yml`, `docs/deploy-digitalocean.md`). This was the first time the Docker images were built; it ran with the same Docker 29.9.2 / Compose v5.6.1 as the target Droplet.
   - Both images build (backend 82 s). The stack starts; `migrate` exits 0; postgres, redis, api and dashboard are healthy. Only 127.0.0.1:8000 and 127.0.0.1:3000 are published.
   - Kill switch engaged on first start. `check_alpaca` 5/5 inside the executor. A live Alpaca URL and `ATLAS_TRADING_MODE=live` both stop the service from starting.
