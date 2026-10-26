@@ -28,6 +28,7 @@ from atlas.core.data.ingestion import (
     ingestion_symbols,
     last_completed_session,
 )
+from atlas.core.data.news import NewsSource, upsert_news
 from atlas.core.data.universe import (
     UniverseBuildError,
     UniverseCriteria,
@@ -56,6 +57,13 @@ def get_gateway() -> BrokerGateway:
     from atlas.integrations.alpaca.trading import AlpacaPaperGateway
 
     return AlpacaPaperGateway.from_settings(BrokerSettings())  # type: ignore[call-arg]
+
+
+@lru_cache(maxsize=1)
+def get_news_source() -> NewsSource:
+    from atlas.integrations.alpaca.news import AlpacaNews
+
+    return AlpacaNews.from_settings(BrokerSettings())  # type: ignore[call-arg]
 
 
 @lru_cache(maxsize=1)
@@ -186,6 +194,30 @@ def ingest_minute_bars() -> dict[str, object]:
     ):
         return {"ok": True, "skipped": "market closed"}
     return _run_ingestion("1Min", now)
+
+
+NEWS_LOOKBACK = timedelta(hours=36)
+
+
+@celery_app.task(name="atlas.execution.fetch_news")
+def fetch_news() -> dict[str, object]:
+    """Store recent news for the ingested symbols. Analysis happens in the research worker."""
+    now = datetime.now(UTC)
+    try:
+        with session_scope() as s:
+            symbols = ingestion_symbols(s, get_settings().ingest_default_symbols)
+        items = get_news_source().get_news(symbols, now - NEWS_LOOKBACK, now)
+        with session_scope() as s:
+            changed = upsert_news(s, items, now=now)
+            summary: dict[str, object] = {"fetched": len(items), "stored": changed}
+            beat(s, "news", "ok", **summary)
+    except Exception as exc:
+        log.error("news_fetch_failed", error=type(exc).__name__)
+        with session_scope() as s:
+            beat(s, "news", "error", error=type(exc).__name__)
+        return {"ok": False, "error": type(exc).__name__}
+    log.info("news_fetched", **summary)
+    return {"ok": True, **summary}
 
 
 @celery_app.task(name="atlas.execution.heartbeat")

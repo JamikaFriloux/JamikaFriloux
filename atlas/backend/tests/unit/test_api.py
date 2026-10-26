@@ -30,6 +30,7 @@ def client(settings, session_factory, policy, dispatched):
         redis_client=None,
         dispatcher=lambda: dispatched.append(1) or True,
         validation_dispatcher=lambda sid, who: dispatched.append((sid, who)) or True,
+        agents_dispatcher=lambda: dispatched.append("agents") or True,
     )
     with TestClient(app) as c:
         yield c
@@ -421,3 +422,101 @@ def test_validation_endpoints(client, session_factory, dispatched, policy):
     full = client.get(f"/api/v1/validation-reports/{rows[0]['id']}", headers=viewer).json()
     assert full["equity_curve"] == [["2026-10-23", 10100.0]] and full["caveats"]
     assert client.get("/api/v1/validation-reports/999", headers=viewer).status_code == 404
+
+
+def test_intelligence_endpoints(client, session_factory, dispatched):
+    from datetime import UTC, date, datetime
+
+    from atlas.core.models.db import AgentReport, NewsArticle
+
+    now = datetime.now(UTC)
+    with session_factory() as s:
+        s.add(
+            AgentReport(
+                created_at=now,
+                agent="market_intelligence",
+                scope="market",
+                as_of=date(2026, 10, 23),
+                prompt_version="mi-1",
+                input_hash="h",
+                status="ok",
+                features={"regime": "risk_on", "trend": "up", "volatility": "low", "stale": False},
+                narrative={
+                    "summary": "calm uptrend",
+                    "key_points": [],
+                    "risks": [],
+                    "data_gaps": [],
+                },
+                provider="static",
+                input_tokens=10,
+                output_tokens=5,
+            )
+        )
+        for aid, url in (("alpaca:1", "https://x/1"), ("alpaca:2", "javascript:alert(1)")):
+            s.add(
+                NewsArticle(
+                    id=aid,
+                    source="alpaca",
+                    published_at=now,
+                    headline=f"<b>{aid}</b>",
+                    summary="",
+                    url=url,
+                    symbols=["AAA"],
+                )
+            )
+        s.add(
+            AgentReport(
+                created_at=now,
+                agent="news_sentiment",
+                scope="watchlist",
+                as_of=date(2026, 10, 23),
+                prompt_version="ns-1",
+                input_hash="n",
+                status="ok",
+                features={},
+                narrative={
+                    "assessments": [
+                        {
+                            "article_id": "alpaca:1",
+                            "sentiment": "negative",
+                            "relevance": "high",
+                            "symbols": ["AAA"],
+                            "rationale": "r",
+                        }
+                    ],
+                    "summary": "s",
+                    "themes": [],
+                    "injection_suspected": ["alpaca:2"],
+                },
+                provider="static",
+            )
+        )
+        s.commit()
+    v = _auth(client, "viewer")
+    assert client.get("/api/v1/intelligence").status_code == 401
+    body = client.get("/api/v1/intelligence", headers=v).json()
+    assert body["advisory_only"] is True and body["regime"]["regime"] == "risk_on"
+    assert body["regime"]["summary"] == "calm uptrend"
+    assert body["agents"]["operations"] is None
+    assert body["agents"]["market_intelligence"]["narrative"]["summary"] == "calm uptrend"
+    assert body["llm_usage_today"] == {"calls": 2, "input_tokens": 10, "output_tokens": 5}
+    status = client.get("/api/v1/status", headers=v).json()
+    assert status["market_regime"]["regime"] == "risk_on"
+
+    lst = client.get("/api/v1/intelligence/reports?agent=market_intelligence", headers=v).json()
+    assert len(lst) == 1 and "features" not in lst[0] and lst[0]["has_narrative"]
+    rid = lst[0]["id"]
+    assert client.get(f"/api/v1/intelligence/reports/{rid}", headers=v).json()["id"] == rid
+    assert client.get("/api/v1/intelligence/reports/9999", headers=v).status_code == 404
+
+    news = client.get("/api/v1/news?symbol=aaa", headers=v).json()
+    arts = {a["id"]: a for a in news["articles"]}
+    assert arts["alpaca:1"]["assessment"]["sentiment"] == "negative"
+    assert arts["alpaca:1"]["url"] == "https://x/1" and arts["alpaca:2"]["url"] is None
+    assert arts["alpaca:2"]["injection_suspected"] is True
+    assert arts["alpaca:1"]["headline"] == "<b>alpaca:1</b>"  # raw text; the UI escapes it
+    assert client.get("/api/v1/news?symbol=a;b", headers=v).status_code == 422
+
+    assert client.post("/api/v1/intelligence/run", headers=v).status_code == 403
+    r = client.post("/api/v1/intelligence/run", headers=_auth(client, "operator"))
+    assert r.status_code == 202 and dispatched[-1] == "agents"

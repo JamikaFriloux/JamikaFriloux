@@ -408,3 +408,58 @@ class EquityClose(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     equity: Mapped[Decimal] = mapped_column(Money)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # snapshot time
+
+
+class NewsArticle(Base):
+    """A news item from the broker's news feed, stored as received (untrusted text).
+
+    Fetched by the executor, which holds the data credentials; analysed by the research
+    worker, which always wraps ``headline``/``summary`` with ``wrap_untrusted``.
+    """
+
+    __tablename__ = "news_articles"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # "<source>:<provider id>"
+    source: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str | None] = mapped_column(String(64))  # e.g. benzinga
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    headline: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str | None] = mapped_column(Text)
+    symbols: Mapped[list[str]] = mapped_column(JSONType, default=list)
+
+
+class AgentReport(Base):
+    """One run of a research agent. Advisory only: nothing reads these to trade.
+
+    ``features`` are computed deterministically in code and are the source of truth.
+    ``narrative`` is the schema-validated LLM output, or null when the LLM was disabled,
+    over budget, refused or failed (``status`` and ``error`` say which).
+    """
+
+    __tablename__ = "agent_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    agent: Mapped[str] = mapped_column(String(32))
+    scope: Mapped[str] = mapped_column(String(32), default="market")  # "market" or a symbol
+    as_of: Mapped[date] = mapped_column(Date)
+    prompt_version: Mapped[str] = mapped_column(String(16))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    features: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    narrative: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    provider: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_agent_reports_agent_scope_created", "agent", "scope", "created_at"),
+        Index("ix_agent_reports_input_hash", "agent", "input_hash"),
+    )

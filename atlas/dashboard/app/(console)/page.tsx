@@ -3,7 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Stat, plTone } from "@/components/stat";
-import { getStatus } from "@/lib/api";
+import Link from "next/link";
+import { REGIME_TONE } from "@/components/intelligence/labels";
+import { getStatus, type SystemStatus } from "@/lib/api";
 import { fmtTime, fmtUsd } from "@/lib/utils";
 
 export default async function OverviewPage() {
@@ -76,9 +78,7 @@ export default async function OverviewPage() {
               <CardTitle>Market regime</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted">
-                {s.market_regime ?? "Not yet classified — the Market Intelligence agent ships in Phase 5."}
-              </p>
+              <RegimeSummary regime={s.market_regime} />
             </CardContent>
           </Card>
           <Card>
@@ -106,6 +106,29 @@ export default async function OverviewPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function RegimeSummary({ regime }: { regime: SystemStatus["market_regime"] }) {
+  if (!regime) {
+    return <p className="text-sm text-muted">Not classified yet. The Market Intelligence agent runs premarket and after the close.</p>;
+  }
+  if (!regime.regime || regime.regime === "unavailable") {
+    return <p className="text-sm text-muted">Unavailable: not enough benchmark history stored.</p>;
+  }
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={REGIME_TONE[regime.regime] ?? "neutral"}>{regime.regime.replace(/_/g, " ")}</Badge>
+        {regime.stale ? <Badge tone="warn">stale</Badge> : null}
+      </div>
+      <p className="text-xs text-muted">
+        {regime.benchmark} trend {regime.trend}, volatility {regime.volatility} · session {regime.as_of}
+      </p>
+      <Link href="/intelligence" className="text-xs text-accent hover:underline">
+        Details
+      </Link>
+    </div>
   );
 }
 

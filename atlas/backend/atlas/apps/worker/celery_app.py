@@ -83,6 +83,18 @@ celery_app.conf.update(
             "schedule": crontab(minute="*/5", hour="9-15", day_of_week="mon-fri"),
             "options": {"expires": 240},
         },
+        # News for the ingested symbols, every 30 minutes through the extended day.
+        "fetch-news": {
+            "task": "atlas.execution.fetch_news",
+            "schedule": crontab(minute="5,35", hour="6-20", day_of_week="mon-fri"),
+            "options": {"expires": 1500},
+        },
+        # Research agents (advisory): premarket, and after signals have been generated.
+        "run-agents": {
+            "task": "atlas.worker.run_agents",
+            "schedule": crontab(hour="8,17", minute=40, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
         "premarket-readiness": {
             "task": "atlas.worker.premarket_readiness",
             "schedule": crontab(hour=8, minute=30, day_of_week="mon-fri"),

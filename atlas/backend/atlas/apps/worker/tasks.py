@@ -101,3 +101,40 @@ def validate_strategy(strategy_id: str, requested_by: str = "system") -> dict[st
         return {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200]}
     log.info("validation_complete", strategy=strategy_id, **result)
     return result
+
+
+@celery_app.task(name="atlas.worker.run_agents", soft_time_limit=840, time_limit=900)
+def run_agents(only: list[str] | None = None) -> dict[str, object]:
+    """Research agents (advisory only): deterministic features plus an optional LLM narrative."""
+    from atlas.agents.runner import run_research
+    from atlas.core.configuration.policy import get_policy
+    from atlas.core.configuration.settings import LLMSettings, get_settings
+    from atlas.core.data.ingestion import ingestion_symbols
+    from atlas.integrations.llm.anthropic_provider import build_provider
+    from atlas.integrations.llm.base import DisabledProvider, LLMError, LLMProvider
+
+    llm = LLMSettings()
+    provider: LLMProvider
+    try:
+        provider = build_provider(llm)
+    except LLMError as exc:  # e.g. provider=anthropic without a key: features only
+        log.warning("llm_unavailable", error=str(exc))
+        provider = DisabledProvider()
+    now = datetime.now(UTC)
+    with session_scope() as s:
+        symbols = ingestion_symbols(s, get_settings().ingest_default_symbols)
+        results = run_research(
+            s,
+            provider,
+            now=now,
+            calendar=MarketCalendar(),
+            policy=get_policy().policy,
+            symbols=symbols,
+            max_calls_per_day=llm.max_calls_per_day,
+            model=llm.model,
+            only=only,
+        )
+        errors = [k for k, v in results.items() if v["status"] == "error"]
+        beat(s, "agents", "error" if errors else "ok", provider=provider.name, failed=errors)
+    log.info("agents_run", **{k: v["status"] for k, v in results.items()})
+    return {"ok": not errors, "agents": results}

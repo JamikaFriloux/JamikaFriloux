@@ -55,7 +55,7 @@ The spec's layout is followed with two justified adjustments:
 |-----------------------|----------|
 | apps/api, apps/worker | `backend/atlas/apps/{api,worker,executor}` |
 | apps/dashboard        | `dashboard/` |
-| agents/*              | `backend/atlas/agents/*` (Phase 5) |
+| agents/*              | `backend/atlas/agents/*`: advisory research agents (worker only; deterministic features + optional schema-checked LLM narrative; never read by the trading path) |
 | core/*                | `backend/atlas/core/*` |
 | integrations/*        | `backend/atlas/integrations/{alpaca,llm,telegram}` |
 | database/migrations   | `backend/migrations` |

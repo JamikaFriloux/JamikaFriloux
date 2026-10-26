@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from atlas.agents.runner import regime_view
 from atlas.apps.api.deps import client_ip, get_db, require_role
 from atlas.core.data.calendar import NY, MarketCalendar
 from atlas.core.execution.state_machine import OPEN_BROKER_STATES
@@ -114,7 +115,7 @@ def system_status(
         ],
         "open_orders": open_orders or 0,
         "drawdown": drawdown,
-        "market_regime": None,  # produced by the Market Intelligence agent (Phase 5)
+        "market_regime": regime_view(db),  # deterministic label from the regime agent
         "services": [
             {"service": b.service, "status": b.status, "last_seen": _iso(b.last_seen)}
             for b in beats

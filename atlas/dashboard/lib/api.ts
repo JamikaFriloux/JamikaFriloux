@@ -48,9 +48,70 @@ export type SystemStatus = {
     halted_on: string | null;
     cooldown_sessions_remaining: number;
   };
-  market_regime: string | null;
+  market_regime: MarketRegime | null;
   services: { service: string; status: string; last_seen: string }[];
   policy: { sha256: string; version: number; limits: Record<string, number> };
+};
+
+export type MarketRegime = {
+  regime: string | null;
+  trend: string | null;
+  volatility: string | null;
+  benchmark: string | null;
+  as_of: string | null;
+  stale: boolean | null;
+  report_id: number;
+  created_at: string;
+  summary: string | null;
+};
+
+export type AgentReport = {
+  id: number;
+  agent: string;
+  scope: string;
+  as_of: string;
+  created_at: string;
+  status: string;
+  provider: string | null;
+  model: string | null;
+  prompt_version: string;
+  input_tokens: number;
+  output_tokens: number;
+  error: string | null;
+  has_narrative: boolean;
+  features: Record<string, unknown>;
+  narrative: Record<string, unknown> | null;
+};
+
+export type Intelligence = {
+  advisory_only: true;
+  regime: MarketRegime | null;
+  agents: Record<string, AgentReport | null>;
+  llm_usage_today: { calls: number; input_tokens: number; output_tokens: number };
+};
+
+export type NewsAssessment = {
+  article_id: string;
+  sentiment: "positive" | "negative" | "neutral" | "mixed";
+  relevance: "high" | "medium" | "low";
+  symbols: string[];
+  rationale: string;
+};
+
+export type NewsFeed = {
+  sentiment_report_id: number | null;
+  sentiment_status: string | null;
+  articles: {
+    id: string;
+    published_at: string;
+    provider: string | null;
+    headline: string;
+    summary: string;
+    url: string | null;
+    symbols: string[];
+    assessment: NewsAssessment | null;
+    injection_suspected: boolean;
+  }[];
 };
 
 export type Me = { username: string; role: "viewer" | "operator" | "admin" };
@@ -265,3 +326,5 @@ export const getValidationReports = (strategyId?: string, limit = 20) =>
     `/api/v1/validation-reports?limit=${limit}${strategyId ? `&strategy_id=${encodeURIComponent(strategyId)}` : ""}`,
   );
 export const getValidationReport = (id: number) => apiGetOptional<ValidationReportFull>(`/api/v1/validation-reports/${id}`);
+export const getIntelligence = () => apiGet<Intelligence>("/api/v1/intelligence");
+export const getNews = (limit = 40) => apiGet<NewsFeed>(`/api/v1/news?limit=${limit}`);

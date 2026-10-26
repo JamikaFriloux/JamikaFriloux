@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import select, text
 
 from atlas.core.models.db import ServiceHeartbeat
+from atlas.core.observability.heartbeats import CONTINUOUS_SERVICES, HEARTBEAT_STALE_AFTER
 
 router = APIRouter(tags=["health"])
-
-HEARTBEAT_STALE_AFTER = timedelta(minutes=3)
-# Services that heartbeat continuously (every 15-60 s). Scheduled jobs (ingestion, universe)
-# heartbeat only when they run, so an old heartbeat is normal for them and not "stale".
-CONTINUOUS_SERVICES = frozenset({"worker", "executor", "broker", "stream"})
 
 
 @router.get("/health/live")

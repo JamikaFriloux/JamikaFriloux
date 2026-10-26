@@ -1,6 +1,6 @@
 # ATLAS project status
 
-_Last updated: 2026-10-26: drawdown halts now use a 20-session cooldown and reset. Both baselines pass all validation gates and are eligible for promotion to PAPER (not promoted; that's an admin decision)._
+_Last updated: 2026-10-26: Phase 5 research agents built (advisory only). Deterministic regime, technical, news, performance and operations reports run live; AI narratives await an Anthropic key. Both baselines remain eligible for PAPER and unpromoted._
 
 | Phase | State |
 |---|---|
@@ -8,7 +8,8 @@ _Last updated: 2026-10-26: drawdown halts now use a 20-session cooldown and rese
 | 2 Market data | **Built; one live check outstanding**: Alpaca paper connectivity verified live (`check_alpaca` passes). Daily and minute bar ingestion with stored quality reports is built and tested live. The live WebSocket stream is built and tested against a local fake server, but not yet against Alpaca (this environment blocks the stream host). The universe screen with point-in-time snapshots, watchlist management and the Live Trading dashboard are built and tested live |
 | 3 Trading engine | **Built**: indicators, strategy framework with 2 baseline strategies, signal engine, deterministic risk engine with sizing, signal→order pipeline, broker-side protective stops, exits, dashboard. Strategies run in RESEARCH (shadow); paper orders start only after a strategy passes Phase 4 validation |
 | 4 Backtesting & promotion gates | **Built**: event-driven simulator reusing the production strategy, sizing and risk code; cost, gap and partial-fill models; validation gates in `policy.yaml`; immutable validation reports; gated promotion wired. Both baselines pass all 10 gates on 9.7 years of real data, after the drawdown cooldown rule |
-| 5–8 | Not started |
+| 5 AI research agents | **Built; LLM output not yet verified live**: five advisory agents (market regime, technical analysis, news sentiment, performance, operations). Their deterministic features run live on real data; the AI narratives are tested with recorded responses only, because no Anthropic key is configured here |
+| 6–8 | Not started |
 
 ## Implemented and tested
 - Config: typed settings split by trust boundary; `config/policy.yaml` checked against hard ceilings in code; policy SHA-256 written to the audit log on every start.
@@ -97,12 +98,44 @@ _Last updated: 2026-10-26: drawdown halts now use a 20-session cooldown and rese
 - REST minute ingestion now resumes from its own coverage (rows with its source), so a gap the stream missed during a disconnect is backfilled.
 - Data prep: NYSE (XNYS) calendar covering holidays, early closes and DST; bar validation (ordering, duplicates, OHLC consistency, stale data, gaps, future timestamps, extreme moves); Alpaca bar adapter.
 - Integrations: Telegram notifier (redaction, dedupe, per-event preferences); provider-agnostic LLM interface with an Anthropic structured-output adapter and an untrusted-content policy.
+- **Phase 5, AI research agents (advisory only).**
+  - Framework (`agents/base.py`): each agent computes **features** deterministically (the source of truth), then optionally asks the LLM for a **narrative** parsed into a Pydantic schema and re-checked in code. One `agent_reports` row per run (migration 0007) with features, narrative, status, model and token counts.
+    - Statuses: `ok`, `no_llm` (provider disabled), `budget` (daily cap), `no_data`, `refused`, `llm_error`. Failures are recorded, never raised into trading.
+    - Identical inputs reuse the previous report (input hash over features, untrusted text, prompt version and model), and `ATLAS_LLM_MAX_CALLS_PER_DAY` (default 40) caps model calls per New York day across all agents.
+    - Every prompt says the features are authoritative and forbids order, sizing or limit recommendations. Nothing in the trading path reads agent reports; a test forbids agents from importing execution, broker or status-changing code.
+  - **Market Intelligence:** a deterministic regime from SPY daily bars. Trend comes from close vs SMA50/SMA200. Volatility is the 20-day realised vol ranked against its own year (high ≥ 80th percentile or > 30%). Breadth is the share of ingested symbols above their SMA50. The labels are risk_on, volatile_uptrend, transition, downtrend and risk_off. The LLM never sets the label. It feeds `/status` `market_regime` and the Overview card.
+  - **Technical Analysis:** an indicator snapshot of every ingested symbol (trend, distance from SMA20/50/200, RSI14, ATR%, 20-day return, 20-day range position), with stale and missing-history lists. The narrative may name only symbols in the snapshot.
+  - **News Sentiment:** the executor fetches Alpaca news every 30 minutes (`fetch_news`, `news_articles`; HTML stripped, entities decoded; updated articles refreshed). The worker sends the last 24 h of articles for watched symbols (max 40) with each headline and summary in `wrap_untrusted()`. The article id and its symbols sit outside the wrapper.
+    - The output is rejected if it assesses an article or symbol that wasn't supplied, or assesses one twice.
+    - The model flags articles that try to instruct it (`injection_suspected`), and the dashboard marks them.
+    - Without an LLM, sentiment shows as unavailable; it is never guessed.
+  - **Performance:** account, drawdown and cooldown, equity-close curve, strategy statuses with their latest validation, and 5-session signal, risk-decision (with top rejection reasons) and order counts. Money stays Decimal (strings in JSON).
+  - **Operations:** heartbeats, using the health check's staleness rule (moved to `core/observability/heartbeats.py`): continuous services go stale after 3 minutes, scheduled jobs show their last run. Also the kill switch, 24 h data quality, universe freshness, news freshness and agent statuses.
+  - Worker task `run_agents` at 08:40 and 17:40 NY on weekdays, or on demand (operator+) via `POST /api/v1/intelligence/run`. One agent failing doesn't stop the others. With `provider=anthropic` but no key, it runs features-only instead of crashing.
+  - API: `GET /api/v1/intelligence` (latest per agent, today's LLM usage), `/intelligence/reports[/{id}]`, `GET /api/v1/news` (articles joined with the latest assessment; only `https://` links are returned).
+  - Dashboard: the AI Intelligence page (regime facts, performance digest, technical table with AI notes, news feed with sentiment badges, operations), the "Run agents now" button for operators, and the regime badge on Overview. AI text is labelled as AI with model and token count; external headlines render as plain text with `noopener` links.
 - Workers: Celery `default` and `execution` queues, beat schedule in New York time, heartbeats.
 - Dashboard: Next.js 16 with login, Overview, Risk Center (kill switch), Settings, and placeholder pages that say plainly what isn't built yet. PAPER banner on every page.
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
-## Test results (local, 2026-10-25)
-- Backend: **324 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Phase 3 adds tests for indicators (hand-computed values), strategies and the registry, the risk engine (each rule failing alone), the signal engine, and the order pipeline against the FakeBroker (approvals, shadow mode, transient vs final rejections, broker rejection, lost response, protective stops, orphan stops, exits, kill switch). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
+## Test results (local, 2026-10-26)
+- Phase 5: backend **352 passed, 0 failed** (28 new tests).
+  - Regime rules and realised vol against a hand computation.
+  - Caching, budget, refusal, invalid output and no-data paths.
+  - News cleaning, upsert and Alpaca parsing.
+  - Untrusted wrapping, including an entity-encoded `</untrusted_content>` attack.
+  - Every fabrication check; the technical symbol check.
+  - End-to-end runs with and without an LLM, plus failure isolation.
+  - Executor and worker tasks (news outage, missing key).
+  - API RBAC and the https-only link filter.
+  - The agent isolation test.
+- Migration 0007 applied to the live database.
+- **Live (2026-10-26, no LLM key):**
+  - `fetch_news` stored 25 real Alpaca articles; 19 fell in the 24-hour window for 20 watched symbols.
+  - `run_agents` produced all five reports from real data: SPY **risk_on** as of 2026-10-23 (close 759.97, +4.97% vs SMA200, 20-day vol 9.8% at the 17.5th percentile). Breadth is weak: 6 of 40 ingested symbols above their SMA50, and SPY itself is 0.9% below its SMA50.
+  - A second run reused 4 of 5 reports (unchanged inputs, no new rows).
+- Playwright, 15/15 Phase 5 checks: Overview regime badge; AI Intelligence page with deterministic facts, 41-row technical table, 25 headlines with https/noopener links, no sentiment shown without an LLM, "LLM disabled" on all five agents, run button queues a job, viewer has no button and gets 403 from the endpoint, no horizontal scroll at 390 px, no console errors. Temporary e2e users were deleted afterwards.
+- Earlier phases: backend **324 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Phase 3 adds tests for indicators (hand-computed values), strategies and the registry, the risk engine (each rule failing alone), the signal engine, and the order pipeline against the FakeBroker (approvals, shadow mode, transient vs final rejections, broker rejection, lost response, protective stops, orphan stops, exits, kill switch). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
 - Migrations 0002–0006: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
 - **Live Alpaca paper (2026-10-25):** `check_alpaca` passed all 5 checks (paper endpoint, ACTIVE paper account, clock, 22-session calendar cross-check against XNYS, SPY daily bars validated). Live ingestion into PostgreSQL: 1,100 daily bars and 4,312 regular-hours minute bars across 4 symbols, all OK and none stale. An immediate re-run fetched incrementally (4 bars rewritten).
 - `ruff check`, `ruff format --check`, `mypy atlas`: clean. `pip-audit`: no known vulnerabilities.
@@ -122,6 +155,10 @@ _Last updated: 2026-10-26: drawdown halts now use a 20-session cooldown and rese
   - executor without credentials fails safely and reports broker `error`
 
 ## Not tested / known limitations
+- **No live LLM call has been made.** No `ATLAS_LLM_ANTHROPIC_API_KEY` exists in this environment, so the Anthropic provider is tested only against a mocked client and the agents with recorded responses. First live check: put the key in `atlas/llm.env`, set `ATLAS_LLM_PROVIDER=anthropic`, then click "Run agents now" and read the five narratives. Token use is shown per report; at most 5 calls per run, 2 scheduled runs a day.
+- Phase 5 agents are advisory and deliberately unread by the trading path. The regime is not used as a strategy filter; that would be a strategy change requiring revalidation.
+- Strategy Research and Quantitative Research agents (proposing new hypotheses) are not built. Their packages are empty: any proposal would need the backtester and gates, and that workflow isn't designed yet.
+- News comes from Alpaca's feed only (mostly Benzinga), headline and summary only; full article bodies aren't fetched. Breadth covers the ~41 ingested symbols, not the market.
 - **Revalidation with the 20-session cooldown (2026-10-26).** The new policy hash made the earlier reports ineligible for promotion; they remain stored as records.
   - `trend_breakout` (report #3): **passes 10/10.**
     - 246 trades, PF 2.66, avg +1.03R, Sharpe 0.79, CAGR 4.1% (+47.6% over 9.7 years on a $10k budget), max DD 6.9%.
@@ -189,11 +226,14 @@ Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX d
 1. **Promotion decision (admin):** both baselines are eligible for PAPER. Even after promotion, entries stay blocked until (a) shorting is disabled on the Alpaca paper account and (b) an earnings calendar is connected or `block_entries_before_earnings_days` is set to 0.
 2. Simulated positions for shadow strategies, so they can be compared like for like with backtests.
 3. Earnings calendar and sector classification sources (both currently fail closed).
-4. LIVE_CANDIDATE gate: evaluation of a paper-trading track record (Phase 5+ per the spec).
+4. LIVE_CANDIDATE gate: evaluation of a paper-trading track record.
+5. First live LLM run of the Phase 5 agents once an Anthropic key is configured; review narrative quality and token cost.
+6. Strategy/quantitative research agents that propose hypotheses for the backtester (design needed first).
 
 ## Required user action
 - Alpaca paper keys: in place and verified. For Docker, make sure they are in `atlas/broker.env` (never in chat or git).
 - **Disable shorting and margin on the Alpaca paper account.** The policy is long-only with no margin, and ATLAS rejects entries until the broker enforces it too: Alpaca dashboard → paper account → Configure, or `PATCH /v2/account/configurations` with `{"no_shorting": true, "max_margin_multiplier": "1"}`. `check_alpaca` reports the current setting.
 - Decide on earnings data: connect a provider (needs an API key), or set `block_entries_before_earnings_days: 0` in a reviewed policy change.
 - Optional: the paper account holds $100,000 while the policy budget is $10,000. ATLAS sizes to $10,000 either way. You could reset the paper account to $10,000 in Alpaca, or raise `starting_equity_usd` in a reviewed policy change.
-- Optional: Telegram bot token and chat id in `atlas/.env`; Anthropic key in `atlas/llm.env`.
+- Optional: Telegram bot token and chat id in `atlas/.env`.
+- **For AI narratives (Phase 5):** Anthropic API key in `atlas/llm.env` (`ATLAS_LLM_ANTHROPIC_API_KEY`) and `ATLAS_LLM_PROVIDER=anthropic`. Without it the agents still run and show their deterministic analysis.

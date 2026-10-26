@@ -69,3 +69,21 @@ def test_env_example_has_no_real_secrets():
     text = (PROJECT / ".env.example").read_text() + (PROJECT / "broker.env.example").read_text()
     assert not re.search(r"(PK|AK)[A-Z0-9]{16,}", text)
     assert "paper-api.alpaca.markets" in text
+
+
+def test_agents_cannot_reach_execution_or_change_config():
+    """Agents are advisory: no execution, broker, order or policy-writing code paths."""
+    banned = (
+        "atlas.core.execution",
+        "atlas.apps.executor",
+        "atlas.integrations.alpaca",
+        "kill_switch.engage",
+        "kill_switch.resume",
+        "set_status",
+        "submit_",
+        "write_text",
+    )
+    for path in (SRC / "agents").rglob("*.py"):
+        text = path.read_text()
+        for word in banned:
+            assert word not in text, f"{path} contains {word!r}"

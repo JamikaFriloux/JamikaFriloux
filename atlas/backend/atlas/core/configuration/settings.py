@@ -116,6 +116,9 @@ class LLMSettings(BaseSettings):
     model: str = "claude-opus-5-5"
     max_tokens: int = 4096
     timeout_seconds: float = 60.0
+    # Hard cap on LLM calls per New York calendar day across all agents. Agents still run
+    # their deterministic part when the cap is reached; only the narrative is skipped.
+    max_calls_per_day: int = Field(default=40, ge=0, le=500)
 
 
 @lru_cache(maxsize=1)
