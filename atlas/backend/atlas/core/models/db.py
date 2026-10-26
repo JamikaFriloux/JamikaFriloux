@@ -398,3 +398,13 @@ class ValidationReport(Base):
     caveats: Mapped[list[str]] = mapped_column(JSONType, default=list)
     runtime_seconds: Mapped[float] = mapped_column(Numeric(10, 1))
     requested_by: Mapped[str] = mapped_column(String(64), default="system")
+
+
+class EquityClose(Base):
+    """Broker equity at each session close; the drawdown halt is replayed from these."""
+
+    __tablename__ = "equity_closes"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    equity: Mapped[Decimal] = mapped_column(Money)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # snapshot time

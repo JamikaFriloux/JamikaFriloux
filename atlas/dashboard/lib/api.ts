@@ -41,6 +41,13 @@ export type SystemStatus = {
     synced_at: string;
   }[];
   open_orders: number;
+  drawdown: null | {
+    high_water_mark: string;
+    drawdown: string;
+    limit: string;
+    halted_on: string | null;
+    cooldown_sessions_remaining: number;
+  };
   market_regime: string | null;
   services: { service: string; status: string; last_seen: string }[];
   policy: { sha256: string; version: number; limits: Record<string, number> };

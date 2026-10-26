@@ -37,6 +37,8 @@ from atlas.core.data.bars import BarRecord, validate_bars
 from atlas.core.data.calendar import NY, MarketCalendar
 from atlas.core.data.universe import AssetInfo, UniverseCriteria, liquidity_screen
 from atlas.core.models.db import StrategyStatus
+from atlas.core.risk.drawdown import DrawdownState, at_session
+from atlas.core.risk.drawdown import step as dd_step
 from atlas.core.risk.engine import AccountState, QuoteState, RiskContext, evaluate
 from atlas.core.strategies.base import OpenPosition, Signal, Strategy
 
@@ -71,6 +73,8 @@ class BacktestResult:
     unfilled: int = 0
     partial_fills: int = 0
     skipped_bad_windows: int = 0
+    drawdown_halts: list[str] = field(default_factory=list)  # sessions whose close halted entries
+    drawdown_resets: list[str] = field(default_factory=list)  # sessions whose close reset the HWM
 
     def summary(self) -> dict[str, Any]:
         return summarize(self.dates, self.equity, self.trades, self.exposed_days)
@@ -165,7 +169,7 @@ class Simulator:
         pending: list[Signal] = []
         res = BacktestResult(strat.id, strat.version, strat.params.model_dump())
         prev_close_equity = cash
-        hwm = cash
+        dd_state = DrawdownState()
         prior_universe: frozenset[str] = frozenset()
 
         def bar(sym: str, d: date) -> BarRecord | None:
@@ -190,6 +194,7 @@ class Simulator:
                     (p.qty * opens.get(s, p.entry_price) for s, p in positions.items()), Decimal(0)
                 )
                 equity_now = cash + long_mv
+                hwm, cooldown_left = at_session(dd_state, d, equity_now, self.policy, self.cal)
                 ctx = RiskContext(
                     now=now,
                     mode="paper",
@@ -205,6 +210,7 @@ class Simulator:
                         shorting_enabled=False,
                     ),
                     high_water_mark=hwm,
+                    drawdown_cooldown_remaining=cooldown_left,
                     positions={s: p.qty for s, p in positions.items()},
                     open_orders=(),
                     entries_submitted_today=entries_today,
@@ -269,7 +275,12 @@ class Simulator:
             res.equity.append(float(equity))
             res.exposed_days += 1 if positions else 0
             prev_close_equity = equity
-            hwm = max(hwm, equity)
+            before = dd_state
+            dd_state = dd_step(dd_state, d, equity, self.policy, self.cal)
+            if dd_state.halted_on == d:
+                res.drawdown_halts.append(d.isoformat())
+            elif before.halted_on is not None and dd_state.halted_on is None:
+                res.drawdown_resets.append(d.isoformat())
             prior_universe = eligible.get(d, frozenset())
             windows = {}
             for sym, series in bars.items():

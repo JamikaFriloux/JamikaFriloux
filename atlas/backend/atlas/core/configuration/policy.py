@@ -70,6 +70,8 @@ class LimitsPolicy(_Strict):
     max_new_trades_per_day: int = Field(gt=0)
     max_order_notional_usd: float = Field(gt=0)
     min_cash_buffer_usd: float = Field(ge=0)
+    # After a drawdown halt, entries stay blocked this many sessions, then the HWM resets.
+    drawdown_cooldown_sessions: int = Field(ge=5, le=250)
 
     @model_validator(mode="after")
     def _within_hard_limits(self) -> LimitsPolicy:

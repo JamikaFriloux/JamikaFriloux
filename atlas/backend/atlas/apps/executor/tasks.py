@@ -44,6 +44,7 @@ from atlas.core.execution.reconciliation import reconcile
 from atlas.core.models.session import session_scope
 from atlas.core.observability.logging import get_logger
 from atlas.core.risk import kill_switch
+from atlas.core.risk.drawdown import record_equity_close
 from atlas.core.risk.engine import QuoteState
 from atlas.integrations.telegram.notifier import Event, build_notifier
 
@@ -199,6 +200,7 @@ def broker_sync() -> dict[str, object]:
         gateway = get_gateway()
         with session_scope() as s:
             report = reconcile(s, gateway)
+            record_equity_close(s, MarketCalendar())  # feeds the drawdown halt rule
             orphans = cancel_orphan_stops(s, gateway)
             if orphans:
                 log.warning("orphan_stops_cancelled", orders=orphans)

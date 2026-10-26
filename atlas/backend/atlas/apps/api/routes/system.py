@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from atlas.apps.api.deps import client_ip, get_db, require_role
+from atlas.core.data.calendar import NY, MarketCalendar
 from atlas.core.execution.state_machine import OPEN_BROKER_STATES
 from atlas.core.models.db import (
     AccountSnapshot,
@@ -22,6 +23,7 @@ from atlas.core.models.db import (
     User,
 )
 from atlas.core.risk import kill_switch
+from atlas.core.risk.drawdown import at_session, limit_dollars, production_state
 from atlas.core.security.auth import verify_password
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
@@ -56,6 +58,19 @@ def system_status(
     # Baseline for total P/L: the account's equity at ATLAS's first broker sync (real data;
     # the policy's starting equity is a sizing budget and may differ from the paper account).
     first = db.scalar(select(AccountSnapshot).order_by(AccountSnapshot.ts.asc()).limit(1))
+    drawdown = None
+    if snap is not None:
+        cal = MarketCalendar()
+        today = datetime.now(UTC).astimezone(NY).date()
+        state = production_state(db, today, policy.policy, cal)
+        hwm, left = at_session(state, today, snap.equity, policy.policy, cal)
+        drawdown = {
+            "high_water_mark": str(hwm),
+            "drawdown": str(hwm - snap.equity),
+            "limit": str(limit_dollars(hwm, policy.policy)),
+            "halted_on": state.halted_on.isoformat() if state.halted_on and left else None,
+            "cooldown_sessions_remaining": left,
+        }
     open_orders = db.scalar(
         select(func.count()).select_from(Order).where(Order.state.in_(OPEN_BROKER_STATES))
     )
@@ -98,6 +113,7 @@ def system_status(
             for p in positions
         ],
         "open_orders": open_orders or 0,
+        "drawdown": drawdown,
         "market_regime": None,  # produced by the Market Intelligence agent (Phase 5)
         "services": [
             {"service": b.service, "status": b.status, "last_seen": _iso(b.last_seen)}

@@ -170,3 +170,45 @@ def test_baseline_runs_end_to_end(policy):
     summary = res.summary()
     assert res.trades and summary["trades"] == len(res.trades) and summary["total_return_pct"] > 0
     assert res.dates[0] == DAYS[0] and len(res.equity) == len(DAYS)
+
+
+def test_drawdown_cooldown_then_trading_resumes(policy):
+    """A breach blocks entries for 20 sessions; after the reset, the strategy trades again."""
+    days = CAL.sessions_between(date(2026, 1, 2), date(2026, 8, 31))
+    n = len(days)
+    closes, opens = [100.0] * n, [None] * n
+    entries = days[22 : n - 5 : 3]
+    for e in entries[:8]:  # the first 8 trades gap 20 below their entry -> ~$80 losses each
+        opens[days.index(e) + 2] = 80.0
+
+    def make(sym):
+        out = []
+        for i, d in enumerate(days):
+            o = D(str(opens[i])) if opens[i] is not None else D(str(closes[i]))
+            c = D(str(closes[i]))
+            out.append(
+                BarRecord(
+                    symbol=sym,
+                    timeframe="1Day",
+                    ts=datetime(d.year, d.month, d.day, tzinfo=NY),
+                    open=o,
+                    high=max(o, c) + D("0.5"),
+                    low=min(o, c) - D("0.5"),
+                    close=c,
+                    volume=D(1_000_000),
+                    source="t",
+                    adjustment="all",
+                )
+            )
+        return out
+
+    s = {"AAA": make("AAA")}
+    res = sim(Scripted(entries=entries), policy).run(s, s, days[0], days[-1])
+    assert res.drawdown_halts, "the gap losses should breach the $500 limit"
+    halt = date.fromisoformat(res.drawdown_halts[0])
+    reset = date.fromisoformat(res.drawdown_resets[0])
+    # The reset happens at the close of the 20th session after the halt...
+    assert len([d for d in days if halt < d <= reset]) == 20
+    # ...no entry fills during the cooldown, and trading resumes after the reset.
+    assert not [t for t in res.trades if halt < t.entry_date <= reset]
+    assert [t for t in res.trades if t.entry_date > reset]

@@ -38,6 +38,7 @@ limits:
   max_risk_per_trade_pct: 0.25         # % of current equity at risk (entry - stop) per trade
   max_daily_loss_pct: 1.0              # % of starting-day equity
   max_drawdown_pct: 5.0                # % from high-water mark
+  drawdown_cooldown_sessions: 20       # after a halt: no entries for 20 sessions, then the HWM resets
   max_position_allocation_pct: 10.0    # % of equity per position
   max_concurrent_positions: 5
   max_sector_exposure_pct: 25.0

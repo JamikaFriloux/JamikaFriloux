@@ -368,3 +368,26 @@ def test_matching_stops_are_left_alone(db):
     ensure_protection(db, broker, NOW)
     db.commit()
     assert cancel_orphan_stops(db, broker, sleep=lambda _x: None) == []
+
+
+def test_drawdown_cooldown_blocks_entries_in_production(db):
+    from atlas.core.models.db import EquityClose
+
+    setup(db)
+    prior = CAL.sessions_between(date(2026, 10, 1), date(2026, 10, 21))
+    # Peak 100,500 then a close 500 below it on Oct 20 -> halted; Oct 22 is cooldown session 2.
+    for d in prior:
+        eq = D(100_500) if d < date(2026, 10, 20) else D(100_000)
+        db.add(
+            EquityClose(
+                day=d, equity=eq, recorded_at=datetime(d.year, d.month, d.day, 21, tzinfo=UTC)
+            )
+        )
+    db.commit()
+    signal(db)
+    out = run(db, deps(FakeBroker()))
+    assert out[0].status == "REJECTED" and out[0].failed == ("drawdown",)
+    d = db.scalars(select(RiskDecision)).one()
+    assert "cooldown, 19 sessions left" in next(
+        c["detail"] for c in d.checks if c["name"] == "drawdown"
+    )

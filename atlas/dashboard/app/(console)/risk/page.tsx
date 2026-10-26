@@ -10,6 +10,7 @@ const LIMIT_LABELS: Record<string, [string, string]> = {
   max_risk_per_trade_pct: ["Max risk per trade", "% of equity"],
   max_daily_loss_pct: ["Max daily loss", "% of starting-day equity"],
   max_drawdown_pct: ["Max drawdown", "% from high-water mark"],
+  drawdown_cooldown_sessions: ["Drawdown halt cooldown", "sessions, then HWM resets"],
   max_position_allocation_pct: ["Max position allocation", "% of equity"],
   max_concurrent_positions: ["Max concurrent positions", "positions"],
   max_sector_exposure_pct: ["Max sector exposure", "% of equity"],
@@ -64,8 +65,19 @@ export default async function RiskPage() {
           <CardContent className="space-y-5">
             <Meter label="Daily loss limit" value={dailyUse} />
             <Meter label="Gross exposure limit" value={grossUse} />
+            <Meter
+              label="Drawdown limit"
+              value={s.drawdown && Number(s.drawdown.limit) > 0 ? Number(s.drawdown.drawdown) / Number(s.drawdown.limit) : null}
+            />
+            {s.drawdown?.cooldown_sessions_remaining ? (
+              <Badge tone="loss">
+                Drawdown halt since {s.drawdown.halted_on}: new entries blocked for {s.drawdown.cooldown_sessions_remaining} more
+                sessions
+              </Badge>
+            ) : null}
             <p className="text-xs text-muted">
-              {a ? `Based on broker sync at ${fmtTime(a.as_of)}.` : "Unavailable until the first broker sync."} The risk engine
+              {a ? `Based on broker sync at ${fmtTime(a.as_of)}.` : "Unavailable until the first broker sync."}{" "}
+              {s.drawdown ? `High-water mark ${fmtUsd(s.drawdown.high_water_mark)}, limit ${fmtUsd(s.drawdown.limit)}. ` : ""}The risk engine
               sizes and limits against a capital base of min(broker equity, policy starting equity). Sector data isn&apos;t
               available yet, so all holdings share one sector budget.
             </p>

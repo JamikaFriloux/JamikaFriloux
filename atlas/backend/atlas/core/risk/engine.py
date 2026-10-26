@@ -31,6 +31,7 @@ from typing import Any, Literal
 from atlas.core.configuration.policy import RiskPolicy
 from atlas.core.data.calendar import MarketCalendar
 from atlas.core.models.db import StrategyStatus
+from atlas.core.risk.drawdown import limit_dollars
 from atlas.core.strategies.base import CENT, Signal
 
 ACCOUNT_MAX_AGE = timedelta(minutes=3)  # broker sync runs every minute
@@ -81,6 +82,7 @@ class RiskContext:
     quote: QuoteState | None
     strategy_position_qty: Decimal = Decimal(0)  # what this strategy holds in the symbol
     earnings_blackout: bool | None = None  # None: no earnings data available
+    drawdown_cooldown_remaining: int = 0  # sessions left in a drawdown halt (core/risk/drawdown.py)
     sector_known: bool = False  # no sector data source yet
 
 
@@ -258,12 +260,15 @@ def evaluate(
         check("daily_loss", day_pl > -max_loss, f"day P/L {day_pl:.2f}, limit -{max_loss:.2f}")
         hwm = max(ctx.high_water_mark or acct.equity, acct.equity)
         dd = hwm - acct.equity
-        max_dd = (
-            min(hwm, Decimal(str(policy.account.starting_equity_usd)))
-            * Decimal(str(lim.max_drawdown_pct))
-            / 100
-        )
-        check("drawdown", dd < max_dd, f"drawdown {dd:.2f} from {hwm:.2f}, limit {max_dd:.2f}")
+        max_dd = limit_dollars(hwm, policy)
+        if ctx.drawdown_cooldown_remaining > 0:
+            check(
+                "drawdown",
+                False,
+                f"drawdown halt: cooldown, {ctx.drawdown_cooldown_remaining} sessions left",
+            )
+        else:
+            check("drawdown", dd < max_dd, f"drawdown {dd:.2f} from {hwm:.2f}, limit {max_dd:.2f}")
     else:
         check("daily_loss", False, "no account data")
         check("drawdown", False, "no account data")

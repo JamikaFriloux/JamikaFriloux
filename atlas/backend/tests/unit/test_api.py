@@ -362,6 +362,8 @@ def test_status_with_account_snapshots(client, session_factory):
     assert Decimal(a["total_pl"]) == Decimal("250.50")  # vs first sync, not the policy budget
     assert Decimal(a["day_pl"]) == Decimal("150.50")
     assert Decimal(a["capital_base"]) == Decimal("10000") and a["shorting_enabled"] is True
+    dd = r.json()["drawdown"]
+    assert Decimal(dd["limit"]) == Decimal("500") and dd["cooldown_sessions_remaining"] == 0
 
 
 def test_validation_endpoints(client, session_factory, dispatched, policy):

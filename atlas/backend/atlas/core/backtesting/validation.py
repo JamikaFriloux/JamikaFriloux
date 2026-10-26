@@ -217,10 +217,11 @@ def validate_strategy(
         ),
     ]
     caveats = list(CAVEATS)
-    if "drawdown" in base.first_halt:
+    if base.drawdown_halts:
         caveats.append(
-            f"drawdown_halt: the {policy.policy.limits.max_drawdown_pct}% drawdown limit blocked "
-            f"new entries from {base.first_halt['drawdown']} (production behaves the same)"
+            f"drawdown_halts: {len(base.drawdown_halts)} halt(s) of "
+            f"{policy.policy.limits.drawdown_cooldown_sessions} sessions, from "
+            f"{base.drawdown_halts[0]} (production applies the same rule)"
         )
     step = max(1, len(base.dates) // 400)
     curve = [
@@ -252,6 +253,8 @@ def validate_strategy(
             "unfilled": base.unfilled,
             "partial_fills": base.partial_fills,
             "skipped_bad_windows": base.skipped_bad_windows,
+            "drawdown_halts": base.drawdown_halts,
+            "drawdown_resets": base.drawdown_resets,
             "exit_reasons": _count([t.exit_reason for t in base.trades]),
             "cost_model": {
                 k: str(v) for k, v in CostModel.from_policy(policy.policy).__dict__.items()

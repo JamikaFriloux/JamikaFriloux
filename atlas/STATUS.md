@@ -1,13 +1,13 @@
 # ATLAS project status
 
-_Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation gates and reports. Neither baseline passes yet. Both results are dominated by the drawdown-halt policy (see below)._
+_Last updated: 2026-10-26: drawdown halts now use a 20-session cooldown and reset. Both baselines pass all validation gates and are eligible for promotion to PAPER (not promoted; that's an admin decision)._
 
 | Phase | State |
 |---|---|
 | 1 Foundation | **Complete** |
 | 2 Market data | **Built; one live check outstanding**: Alpaca paper connectivity verified live (`check_alpaca` passes). Daily and minute bar ingestion with stored quality reports is built and tested live. The live WebSocket stream is built and tested against a local fake server, but not yet against Alpaca (this environment blocks the stream host). The universe screen with point-in-time snapshots, watchlist management and the Live Trading dashboard are built and tested live |
 | 3 Trading engine | **Built**: indicators, strategy framework with 2 baseline strategies, signal engine, deterministic risk engine with sizing, signal→order pipeline, broker-side protective stops, exits, dashboard. Strategies run in RESEARCH (shadow); paper orders start only after a strategy passes Phase 4 validation |
-| 4 Backtesting & promotion gates | **Built**: event-driven simulator reusing the production strategy, sizing and risk code; cost, gap and partial-fill models; validation gates in `policy.yaml`; immutable validation reports; gated promotion wired. Both baselines validated on 9.7 years of real data: neither passes |
+| 4 Backtesting & promotion gates | **Built**: event-driven simulator reusing the production strategy, sizing and risk code; cost, gap and partial-fill models; validation gates in `policy.yaml`; immutable validation reports; gated promotion wired. Both baselines pass all 10 gates on 9.7 years of real data, after the drawdown cooldown rule |
 | 5–8 | Not started |
 
 ## Implemented and tested
@@ -43,6 +43,11 @@ _Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation
   - There is no manual order entry; orders arrive with the Phase 3 signal and risk engines.
   - New route handlers (`/api/live`, `/api/universe`, `/api/watchlists[/name]`) go through a shared `lib/proxy.ts` that adds the httpOnly session token and requires same-origin requests for writes. The API enforces roles.
 - `/health/ready` reports each service's own status (ok/degraded/error). The 3-minute staleness rule applies only to continuously reporting services (worker, executor, broker, stream). Before, a failing stream read as "ok" and scheduled jobs read as "stale" between runs.
+- **Drawdown halt with cooldown** (`core/risk/drawdown.py`, `policy.yaml` `limits.drawdown_cooldown_sessions: 20`).
+  - A session close ≥ the drawdown limit below the high-water mark halts new entries. They stay blocked for the next 20 sessions; at the close of the 20th, the high-water mark resets to that close and drawdown is measured from there.
+  - Intraday breaches still block entries at that moment but don't start a cooldown. Exits are never blocked.
+  - Production replays recorded session-close equity (`equity_closes`, migration 0006, written after each broker sync). If the reset close was missed, it resets to live equity. The backtester steps the same function at each simulated close.
+  - `/api/v1/status` and the Risk Center show the high-water mark, current drawdown, limit and any cooldown.
 - **Phase 4, backtesting and promotion.**
   - Simulator (`core/backtesting/simulator.py`): a daily event loop on the live schedule.
     - Entries and exits happen at the next open, plus 5 minutes, through `risk.engine.evaluate` with a synthetic quote. Limit orders are priced as in production and fill only if the modeled price (± half spread ± slippage) is within the limit, capped at `max_participation_pct` of session volume (partial fills).
@@ -97,8 +102,8 @@ _Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-25)
-- Backend: **314 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Phase 3 adds tests for indicators (hand-computed values), strategies and the registry, the risk engine (each rule failing alone), the signal engine, and the order pipeline against the FakeBroker (approvals, shadow mode, transient vs final rejections, broker rejection, lost response, protective stops, orphan stops, exits, kill switch). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
-- Migrations 0002–0005: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
+- Backend: **324 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Phase 3 adds tests for indicators (hand-computed values), strategies and the registry, the risk engine (each rule failing alone), the signal engine, and the order pipeline against the FakeBroker (approvals, shadow mode, transient vs final rejections, broker rejection, lost response, protective stops, orphan stops, exits, kill switch). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
+- Migrations 0002–0006: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
 - **Live Alpaca paper (2026-10-25):** `check_alpaca` passed all 5 checks (paper endpoint, ACTIVE paper account, clock, 22-session calendar cross-check against XNYS, SPY daily bars validated). Live ingestion into PostgreSQL: 1,100 daily bars and 4,312 regular-hours minute bars across 4 symbols, all OK and none stale. An immediate re-run fetched incrementally (4 bars rewritten).
 - `ruff check`, `ruff format --check`, `mypy atlas`: clean. `pip-audit`: no known vulnerabilities.
 - Dashboard: `tsc --noEmit` and `next build` pass.
@@ -117,7 +122,18 @@ _Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation
   - executor without credentials fails safely and reports broker `error`
 
 ## Not tested / known limitations
-- **Phase 4 live validation (2026-10-26).** 10.5 years of SIP daily history (adjusted and raw, 98,176 bars each, 2016-04-26 → 2026-10-23) for 41 symbols. Simulated 2017-02-10 → 2026-10-23 with a $10,000 budget under the real policy.
+- **Revalidation with the 20-session cooldown (2026-10-26).** The new policy hash made the earlier reports ineligible for promotion; they remain stored as records.
+  - `trend_breakout` (report #3): **passes 10/10.**
+    - 246 trades, PF 2.66, avg +1.03R, Sharpe 0.79, CAGR 4.1% (+47.6% over 9.7 years on a $10k budget), max DD 6.9%.
+    - Holdout: 47 trades, Sharpe 1.23. 7/10 windows profitable, 10/10 neighbours profitable, bootstrap lower bound +2.4%.
+    - 7 drawdown halts, each reset exactly 20 sessions later (first 2020-02-27 → 2020-03-26). Max DD exceeds the 5% limit because halts block new entries but open positions keep moving until their stops or exits.
+  - `rsi_pullback` (report #4): **passes 10/10.**
+    - Its own path is unchanged: it never breached the limit (max DD 4.7%). Neighbours are now 13/13 profitable (6/13 before), confirming the earlier failure was the permanent-halt cliff.
+    - 1,404 trades, Sharpe 0.84, CAGR 1.75%, holdout Sharpe 2.12.
+  - `passing_validation_report()` now returns #3 and #4: **both are eligible for promotion to PAPER. Neither was promoted.**
+  - Read with the caveats: today's most liquid names (incl. NVDA, MU, leveraged ETFs) were selected with hindsight, which flatters these numbers.
+  - Playwright: Strategy Lab shows both as passed and promotable; report pages and the Risk Center render without horizontal scroll at 390 px.
+- **Phase 4 live validation (2026-10-26), before the cooldown rule.** 10.5 years of SIP daily history (adjusted and raw, 98,176 bars each, 2016-04-26 → 2026-10-23) for 41 symbols. Simulated 2017-02-10 → 2026-10-23 with a $10,000 budget under the real policy.
   - `trend_breakout`: **fails** 6 of 10 gates. 77 trades, profit factor 2.08, avg +1.05R, Sharpe 0.43, max DD 5.5%, all 10 neighbours profitable.
     - **The 5% drawdown limit halted new entries on 2020-04-14 and never released** (4,208 entries blocked; 0 trades in the 2-year holdout).
   - `rsi_pullback`: **fails 1 of 10 gates** (stability, 6/13 neighbours profitable). 1,404 trades, Sharpe 0.84, PF 1.37, max DD 4.7%, holdout Sharpe 2.12, 8/10 walk-forward windows profitable, bootstrap lower bound +0.27%.
@@ -132,11 +148,7 @@ _Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation
   - **Playwright:** 14/14 Phase 3 checks (Strategy Lab with the real signals, refused promotion with its reason, signals and orders on Live Trading, rejections on Risk Center, viewer restrictions, no horizontal scroll at 390 px). The 26/26 Phase 2 Live Trading checks still pass.
   - **Not yet run:** shadow risk evaluation of those signals in a live session. It runs from 09:35 on the next session; the market was closed.
 - **Live universe (2026-10-25):** 14,398 active assets → 2,684 members (as of 2026-10-23) in 26 s. Exclusions: 7,045 below the dollar-volume minimum, 3,364 below $10, 894 not tradable, 308 OTC, 96 too little history, 5 no print on `as_of`, 2 no data. Lowest member close is $10.00 and lowest dollar volume $20.0M, exactly at the policy limits. A watchlist with an OTC symbol was rejected with its reason; a valid one was created and audited, and ingestion and the stream picked up its symbols.
-- **The drawdown halt is permanent, and it dominates both validations.** The risk engine blocks entries once equity is 5% of the budget ($500) below its high-water mark. Nothing ever resets that mark, so one bad stretch stops a strategy for good, in production as in the backtest. This is a risk-policy decision for you. Options:
-  1. An admin action that acknowledges a halt and resets the high-water mark after review (can't be simulated: backtests would then need a stated rule).
-  2. A cooldown: after a halt, pause N sessions, then reset the baseline (a `policy.yaml` setting).
-  3. Measure drawdown from a trailing peak (e.g. 12 months) instead of all-time.
-  4. Raise `max_drawdown_pct` (hard ceiling 15%).
+- Drawdown rule: a 20-session cooldown, then a high-water-mark reset (chosen 2026-10-26). A halt doesn't liquidate, so realised drawdown can exceed the limit while open positions run to their stops (6.9% in the trend backtest).
 - Backtest caveats, recorded in every report:
   - The symbol list is today's (survivorship bias).
   - Earnings blackouts and sectors aren't simulated; there is no historical data for them.
@@ -174,7 +186,7 @@ _Last updated: 2026-10-26 — Phase 4 built: event-driven backtester, validation
 Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX during market hours) once `stream.data.alpaca.markets` is allowed.
 
 ## Next engineering tasks
-1. **Decide the drawdown-halt rule** (see Known limitations), then re-run both validations. `rsi_pullback` may pass once the cliff is gone; it would still need your promotion decision.
+1. **Promotion decision (admin):** both baselines are eligible for PAPER. Even after promotion, entries stay blocked until (a) shorting is disabled on the Alpaca paper account and (b) an earnings calendar is connected or `block_entries_before_earnings_days` is set to 0.
 2. Simulated positions for shadow strategies, so they can be compared like for like with backtests.
 3. Earnings calendar and sector classification sources (both currently fail closed).
 4. LIVE_CANDIDATE gate: evaluation of a paper-trading track record (Phase 5+ per the spec).

@@ -45,6 +45,7 @@ from atlas.core.models.db import (
 )
 from atlas.core.observability.logging import get_logger
 from atlas.core.risk import kill_switch
+from atlas.core.risk.drawdown import at_session, production_state
 from atlas.core.risk.engine import (
     AccountState,
     OpenOrderState,
@@ -112,6 +113,7 @@ def build_context(
     *,
     now: datetime,
     calendar: MarketCalendar,
+    policy: RiskPolicy,
 ) -> RiskContext:
     snap = session.scalars(
         select(AccountSnapshot).order_by(AccountSnapshot.ts.desc()).limit(1)
@@ -129,7 +131,13 @@ def build_context(
             shorting_enabled=snap.shorting_enabled,
         )
     )
-    hwm = session.scalar(select(func.max(AccountSnapshot.equity)))
+    # Drawdown halt: replay recorded session closes (cooldown + reset, core/risk/drawdown.py).
+    dd_state = production_state(session, now.astimezone(NY).date(), policy, calendar)
+    hwm, cooldown_left = (
+        at_session(dd_state, now.astimezone(NY).date(), account.equity, policy, calendar)
+        if account is not None
+        else (None, 0)
+    )
     positions = {p.symbol: p.qty for p in session.scalars(select(Position)).all()}
     open_rows = session.scalars(select(Order).where(Order.state.in_(OPEN_BROKER_STATES))).all()
     open_orders = tuple(
@@ -166,6 +174,7 @@ def build_context(
         quote=deps.quote_for(rec.symbol),
         strategy_position_qty=held,
         earnings_blackout=deps.earnings_blackout(rec.symbol),
+        drawdown_cooldown_remaining=cooldown_left,
     )
 
 
@@ -223,7 +232,7 @@ def process_pending_signals(
     for rec in pending:
         row = session.get(StrategyRecord, rec.strategy_id)
         status = row.status if row else StrategyStatus.RETIRED
-        ctx = build_context(session, rec, status, deps, now=now, calendar=calendar)
+        ctx = build_context(session, rec, status, deps, now=now, calendar=calendar, policy=policy)
         result = evaluate(as_signal(rec), ctx, policy, calendar)
         failed = tuple(result.failed)
         if not result.approved and is_transient(failed) and window_left:
