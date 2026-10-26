@@ -1,0 +1,60 @@
+# Production overrides for one small host (sized for a 4 GB RAM / 2 vCPU droplet).
+#
+# Enable it by adding this line to .env (Compose reads it from the project directory):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+# after which plain `docker compose ...` uses both files.
+#
+# Adds memory limits (so one runaway service can't take the host down), log rotation
+# (Docker's default json logs grow without bound) and a dashboard health check. Networks,
+# credentials and port bindings are unchanged from docker-compose.yml: PostgreSQL and Redis
+# publish no ports; the API and dashboard bind to 127.0.0.1 only.
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  postgres:
+    <<: *logging
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "effective_cache_size=768MB"]
+    mem_limit: 768m
+    stop_grace_period: 60s
+
+  redis:
+    <<: *logging
+    mem_limit: 256m
+
+  migrate:
+    <<: *logging
+
+  api:
+    <<: *logging
+    mem_limit: 512m
+
+  worker:
+    <<: *logging
+    # Strategy validation (a ~10-year backtest) runs here. Rehearsal peak with both
+    # validations running at once: 1.57 GiB.
+    mem_limit: 2g
+
+  beat:
+    <<: *logging
+    mem_limit: 256m
+
+  executor:
+    <<: *logging
+    # ~360 MB idle (execution worker + stream). Rehearsal peak during the one-off 10.5-year
+    # history backfill run in this container: 843 MiB.
+    mem_limit: 1280m
+    # Let in-flight broker calls and the stream shut down cleanly.
+    stop_grace_period: 30s
+
+  dashboard:
+    <<: *logging
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

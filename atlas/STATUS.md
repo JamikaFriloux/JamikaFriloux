@@ -11,7 +11,7 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
 | 5 AI research agents | **Built; LLM output not yet verified live**: five advisory agents (market regime, technical analysis, news sentiment, performance, operations). Their deterministic features run live on real data; the AI narratives are tested with recorded responses only, because no Anthropic key is configured here |
 | 6 Performance & track record | **Built; no paper record yet**: paper trade ledger, account metrics vs SPY, an out-of-sample forward test per strategy, LIVE_CANDIDATE gates on the paper record, Performance page. There are no paper fills or recorded session closes yet, so paper and account sections are empty by design |
 | 7 Reference data | **Complete; verified live**: reviewed `config/instruments.yaml` (14 ETFs, 23 stock sectors), per-sector exposure limits, an earnings calendar with fail-closed clearance, SEC EDGAR and Finnhub adapters. Both providers were reached live; `check_reference` passes. Stock earnings clearance works (GOOG, GOOGL, MSFT and STX blacked out on 2026-10-26) |
-| 8 Forward-testing readiness | **In progress**: go/no-go preflight `check_readiness` built and run live. It fails today on 7 checks, all operational or approval items: kill switch engaged, no strategy promoted, services not running (no broker sync, worker or executor heartbeats), no Telegram alerts. No code blockers are known |
+| 8 Forward-testing readiness | **In progress; deployment rehearsed**: go/no-go preflight `check_readiness` built and run live. It fails today on 7 checks, all operational or approval items: kill switch engaged, no strategy promoted, services not running (no broker sync, worker or executor heartbeats), no Telegram alerts. No code blockers are known |
 
 ## Implemented and tested
 - **Phase 8, forward-testing readiness** (`atlas/scripts/check_readiness.py`). This is a read-only go/no-go check; it places no orders.
@@ -176,6 +176,15 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-26)
+- **Docker deployment rehearsal** (`docker-compose.prod.yml`, `docs/deploy-digitalocean.md`). This was the first time the Docker images were built; it ran with the same Docker 29.9.2 / Compose v5.6.1 as the target Droplet.
+  - Both images build (backend 82 s). The stack starts; `migrate` exits 0; postgres, redis, api and dashboard are healthy. Only 127.0.0.1:8000 and 127.0.0.1:3000 are published.
+  - Kill switch engaged on first start. `check_alpaca` 5/5 inside the executor. A live Alpaca URL and `ATLAS_TRADING_MODE=live` both stop the service from starting.
+  - Dashboard login works over http://localhost against the production container (Secure, httpOnly, SameSite=Strict cookie).
+  - Data bootstrap inside the containers: universe 2,672 members (as of 10-26); `research` watchlist; 10.5-year backfill; reference refresh with 4,215 events and 0 unclassified. Both validations pass when run at the same time.
+  - **Memory:** the first limits were too small. The backfill run inside the executor was OOM-killed (exit 137) at 768 MiB. Measured peaks: executor 843 MiB during the backfill, worker 1.57 GiB with two validations at once. Limits raised to 1.25 GiB and 2 GiB.
+  - **Unclean restart:** the Docker engine died with every container running. On restart, every service came back by itself with data intact and the kill switch still engaged.
+  - `check_readiness` in the executor: NOT READY on exactly kill switch, no promoted strategy and Telegram. Everything else OK; stream is a warning (blocked in the rehearsal environment).
+  - Rehearsal-only workarounds that the Droplet doesn't need: a Docker Hub mirror (rate limit), a local `uv` 0.11.32 image (GitHub's blob host is blocked there), and the session proxy's CA added to a scratch copy of the Dockerfiles. The repository Dockerfiles are unchanged.
 - Dashboard and report fixes: backend **413 passed, 0 failed**; `mypy` clean; dashboard `tsc --noEmit` and `next build` pass.
   - **Window time in market was always 0%.** The simulator kept only a whole-run count of exposed days, so holdout and walk-forward windows reported 0.0%, even with 47 holdout trades. It now records exposure per session, and windows count their own days. A new regression test covers it. No promotion gate uses this metric.
   - The Risk Center's Utilization card said sector data wasn't available; it now explains the per-sector buckets.
