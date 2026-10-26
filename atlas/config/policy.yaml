@@ -86,3 +86,14 @@ promotion_gates:
   bootstrap_samples: 2000
   bootstrap_confidence: 0.95        # lower bound of mean trade return must exceed 0
   report_max_age_days: 90
+
+# PAPER -> LIVE_CANDIDATE gates (Phase 6), judged on the strategy's own paper-trading record
+# since its latest promotion to PAPER. LIVE_CANDIDATE keeps paper trading and can never submit
+# live orders in this deployment. Proposed defaults: review them.
+track_record_gates:
+  min_paper_sessions: 60            # sessions since promotion to PAPER
+  min_paper_trades: 20              # closed round trips
+  min_profit_factor: 1.1            # gross wins / gross losses
+  max_drawdown_pct: 10.0            # of the policy budget, on cumulative realised P&L
+  min_expectancy_vs_backtest: 0.5   # paper avg R must reach this share of the backtest's avg R
+  record_max_age_days: 7            # an evaluation older than this can't justify promotion

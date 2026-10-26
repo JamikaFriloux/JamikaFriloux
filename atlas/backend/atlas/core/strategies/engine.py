@@ -3,8 +3,9 @@
 Runs in the research worker (no broker credentials): it reads bars and the universe from the
 database and writes signals. Scope is benchmarks plus watchlist symbols that are members of
 the current universe snapshot. Signal ids are deterministic, so re-running for the same
-session adds nothing new. RESEARCH strategies produce shadow signals; only PAPER strategies
-produce signals the executor may order, and only PAPER strategies have positions to exit.
+session adds nothing new. RESEARCH strategies produce shadow signals; only PAPER and
+LIVE_CANDIDATE strategies produce signals the executor may order (paper only), and only they
+have positions to exit.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from atlas.core.data.ingestion import ingestion_symbols
 from atlas.core.data.universe import current_universe, member_symbols
 from atlas.core.execution.positions import open_positions_for
 from atlas.core.models.db import Bar, SignalRecord, StrategyStatus
+from atlas.core.risk.engine import PAPER_TRADING_STATUSES
 from atlas.core.strategies.registry import STRATEGIES, sync_registry
 
 
@@ -77,7 +79,7 @@ def generate_signals(
     positions_by = {
         r.id: open_positions_for(session, r.id, as_of, calendar)
         for r in active
-        if r.status == StrategyStatus.PAPER
+        if r.status in PAPER_TRADING_STATUSES
     }
     # Held symbols are always evaluated, even if they left the universe or a watchlist:
     # otherwise no exit signal could ever be generated for them.
@@ -92,7 +94,7 @@ def generate_signals(
     }
     for row in active:
         strat = STRATEGIES[row.id]
-        paper = row.status == StrategyStatus.PAPER
+        paper = row.status in PAPER_TRADING_STATUSES
         positions = positions_by.get(row.id, {})
         universe_bars = {k: v for k, v in bars.items() if k in members or k in positions}
         signals, skipped = strat.generate(as_of, universe_bars, positions)

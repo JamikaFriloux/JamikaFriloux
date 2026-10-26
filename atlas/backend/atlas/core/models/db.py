@@ -463,3 +463,37 @@ class AgentReport(Base):
         Index("ix_agent_reports_agent_scope_created", "agent", "scope", "created_at"),
         Index("ix_agent_reports_input_hash", "agent", "input_hash"),
     )
+
+
+class TrackRecord(Base):
+    """A strategy's forward record as of one session, recomputed daily from stored data.
+
+    ``kind`` is ``paper`` (round trips from the strategy's own filled paper orders, judged
+    against the LIVE_CANDIDATE gates) or ``forward_sim`` (the validation simulator run only on
+    sessions after the anchoring validation report's data, i.e. out of sample).
+    """
+
+    __tablename__ = "track_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    strategy_id: Mapped[str] = mapped_column(String(64))
+    version: Mapped[str] = mapped_column(String(32))
+    params_hash: Mapped[str] = mapped_column(String(16))
+    policy_sha256: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(16))
+    as_of: Mapped[date] = mapped_column(Date)
+    start: Mapped[date | None] = mapped_column(Date)
+    sessions: Mapped[int] = mapped_column(Integer, default=0)
+    anchor_report_id: Mapped[int | None] = mapped_column(Integer)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    equity_curve: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    trades: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+    open_positions: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+    gates: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+    passed: Mapped[bool | None] = mapped_column(Boolean)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_track_records_strategy_kind_asof", "strategy_id", "kind", "as_of"),)

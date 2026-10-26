@@ -92,3 +92,30 @@ def test_run_agents_uses_configured_provider(session_factory):
     ):
         out = worker_tasks.run_agents.run(only=["operations"])
     assert out["agents"] == {"operations": {"id": 1, "status": "ok"}}
+
+
+def test_update_track_records_task(session_factory):
+    from atlas.core.models.db import TrackRecord
+
+    with patch.object(worker_tasks, "session_scope", _scope(session_factory)):
+        out = worker_tasks.update_track_records.run()
+    assert out["ok"] is True and set(out["strategies"]) == {"rsi_pullback", "trend_breakout"}
+    with session_factory() as s:
+        recs = s.scalars(select(TrackRecord)).all()
+        assert {r.kind for r in recs} == {"forward_sim"}  # nothing is in PAPER
+        assert all("no validation report" in (r.note or "") for r in recs)
+        assert s.get(ServiceHeartbeat, "track_records").status == "ok"
+
+
+def test_update_track_records_task_reports_failure(session_factory):
+    with (
+        patch.object(worker_tasks, "session_scope", _scope(session_factory)),
+        patch(
+            "atlas.core.performance.track_record.update_track_records",
+            side_effect=RuntimeError("x"),
+        ),
+    ):
+        out = worker_tasks.update_track_records.run()
+    assert out == {"ok": False, "error": "RuntimeError"}
+    with session_factory() as s:
+        assert s.get(ServiceHeartbeat, "track_records").status == "error"

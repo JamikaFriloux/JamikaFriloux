@@ -2,12 +2,12 @@
 
 Statuses: RESEARCH -> PAPER -> LIVE_CANDIDATE, plus RETIRED. Rules (CLAUDE.md rule 8):
   * strategies never change their own status; only an admin can, and every change is audited;
-  * RESEARCH -> PAPER and PAPER -> LIVE_CANDIDATE require a passing validation report for the
-    exact strategy version. Validation (walk-forward, out-of-sample, cost-aware backtests) is
-    Phase 4; until it exists no report can pass, so promotion is refused;
+  * RESEARCH -> PAPER requires a passing validation report (Phase 4) for the exact version;
+    PAPER -> LIVE_CANDIDATE requires a passing paper track record (Phase 6,
+    ``core/performance/track_record.py``) for the exact version;
   * a code change to a strategy's version or parameters puts it back in RESEARCH, because the
     evidence was for different code;
-  * LIVE_CANDIDATE still cannot submit live orders in this deployment.
+  * LIVE_CANDIDATE keeps paper trading and still cannot submit live orders in this deployment.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ def passing_validation_report(
 
     Accepted for PAPER only when it passed, matches the exact version and parameters now
     registered, was produced under the current policy (a policy change can change the
-    simulation), and is no older than ``report_max_age_days``. LIVE_CANDIDATE additionally
-    needs a paper-trading track record, which isn't implemented, so nothing qualifies.
+    simulation), and is no older than ``report_max_age_days``. LIVE_CANDIDATE is judged on the
+    paper track record instead (``passing_track_record``).
     """
     if target != St.PAPER:
         return None
@@ -134,13 +134,22 @@ def set_status(
         raise StatusChangeRefused("a reason is required")
     if new not in ALLOWED[row.status]:
         raise StatusChangeRefused(f"{row.status.value} -> {new.value} is not allowed")
-    report_id = None
-    if (row.status, new) in GATED:
+    report_id = record_id = None
+    if (row.status, new) == (St.RESEARCH, St.PAPER):
         report_id = passing_validation_report(session, strategy_id, row.version, new)
         if report_id is None:
             raise StatusChangeRefused(
                 f"{row.status.value} -> {new.value} requires a passing validation report for "
                 f"{strategy_id} v{row.version} under the current policy (run a validation)"
+            )
+    elif (row.status, new) == (St.PAPER, St.LIVE_CANDIDATE):
+        from atlas.core.performance.track_record import passing_track_record
+
+        record_id = passing_track_record(session, strategy_id, get_policy())
+        if record_id is None:
+            raise StatusChangeRefused(
+                f"{row.status.value} -> {new.value} requires a passing paper track record for "
+                f"{strategy_id} v{row.version} under the current policy (see Performance)"
             )
     before = row.status
     row.status, row.updated_by = new, actor
@@ -155,6 +164,7 @@ def set_status(
             "reason": reason,
             "version": row.version,
             "validation_report": report_id,
+            "track_record": record_id,
         },
         ip_address=ip_address,
     )

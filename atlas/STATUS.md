@@ -1,6 +1,6 @@
 # ATLAS project status
 
-_Last updated: 2026-10-26: Phase 5 research agents built (advisory only). Deterministic regime, technical, news, performance and operations reports run live; AI narratives await an Anthropic key. Both baselines remain eligible for PAPER and unpromoted._
+_Last updated: 2026-10-26: Phase 6 performance and track records built. The Performance page compares the paper account with SPY and shows each strategy's backtest, out-of-sample forward test and paper record. Promotion to LIVE_CANDIDATE is now gated on the paper record. The policy change (new `track_record_gates`) changes the policy hash, so both baselines are being revalidated; results to follow. Neither is promoted._
 
 | Phase | State |
 |---|---|
@@ -9,7 +9,8 @@ _Last updated: 2026-10-26: Phase 5 research agents built (advisory only). Determ
 | 3 Trading engine | **Built**: indicators, strategy framework with 2 baseline strategies, signal engine, deterministic risk engine with sizing, signal→order pipeline, broker-side protective stops, exits, dashboard. Strategies run in RESEARCH (shadow); paper orders start only after a strategy passes Phase 4 validation |
 | 4 Backtesting & promotion gates | **Built**: event-driven simulator reusing the production strategy, sizing and risk code; cost, gap and partial-fill models; validation gates in `policy.yaml`; immutable validation reports; gated promotion wired. Both baselines pass all 10 gates on 9.7 years of real data, after the drawdown cooldown rule |
 | 5 AI research agents | **Built; LLM output not yet verified live**: five advisory agents (market regime, technical analysis, news sentiment, performance, operations). Their deterministic features run live on real data; the AI narratives are tested with recorded responses only, because no Anthropic key is configured here |
-| 6–8 | Not started |
+| 6 Performance & track record | **Built; no paper record yet**: paper trade ledger, account metrics vs SPY, an out-of-sample forward test per strategy, LIVE_CANDIDATE gates on the paper record, Performance page. There are no paper fills or recorded session closes yet, so paper and account sections are empty by design |
+| 7–8 | Not started |
 
 ## Implemented and tested
 - Config: typed settings split by trust boundary; `config/policy.yaml` checked against hard ceilings in code; policy SHA-256 written to the audit log on every start.
@@ -114,11 +115,36 @@ _Last updated: 2026-10-26: Phase 5 research agents built (advisory only). Determ
   - Worker task `run_agents` at 08:40 and 17:40 NY on weekdays, or on demand (operator+) via `POST /api/v1/intelligence/run`. One agent failing doesn't stop the others. With `provider=anthropic` but no key, it runs features-only instead of crashing.
   - API: `GET /api/v1/intelligence` (latest per agent, today's LLM usage), `/intelligence/reports[/{id}]`, `GET /api/v1/news` (articles joined with the latest assessment; only `https://` links are returned).
   - Dashboard: the AI Intelligence page (regime facts, performance digest, technical table with AI notes, news feed with sentiment badges, operations), the "Run agents now" button for operators, and the regime badge on Overview. AI text is labelled as AI with model and token count; external headlines render as plain text with `noopener` links.
+- **Phase 6, performance and track record.**
+  - Paper ledger (`core/performance/ledger.py`): round trips rebuilt FIFO per strategy and symbol from filled orders (entries open lots; exits and protective stops close them).
+    - The fill date is the last fill event. Risk per share comes from the signal's stop, or the protective stop order. Fees are 0, as on Alpaca paper.
+    - Sells with no ATLAS lot are reported as unmatched, never turned into trades.
+    - Trades use the backtester's `Trade` type, so paper and backtest statistics come from the same `summarize()` code.
+  - Account (`core/performance/account.py`): metrics from `equity_closes` (return, CAGR, Sharpe, Sortino, max DD) and a SPY comparison over the same sessions (excess return, SPY drawdown, correlation, beta). Fewer than two closes gives "unavailable", not an estimate.
+  - Track records (`core/performance/track_record.py`, `track_records`, migration 0008), recomputed by worker task `update_track_records` at 17:05 NY on weekdays (one row per strategy, kind and session; re-runs replace it):
+    - `forward_sim`: the validation simulator, with the same strategy, risk engine, costs and symbols as the anchoring validation report, run **only on sessions after that report's data ended**. Out of sample by construction, and computed for RESEARCH strategies too, which closes the "shadow strategies have no positions" gap without touching the order path. Positions still open are reported as open, not as trades.
+    - `paper`: the strategy's own paper round trips for the current version since its latest RESEARCH→PAPER promotion (from the audit log), judged against the new `track_record_gates` in `policy.yaml`: sessions ≥ 60, closed trades ≥ 20, profit factor ≥ 1.1, drawdown ≤ 10% of budget on cumulative realised P&L, avg R ≥ 0.5× the validation report's avg R. Code floors stop the gates from being loosened.
+  - Promotion: PAPER→LIVE_CANDIDATE now requires a passing paper record for the exact version, parameters and policy hash, at most 7 days old. The record id is written to the audit entry.
+  - **LIVE_CANDIDATE now keeps paper trading.** Before, the risk engine required exactly PAPER, so promoting a strategy would have stopped its orders and frozen its record. It still cannot place a live order: the broker client is paper-only at 7 layers.
+  - API: `GET /api/v1/performance` (account, each strategy's backtest reference, latest forward and paper records, LIVE_CANDIDATE eligibility, gate settings) and `GET /api/v1/track-records/{id}` (curve and trades).
+  - Dashboard Performance page:
+    - Account stats and a chart of the account vs SPY, both indexed to 100. Colors pass the palette validator on the dark surface.
+    - A per-strategy table comparing backtest, forward test and paper record.
+    - Simulated open positions.
+    - LIVE_CANDIDATE gate results with values and thresholds.
 - Workers: Celery `default` and `execution` queues, beat schedule in New York time, heartbeats.
 - Dashboard: Next.js 16 with login, Overview, Risk Center (kill switch), Settings, and placeholder pages that say plainly what isn't built yet. PAPER banner on every page.
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-26)
+- Phase 6: backend **369 passed, 0 failed** (17 new tests).
+  - FIFO ledger with R-multiples and protective-stop risk; unmatched sells; unpriced fills skipped.
+  - Account vs SPY returns; the fewer-than-two-closes case.
+  - Forward test: no report, no new data, and a real breakout after the validation window that is traded and reported as open positions. The first version of this test passed vacuously: no raw bars meant nothing passed the liquidity screen. Fixed and asserted.
+  - Paper gates: pass case, expectancy-vs-backtest fail, promotion of another version not counted, no promotion fails closed.
+  - LIVE_CANDIDATE promotion refused without a record, allowed with one, refused once the record is over 7 days old.
+  - The risk engine lets LIVE_CANDIDATE trade paper and still blocks RESEARCH.
+  - Idempotent daily update; API RBAC and 404; worker task success and failure; policy floors.
 - Phase 5: backend **352 passed, 0 failed** (28 new tests).
   - Regime rules and realised vol against a hand computation.
   - Caching, budget, refusal, invalid output and no-data paths.
@@ -155,6 +181,9 @@ _Last updated: 2026-10-26: Phase 5 research agents built (advisory only). Determ
   - executor without credentials fails safely and reports broker `error`
 
 ## Not tested / known limitations
+- **Phase 6 has no paper data to show yet.** No strategy is in PAPER, no paper order has filled, and `equity_closes` holds no sessions in this database, because the executor isn't running here. The Performance page shows those sections as unavailable. The forward test starts after 2026-10-23, the end of the validation data, so it accrues one session per trading day once the daily ingestion runs.
+- The paper drawdown gate uses cumulative **realised** P&L on the budget, marked at session closes. Open-position swings aren't included until the trade closes. The account-level drawdown, which includes them, is shown separately.
+- Account metrics cover the whole paper account ($100k) while ATLAS sizes against $10k, so account returns are diluted about 10×. Per-strategy records use the $10k budget.
 - **No live LLM call has been made.** No `ATLAS_LLM_ANTHROPIC_API_KEY` exists in this environment, so the Anthropic provider is tested only against a mocked client and the agents with recorded responses. First live check: put the key in `atlas/llm.env`, set `ATLAS_LLM_PROVIDER=anthropic`, then click "Run agents now" and read the five narratives. Token use is shown per report; at most 5 calls per run, 2 scheduled runs a day.
 - Phase 5 agents are advisory and deliberately unread by the trading path. The regime is not used as a strategy filter; that would be a strategy change requiring revalidation.
 - Strategy Research and Quantitative Research agents (proposing new hypotheses) are not built. Their packages are empty: any proposal would need the backtester and gates, and that workflow isn't designed yet.
@@ -226,9 +255,8 @@ Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX d
 1. **Promotion decision (admin):** both baselines are eligible for PAPER. Even after promotion, entries stay blocked until (a) shorting is disabled on the Alpaca paper account and (b) an earnings calendar is connected or `block_entries_before_earnings_days` is set to 0.
 2. Simulated positions for shadow strategies, so they can be compared like for like with backtests.
 3. Earnings calendar and sector classification sources (both currently fail closed).
-4. LIVE_CANDIDATE gate: evaluation of a paper-trading track record.
-5. First live LLM run of the Phase 5 agents once an Anthropic key is configured; review narrative quality and token cost.
-6. Strategy/quantitative research agents that propose hypotheses for the backtester (design needed first).
+4. First live LLM run of the Phase 5 agents once an Anthropic key is configured; review narrative quality and token cost.
+5. Strategy/quantitative research agents that propose hypotheses for the backtester (design needed first).
 
 ## Required user action
 - Alpaca paper keys: in place and verified. For Docker, make sure they are in `atlas/broker.env` (never in chat or git).

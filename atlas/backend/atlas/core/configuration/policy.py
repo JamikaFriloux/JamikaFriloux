@@ -128,6 +128,16 @@ class PromotionGatesPolicy(_Strict):
     report_max_age_days: int = Field(ge=1, le=365)
 
 
+class TrackRecordGatesPolicy(_Strict):
+    # Floors: gates can be tightened in policy.yaml, never loosened past these.
+    min_paper_sessions: int = Field(ge=20, le=1000)
+    min_paper_trades: int = Field(ge=10, le=10_000)
+    min_profit_factor: float = Field(ge=1.0)
+    max_drawdown_pct: float = Field(gt=0, le=25)
+    min_expectancy_vs_backtest: float = Field(ge=0.25, le=2.0)
+    record_max_age_days: int = Field(ge=1, le=30)
+
+
 class RiskPolicy(_Strict):
     version: int
     trading_mode: Literal["paper"]
@@ -139,6 +149,7 @@ class RiskPolicy(_Strict):
     execution: ExecutionPolicy
     backtest: BacktestPolicy
     promotion_gates: PromotionGatesPolicy
+    track_record_gates: TrackRecordGatesPolicy
 
 
 class LoadedPolicy(BaseModel):

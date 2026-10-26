@@ -1,7 +1,7 @@
 /** Human-readable names for risk-engine checks (keys match backend check names). */
 export const CHECK_LABELS: Record<string, string> = {
   kill_switch: "kill switch engaged",
-  strategy_status: "strategy not in PAPER",
+  strategy_status: "strategy not in PAPER / LIVE_CANDIDATE",
   account_snapshot: "no fresh account snapshot",
   account_not_blocked: "account blocked",
   entry_window: "outside entry window",

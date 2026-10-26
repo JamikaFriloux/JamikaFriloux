@@ -138,3 +138,36 @@ def run_agents(only: list[str] | None = None) -> dict[str, object]:
         beat(s, "agents", "error" if errors else "ok", provider=provider.name, failed=errors)
     log.info("agents_run", **{k: v["status"] for k, v in results.items()})
     return {"ok": not errors, "agents": results}
+
+
+@celery_app.task(name="atlas.worker.update_track_records", soft_time_limit=840, time_limit=900)
+def update_track_records() -> dict[str, object]:
+    """After the close: forward-simulated and paper track records for every strategy."""
+    from atlas.core.configuration.policy import get_policy
+    from atlas.core.data.ingestion import last_completed_session
+    from atlas.core.performance.track_record import update_track_records as run_update
+    from atlas.core.strategies.registry import STRATEGIES, sync_registry
+
+    now = datetime.now(UTC)
+    cal = MarketCalendar()
+    as_of = last_completed_session(cal, now).day
+    try:
+        with session_scope() as s:
+            rows = sync_registry(s)
+            summary = run_update(
+                s,
+                strategies=STRATEGIES,
+                rows=rows,
+                policy=get_policy(),
+                calendar=cal,
+                as_of=as_of,
+                now=now,
+            )
+            beat(s, "track_records", "ok", as_of=as_of.isoformat(), strategies=len(summary))
+    except Exception as exc:
+        log.error("track_records_failed", error=type(exc).__name__, detail=str(exc)[:200])
+        with session_scope() as s:
+            beat(s, "track_records", "error", error=type(exc).__name__)
+        return {"ok": False, "error": type(exc).__name__}
+    log.info("track_records_updated", as_of=as_of.isoformat(), strategies=list(summary))
+    return {"ok": True, "as_of": as_of.isoformat(), "strategies": summary}

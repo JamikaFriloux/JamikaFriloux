@@ -520,3 +520,52 @@ def test_intelligence_endpoints(client, session_factory, dispatched):
     assert client.post("/api/v1/intelligence/run", headers=v).status_code == 403
     r = client.post("/api/v1/intelligence/run", headers=_auth(client, "operator"))
     assert r.status_code == 202 and dispatched[-1] == "agents"
+
+
+def test_performance_endpoints(client, session_factory, policy):
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+
+    from atlas.core.backtesting.validation import params_hash
+    from atlas.core.models.db import EquityClose, TrackRecord
+    from atlas.core.strategies import registry
+
+    strat = registry.STRATEGIES["rsi_pullback"]
+    with session_factory() as s:
+        for d, eq in ((date(2026, 10, 22), 10_000), (date(2026, 10, 23), 10_100)):
+            s.add(EquityClose(day=d, equity=Decimal(eq), recorded_at=datetime.now(UTC)))
+        s.add(
+            TrackRecord(
+                strategy_id="rsi_pullback",
+                version=strat.version,
+                params_hash=params_hash(strat.params.model_dump()),
+                policy_sha256=policy.sha256,
+                kind="forward_sim",
+                as_of=date(2026, 10, 23),
+                sessions=0,
+                metrics={"backtest_reference": None},
+                equity_curve=[["2026-10-23", 10000.0]],
+                trades=[{"symbol": "AAA"}],
+                open_positions=[],
+                gates=[],
+                note="no sessions with stored data after the validation data (2026-10-23)",
+            )
+        )
+        s.commit()
+    v = _auth(client, "viewer")
+    assert client.get("/api/v1/performance").status_code == 401
+    body = client.get("/api/v1/performance", headers=v).json()
+    assert (
+        body["account"]["sessions"] == 2 and body["account"]["metrics"]["total_return_pct"] == 1.0
+    )
+    assert body["account"]["comparison"] is None  # no SPY bars stored
+    rows = {r["id"]: r for r in body["strategies"]}
+    assert rows["rsi_pullback"]["forward_sim"]["trade_count"] == 1
+    assert "trades" not in rows["rsi_pullback"]["forward_sim"]
+    assert rows["trend_breakout"]["forward_sim"] is None and rows["trend_breakout"]["paper"] is None
+    assert rows["rsi_pullback"]["live_candidate_record"] is None
+    assert body["track_record_gates"]["min_paper_sessions"] == 60
+    rid = rows["rsi_pullback"]["forward_sim"]["id"]
+    full = client.get(f"/api/v1/track-records/{rid}", headers=v).json()
+    assert full["trades"] == [{"symbol": "AAA"}] and full["equity_curve"]
+    assert client.get("/api/v1/track-records/999", headers=v).status_code == 404

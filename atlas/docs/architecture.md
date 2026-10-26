@@ -34,7 +34,7 @@ Implemented in `atlas/core/execution/state_machine.py`; every transition writes 
 3. **Every minute** (executor, broker sync): reconcile with the broker, cancel orphaned protective stops, and place GTC protective stops for any filled quantity not yet covered.
 4. **Exits** cancel and confirm the protective stop, then sell with a limit order off the bid.
 
-The API and dashboard can read all of this but cannot create orders. Strategy promotion is admin-only and gated by validation reports (Phase 4).
+The API and dashboard can read all of this but cannot create orders. Strategy promotion is admin-only: RESEARCH→PAPER is gated by validation reports (Phase 4), PAPER→LIVE_CANDIDATE by the strategy's paper track record (Phase 6). LIVE_CANDIDATE keeps paper trading; no status can submit a live order.
 
 ## Idempotent submission
 `atlas/core/execution/broker.py::submit_idempotent`:

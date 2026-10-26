@@ -328,3 +328,71 @@ export const getValidationReports = (strategyId?: string, limit = 20) =>
 export const getValidationReport = (id: number) => apiGetOptional<ValidationReportFull>(`/api/v1/validation-reports/${id}`);
 export const getIntelligence = () => apiGet<Intelligence>("/api/v1/intelligence");
 export const getNews = (limit = 40) => apiGet<NewsFeed>(`/api/v1/news?limit=${limit}`);
+
+export type TrackGate = { name: string; passed: boolean; value: unknown; threshold: string; detail: string };
+export type BacktestReference = {
+  report_id: number;
+  passed: boolean;
+  data_start: string;
+  data_end: string;
+  trades: number | null;
+  max_drawdown_pct: number | null;
+  net_pnl: number | null;
+  sharpe: number | null;
+  profit_factor: number | string | null;
+  win_rate_pct: number | null;
+  avg_r: number | null;
+  avg_return_pct: number | null;
+} | null;
+
+export type TrackRecordSummary = {
+  id: number;
+  kind: "paper" | "forward_sim";
+  strategy_id: string;
+  version: string;
+  as_of: string;
+  start: string | null;
+  sessions: number;
+  created_at: string;
+  anchor_report_id: number | null;
+  metrics: Metrics & { backtest_reference?: BacktestReference; rejections?: Record<string, number> };
+  gates: TrackGate[];
+  passed: boolean | null;
+  note: string | null;
+  open_positions: Record<string, string>[];
+  trade_count: number;
+};
+
+export type Performance = {
+  account: {
+    sessions: number;
+    curve: [string, number][];
+    benchmark: string;
+    benchmark_curve?: [string, number][];
+    metrics: Metrics | null;
+    note?: string;
+    comparison?: null | {
+      start: string;
+      end: string;
+      account_return_pct: number;
+      benchmark_return_pct: number;
+      excess_return_pct: number;
+      benchmark_max_drawdown_pct: number;
+      correlation: number | null;
+      beta: number | null;
+      missing_benchmark_sessions: number;
+    };
+  };
+  strategies: {
+    id: string;
+    version: string;
+    status: string;
+    backtest: BacktestReference;
+    forward_sim: TrackRecordSummary | null;
+    paper: TrackRecordSummary | null;
+    live_candidate_record: string | null;
+  }[];
+  track_record_gates: Record<string, number>;
+};
+
+export const getPerformance = () => apiGet<Performance>("/api/v1/performance");

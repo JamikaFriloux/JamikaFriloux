@@ -83,6 +83,12 @@ celery_app.conf.update(
             "schedule": crontab(minute="*/5", hour="9-15", day_of_week="mon-fri"),
             "options": {"expires": 240},
         },
+        # After signals: forward-simulated and paper track records (LIVE_CANDIDATE evidence).
+        "update-track-records": {
+            "task": "atlas.worker.update_track_records",
+            "schedule": crontab(hour=17, minute=5, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
         # News for the ingested symbols, every 30 minutes through the extended day.
         "fetch-news": {
             "task": "atlas.execution.fetch_news",

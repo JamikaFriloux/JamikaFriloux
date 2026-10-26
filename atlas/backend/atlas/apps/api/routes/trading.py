@@ -24,6 +24,7 @@ from atlas.core.models.db import (
     User,
     ValidationReport,
 )
+from atlas.core.risk.engine import PAPER_TRADING_STATUSES
 from atlas.core.security import audit
 from atlas.core.security.auth import verify_password
 from atlas.core.strategies import registry
@@ -65,7 +66,7 @@ def list_strategies(
                 "updated_at": _iso(r.updated_at),
                 "updated_by": r.updated_by,
                 "signals": counts.get(r.id, 0),
-                "can_submit_paper_orders": r.status == StrategyStatus.PAPER,
+                "can_submit_paper_orders": r.status in PAPER_TRADING_STATUSES,
             }
         )
     return out

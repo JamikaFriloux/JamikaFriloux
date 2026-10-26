@@ -29,19 +29,22 @@ class ValidationUnavailable(RuntimeError):
 
 
 def load_history(
-    session: Session, symbols: Sequence[str], adjustment: str, end: date
+    session: Session,
+    symbols: Sequence[str],
+    adjustment: str,
+    end: date,
+    start: date | None = None,
 ) -> dict[str, list[BarRecord]]:
     end_ts = datetime(end.year, end.month, end.day, 23, 59, tzinfo=NY)
-    rows = session.scalars(
-        select(Bar)
-        .where(
-            Bar.symbol.in_(symbols),
-            Bar.timeframe == "1Day",
-            Bar.adjustment == adjustment,
-            Bar.ts <= end_ts,
-        )
-        .order_by(Bar.symbol, Bar.ts)
-    ).all()
+    q = select(Bar).where(
+        Bar.symbol.in_(symbols),
+        Bar.timeframe == "1Day",
+        Bar.adjustment == adjustment,
+        Bar.ts <= end_ts,
+    )
+    if start is not None:
+        q = q.where(Bar.ts >= datetime(start.year, start.month, start.day, tzinfo=NY))
+    rows = session.scalars(q.order_by(Bar.symbol, Bar.ts)).all()
     out: dict[str, list[BarRecord]] = {s: [] for s in symbols}
     for r in rows:
         ts = r.ts.replace(tzinfo=UTC) if r.ts.tzinfo is None else r.ts

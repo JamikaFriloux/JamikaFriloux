@@ -15,7 +15,16 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker
 
-from atlas.apps.api.routes import auth, health, intelligence, market, system, trading, universe
+from atlas.apps.api.routes import (
+    auth,
+    health,
+    intelligence,
+    market,
+    performance,
+    system,
+    trading,
+    universe,
+)
 from atlas.core.configuration.policy import LoadedPolicy, load_policy
 from atlas.core.configuration.settings import AtlasSettings, get_settings
 from atlas.core.models.session import get_sessionmaker, session_scope
@@ -166,6 +175,7 @@ def create_app(
     app.include_router(universe.router)
     app.include_router(trading.router)
     app.include_router(intelligence.router)
+    app.include_router(performance.router)
     return app
 
 

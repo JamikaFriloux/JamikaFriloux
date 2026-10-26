@@ -8,7 +8,7 @@ strategies, an independent risk engine with final authority, idempotent paper ex
 broker reconciliation, research agents that explain (but never trade), and an operator
 dashboard.
 
-* **Status:** Phases 1–4 built; both baseline strategies pass validation and await an admin promotion decision (see STATUS.md) — see [STATUS.md](STATUS.md).
+* **Status:** Phases 1–6 built: data, trading engine, validation, advisory research agents, and performance tracking with a paper track-record gate. Both baseline strategies pass validation and await an admin promotion decision. See [STATUS.md](STATUS.md).
 * **Setup & operations:** [docs/setup.md](docs/setup.md)
 * **Architecture:** [docs/architecture.md](docs/architecture.md) and [docs/adr](docs/adr)
 * **Security model:** [docs/security.md](docs/security.md)

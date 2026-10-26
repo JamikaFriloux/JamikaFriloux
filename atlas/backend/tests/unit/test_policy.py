@@ -81,3 +81,20 @@ def test_policy_hash_changes_with_content(tmp_path, settings):
     b = tmp_path / "b.yaml"
     b.write_text(Path(settings.policy_path).read_text() + "\n# comment\n")
     assert load_policy(a).sha256 != load_policy(b).sha256
+
+
+def test_track_record_gate_floors(policy):
+    from pydantic import ValidationError
+
+    from atlas.core.configuration.policy import TrackRecordGatesPolicy
+
+    raw = policy.policy.track_record_gates.model_dump()
+    for key, bad in (
+        ("min_paper_sessions", 5),
+        ("min_paper_trades", 3),
+        ("min_profit_factor", 0.9),
+        ("max_drawdown_pct", 40),
+        ("min_expectancy_vs_backtest", 0.1),
+    ):
+        with pytest.raises(ValidationError):
+            TrackRecordGatesPolicy.model_validate({**raw, key: bad})

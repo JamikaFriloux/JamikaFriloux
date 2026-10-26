@@ -35,6 +35,9 @@ from atlas.core.risk.drawdown import limit_dollars
 from atlas.core.strategies.base import CENT, Signal
 
 ACCOUNT_MAX_AGE = timedelta(minutes=3)  # broker sync runs every minute
+# Statuses whose signals become paper orders. LIVE_CANDIDATE keeps paper trading (building its
+# record); no status can submit a live order in this deployment.
+PAPER_TRADING_STATUSES = frozenset({StrategyStatus.PAPER, StrategyStatus.LIVE_CANDIDATE})
 CLOCK_SKEW = timedelta(seconds=2)  # timestamps further in the future are bad data
 BPS = Decimal(10_000)
 
@@ -143,8 +146,8 @@ def evaluate(
     if ctx.mode == "paper":
         check(
             "strategy_status",
-            ctx.strategy_status == StrategyStatus.PAPER,
-            f"status {ctx.strategy_status.value}; PAPER required to submit",
+            ctx.strategy_status in PAPER_TRADING_STATUSES,
+            f"status {ctx.strategy_status.value}; PAPER or LIVE_CANDIDATE required to submit",
         )
     else:
         check(
