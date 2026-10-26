@@ -79,8 +79,8 @@ export default async function RiskPage() {
             <p className="text-xs text-muted">
               {a ? `Based on broker sync at ${fmtTime(a.as_of)}.` : "Unavailable until the first broker sync."}{" "}
               {s.drawdown ? `High-water mark ${fmtUsd(s.drawdown.high_water_mark)}, limit ${fmtUsd(s.drawdown.limit)}. ` : ""}The risk engine
-              sizes and limits against a capital base of min(broker equity, policy starting equity). Sector data isn&apos;t
-              available yet, so all holdings share one sector budget.
+              sizes and limits against a capital base of min(broker equity, policy starting equity). Exposure is also
+              capped per sector bucket (see Reference data below); unclassified symbols share one bucket.
             </p>
           </CardContent>
         </Card>

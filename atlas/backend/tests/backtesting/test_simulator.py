@@ -1,10 +1,10 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from atlas.core.backtesting.costs import CostModel
-from atlas.core.backtesting.simulator import Simulator
+from atlas.core.backtesting.simulator import BacktestResult, Simulator
 from atlas.core.data.bars import BarRecord
 from atlas.core.data.calendar import NY, MarketCalendar
 from atlas.core.strategies.base import Strategy, StrategyParams
@@ -212,3 +212,15 @@ def test_drawdown_cooldown_then_trading_resumes(policy):
     # ...no entry fills during the cooldown, and trading resumes after the reset.
     assert not [t for t in res.trades if halt < t.entry_date <= reset]
     assert [t for t in res.trades if t.entry_date > reset]
+
+
+def test_window_reports_its_own_time_in_market():
+    # Regression: windows (holdout, walk-forward) reported 0% time in market because only a
+    # whole-run count of exposed days was kept.
+    days = [date(2026, 1, 5) + timedelta(days=i) for i in range(10)]
+    res = BacktestResult("s", "1", {}, dates=days, equity=[10_000.0] * 10)
+    res.exposed = [False] * 6 + [True] * 4
+    assert res.exposed_days == 4
+    assert res.summary()["exposure_pct"] == 40.0
+    assert res.window(days[0], days[5])["exposure_pct"] == 0.0
+    assert res.window(days[5], days[9] + timedelta(days=1))["exposure_pct"] == 80.0

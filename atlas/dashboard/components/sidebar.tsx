@@ -34,7 +34,7 @@ export function Sidebar({ username, role }: { username: string; role: string }) 
   }
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-line bg-panel md:h-[calc(100vh-29px)] md:w-60 md:border-r">
+    <aside className="flex w-full shrink-0 flex-col border-line bg-panel md:sticky md:top-[29px] md:h-[calc(100vh-29px)] md:w-60 md:border-r">
       <div className="flex items-center gap-2.5 px-5 py-5">
         <div className="grid h-8 w-8 place-items-center rounded-lg bg-fg text-[13px] font-bold text-bg">A</div>
         <div>

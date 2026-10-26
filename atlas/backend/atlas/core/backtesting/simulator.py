@@ -67,7 +67,7 @@ class BacktestResult:
     dates: list[date] = field(default_factory=list)
     equity: list[float] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
-    exposed_days: int = 0
+    exposed: list[bool] = field(default_factory=list)  # per date: any position held at close
     signals: int = 0
     rejections: Counter[str] = field(default_factory=Counter)
     first_halt: dict[str, str] = field(default_factory=dict)  # check -> first date it blocked
@@ -76,6 +76,10 @@ class BacktestResult:
     skipped_bad_windows: int = 0
     drawdown_halts: list[str] = field(default_factory=list)  # sessions whose close halted entries
     drawdown_resets: list[str] = field(default_factory=list)  # sessions whose close reset the HWM
+
+    @property
+    def exposed_days(self) -> int:
+        return sum(self.exposed)
 
     def summary(self) -> dict[str, Any]:
         return summarize(self.dates, self.equity, self.trades, self.exposed_days)
@@ -87,7 +91,7 @@ class BacktestResult:
             return None
         lo, hi = idx[0], idx[-1] + 1
         trades = [t for t in self.trades if start <= t.exit_date < end]
-        return summarize(self.dates[lo:hi], self.equity[lo:hi], trades)
+        return summarize(self.dates[lo:hi], self.equity[lo:hi], trades, sum(self.exposed[lo:hi]))
 
 
 def _d(day: date) -> datetime:
@@ -274,7 +278,7 @@ class Simulator:
             )
             res.dates.append(d)
             res.equity.append(float(equity))
-            res.exposed_days += 1 if positions else 0
+            res.exposed.append(bool(positions))
             prev_close_equity = equity
             before = dd_state
             dd_state = dd_step(dd_state, d, equity, self.policy, self.cal)

@@ -176,6 +176,12 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-26)
+- Dashboard and report fixes: backend **413 passed, 0 failed**; `mypy` clean; dashboard `tsc --noEmit` and `next build` pass.
+  - **Window time in market was always 0%.** The simulator kept only a whole-run count of exposed days, so holdout and walk-forward windows reported 0.0%, even with 47 holdout trades. It now records exposure per session, and windows count their own days. A new regression test covers it. No promotion gate uses this metric.
+  - The Risk Center's Utilization card said sector data wasn't available; it now explains the per-sector buckets.
+  - On long pages the sidebar's background ended at the first screen. The sidebar is now sticky and full-height on desktop, and the PAPER banner is sticky on every page and width, so it never scrolls away.
+  - Checked live with Playwright after scrolling /risk and /live at 1440×900: banner at 0–30 px, sidebar at 29–900 px; at 390 px wide the banner stays at the top with no horizontal scroll; 0 console errors.
+  - Screenshots of every page are in `docs/screenshots/2026-10-26/`.
 - Phase 7 fixes and Phase 8: backend **412 passed, 0 failed**, including the PostgreSQL integration tests.
   - 7 new tests: per-day fetching with pacing and the token only in a header; a truncated day; a row outside its day; the per-symbol merge where GOOG comes back labelled GOOGL; a failed symbol query failing the fetch; the refresh passing only stocks to the per-symbol query; the readiness preflight (fresh deployment, all-ready, each blocker alone, exit code).
   - `ruff check`, `ruff format --check`, `mypy atlas`: clean. Also fixed an over-long docstring line in `simulator.py` that `ruff` flagged.
@@ -189,6 +195,7 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
     - `rsi_pullback`: 1,402 trades, PF 1.37, Sharpe 0.84, CAGR 1.75%, max DD 4.7%; holdout 298 trades, Sharpe 2.12.
     - These differ slightly from #5/#6 because the backfill window starts 3 days later (2017-02-13).
     - `update_track_records` wrote forward records anchored to #1 and #2.
+    - Re-run after the time-in-market fix (below) as **#3 and #4**: every gate and metric is identical; only window time in market changed (trend_breakout holdout 0.0% → 99.2%, rsi_pullback 0.0% → 69.9%). Forward records now anchor to #3 and #4. #1 and #2 stay stored, immutable, with the wrong figure.
   - `check_readiness`: **NOT READY, 7 failing.** Kill switch engaged; no strategy promoted; no account snapshot; worker, executor and broker heartbeats missing (the services aren't running in this container); Telegram not configured. Mode, broker, broker book (0 positions, 0 open orders), universe, daily bars, classification and earnings calendar pass. Stream: warning.
   - Broker order history since 10-19 shows only the two Phase 3 smoke-test orders (both cancelled, 2026-10-26 01:12 UTC). This session placed **no orders**.
 - Phase 7: backend **404 passed, 0 failed** (35 new tests).
@@ -337,7 +344,7 @@ _Last updated: 2026-10-26: Phase 7 providers verified live and two fail-open bug
 Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX during market hours) once `stream.data.alpaca.markets` is allowed.
 
 ## Next engineering tasks
-1. **Promotion decision (admin):** both baselines are eligible for PAPER (reports #1 and #2). Shorting and the earnings calendar no longer block entries.
+1. **Promotion decision (admin):** both baselines are eligible for PAPER (reports #3 and #4). Shorting and the earnings calendar no longer block entries.
 2. **Phase 8: run the stack on an always-on host** (Docker Compose: api, worker, beat, executor, dashboard, Postgres, Redis), then make `check_readiness` pass: Telegram configured, services heartbeating, strategies promoted, kill switch released by an admin. Then watch the first session: shadow and paper risk decisions, first fills, protective stops, the first `equity_closes` row and paper track record.
 2. ~~Simulated positions for shadow strategies~~: done in Phase 6 (out-of-sample forward test).
 3. ~~Connect the earnings calendar~~: done and verified live. On the deployed host, confirm one refresh on the Risk Center.
