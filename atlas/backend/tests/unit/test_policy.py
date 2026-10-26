@@ -51,6 +51,14 @@ def test_hard_limits_cannot_be_exceeded(settings, name):
         ("session", "regular_hours_only", False),
         ("data_quality", "reject_on_missing_data", False),
         (None, "trading_mode", "live"),
+        # Validation backtests can't assume free trading or loosened gates.
+        ("backtest", "slippage_bps", 0.0),
+        ("backtest", "half_spread_bps", 0.0),
+        ("promotion_gates", "min_trades", 5),
+        ("promotion_gates", "min_profit_factor", 0.8),
+        ("promotion_gates", "bootstrap_confidence", 0.5),
+        ("promotion_gates", "holdout_years", 0),
+        ("promotion_gates", "report_max_age_days", 3650),
     ],
 )
 def test_structural_restrictions_enforced(settings, section, key, value):

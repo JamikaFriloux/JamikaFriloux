@@ -1,5 +1,5 @@
 # Convenience targets. Run from the atlas/ directory.
-.PHONY: setup test lint typecheck migrate api worker executor stream beat dashboard up down
+.PHONY: setup test lint typecheck migrate api worker executor stream beat dashboard up down backfill validate
 
 setup:
 	cd backend && uv sync
@@ -41,3 +41,9 @@ up:
 
 down:
 	docker compose down
+
+backfill:  # one-off: ~10 years of daily history for backtests (needs broker credentials)
+	cd backend && uv run python -m atlas.scripts.backfill_history --years 10.5
+
+validate:  # e.g. make validate STRATEGY=rsi_pullback (runs inline; the dashboard queues it on the worker)
+	cd backend && uv run python -c "from atlas.apps.worker.tasks import validate_strategy as v; print(v.run('$(STRATEGY)', 'cli'))"

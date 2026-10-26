@@ -88,16 +88,24 @@ class Strategy(ABC):
         as_of: date,
         bars: Mapping[str, Sequence[BarRecord]],
         positions: Mapping[str, OpenPosition],
+        *,
+        trusted: bool = False,
     ) -> tuple[list[Signal], dict[str, str]]:
         """Run ``decide`` for every symbol with usable data.
 
         Returns (signals, skipped) where ``skipped`` maps symbol -> reason. A symbol is skipped,
         never guessed, when its data is short, stale or fails validation.
+
+        ``trusted`` is for callers (the backtester) that validated each full series up front
+        and pass windows ending at ``as_of``; it skips re-filtering and re-validating them.
         """
         signals: list[Signal] = []
         skipped: dict[str, str] = {}
         for symbol in sorted(bars):
-            series = [b for b in bars[symbol] if b.ts.astimezone(NY).date() <= as_of]
+            if trusted:
+                series = list(bars[symbol])
+            else:
+                series = [b for b in bars[symbol] if b.ts.astimezone(NY).date() <= as_of]
             if len(series) < self.lookback:
                 skipped[symbol] = "insufficient_history"
                 continue
@@ -105,10 +113,11 @@ class Strategy(ABC):
                 skipped[symbol] = "no_bar_for_session"
                 continue
             window = series[-self.lookback :]
-            report = validate_bars(window, now=window[-1].ts)
-            if not report.ok:
-                skipped[symbol] = "bad_data:" + report.issues[0].code
-                continue
+            if not trusted:
+                report = validate_bars(window, now=window[-1].ts)
+                if not report.ok:
+                    skipped[symbol] = "bad_data:" + report.issues[0].code
+                    continue
             sig = self.decide(symbol, window, positions.get(symbol))
             if sig is not None:
                 if sig.kind == "entry" and (

@@ -44,3 +44,24 @@ def test_rolling_extremes():
 def test_invalid_window():
     with pytest.raises(ValueError):
         sma([1], 0)
+
+
+def test_rolling_extremes_match_brute_force():
+    import random
+
+    rng = random.Random(7)
+    v = [rng.uniform(0, 100) for _ in range(300)]
+    v[50:60] = [42.0] * 10  # ties
+    for n in (1, 2, 5, 55):
+        for excl in (False, True):
+            shift = 1 if excl else 0
+            want_max = [
+                max(v[i - shift - n + 1 : i - shift + 1]) if i - shift - n + 1 >= 0 else None
+                for i in range(len(v))
+            ]
+            want_min = [
+                min(v[i - shift - n + 1 : i - shift + 1]) if i - shift - n + 1 >= 0 else None
+                for i in range(len(v))
+            ]
+            assert rolling_max(v, n, exclude_current=excl) == want_max
+            assert rolling_min(v, n, exclude_current=excl) == want_min

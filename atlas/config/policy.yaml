@@ -56,3 +56,32 @@ execution:
   limit_offset_bps: 5
   stop_slippage_assumption_bps: 20
   order_time_in_force: day
+
+# Validation backtests (Phase 4). Costs are charged on every simulated fill so a strategy can't
+# look profitable only because trading was free. Floors in policy.py stop these from being
+# set unrealistically low. Regulatory fee rates change; review them yearly.
+backtest:
+  half_spread_bps: 2.0              # paid on each fill (crossing half the bid/ask spread)
+  slippage_bps: 5.0                 # extra adverse price per fill (impact, timing)
+  sec_fee_per_million_usd: 27.80    # SEC Section 31 fee on sell notional
+  finra_taf_per_share: 0.000166     # FINRA trading activity fee on sells...
+  finra_taf_max_per_trade_usd: 8.30 # ...capped per trade
+  max_participation_pct: 1.0        # an order fills at most this % of the session's volume
+
+# RESEARCH -> PAPER promotion gates. A strategy version is promotable only with a passing
+# validation report no older than report_max_age_days. Proposed defaults: review them.
+promotion_gates:
+  min_history_years: 8              # backtest span required
+  min_trades: 100                   # over the full span
+  min_profit_factor: 1.2            # gross wins / gross losses, after costs
+  min_sharpe: 0.5                   # annualized, daily returns, after costs
+  max_drawdown_pct: 10.0            # peak-to-trough equity drawdown
+  holdout_years: 2                  # most recent years, judged on their own
+  holdout_min_trades: 20
+  holdout_min_sharpe: 0.0
+  walk_forward_window_months: 12    # consecutive out-of-sample windows...
+  min_profitable_windows_pct: 60.0  # ...this share must be profitable
+  min_stable_neighbors_pct: 70.0    # parameter neighbors that must also be profitable
+  bootstrap_samples: 2000
+  bootstrap_confidence: 0.95        # lower bound of mean trade return must exceed 0
+  report_max_age_days: 90

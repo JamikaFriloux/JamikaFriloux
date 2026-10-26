@@ -98,6 +98,34 @@ class ExecutionPolicy(_Strict):
     order_time_in_force: Literal["day"]
 
 
+class BacktestPolicy(_Strict):
+    # Floors: a validation backtest may not assume (near-)free trading.
+    half_spread_bps: float = Field(ge=0.5, le=100)
+    slippage_bps: float = Field(ge=1.0, le=200)
+    sec_fee_per_million_usd: float = Field(ge=0, le=1000)
+    finra_taf_per_share: float = Field(ge=0, le=0.01)
+    finra_taf_max_per_trade_usd: float = Field(ge=0, le=100)
+    max_participation_pct: float = Field(gt=0, le=10)
+
+
+class PromotionGatesPolicy(_Strict):
+    # Floors: gates can be tightened in policy.yaml, never loosened past these.
+    min_history_years: float = Field(ge=3, le=30)
+    min_trades: int = Field(ge=30)
+    min_profit_factor: float = Field(ge=1.0)
+    min_sharpe: float = Field(ge=0.0)
+    max_drawdown_pct: float = Field(gt=0, le=25)
+    holdout_years: float = Field(ge=1, le=5)
+    holdout_min_trades: int = Field(ge=10)
+    holdout_min_sharpe: float = Field(ge=0.0)
+    walk_forward_window_months: int = Field(ge=3, le=24)
+    min_profitable_windows_pct: float = Field(ge=50, le=100)
+    min_stable_neighbors_pct: float = Field(ge=50, le=100)
+    bootstrap_samples: int = Field(ge=500, le=100_000)
+    bootstrap_confidence: float = Field(ge=0.9, lt=1)
+    report_max_age_days: int = Field(ge=1, le=365)
+
+
 class RiskPolicy(_Strict):
     version: int
     trading_mode: Literal["paper"]
@@ -107,6 +135,8 @@ class RiskPolicy(_Strict):
     limits: LimitsPolicy
     data_quality: DataQualityPolicy
     execution: ExecutionPolicy
+    backtest: BacktestPolicy
+    promotion_gates: PromotionGatesPolicy
 
 
 class LoadedPolicy(BaseModel):

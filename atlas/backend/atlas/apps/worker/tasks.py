@@ -66,3 +66,38 @@ def generate_signals() -> dict[str, object]:
         return {"ok": False, "error": type(exc).__name__}
     log.info("signals_generated", **{k: v for k, v in summary.items() if k != "strategies"})
     return {"ok": True, **summary}
+
+
+@celery_app.task(name="atlas.worker.validate_strategy", soft_time_limit=3300, time_limit=3600)
+def validate_strategy(strategy_id: str, requested_by: str = "system") -> dict[str, object]:
+    """Backtest validation for one strategy version; records an immutable report."""
+    from atlas.core.backtesting.runner import run_validation
+    from atlas.core.configuration.policy import get_policy
+    from atlas.core.configuration.settings import get_settings
+
+    try:
+        with session_scope() as s:
+            report = run_validation(
+                s,
+                strategy_id,
+                policy=get_policy(),
+                calendar=MarketCalendar(),
+                default_symbols=get_settings().ingest_default_symbols,
+                requested_by=requested_by,
+            )
+            result: dict[str, object] = {
+                "ok": True,
+                "report_id": report.id,
+                "passed": report.passed,
+                "runtime_seconds": float(report.runtime_seconds),
+            }
+    except Exception as exc:
+        log.error(
+            "validation_failed",
+            strategy=strategy_id,
+            error=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
+        return {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200]}
+    log.info("validation_complete", strategy=strategy_id, **result)
+    return result

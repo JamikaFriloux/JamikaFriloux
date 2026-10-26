@@ -250,6 +250,7 @@ class DataQualityReport(Base):
     symbol: Mapped[str] = mapped_column(String(16))
     timeframe: Mapped[str] = mapped_column(String(8))
     source: Mapped[str] = mapped_column(String(32))
+    adjustment: Mapped[str] = mapped_column(String(16), default="all", server_default="all")
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     bars_fetched: Mapped[int] = mapped_column(Integer, default=0)
@@ -370,3 +371,30 @@ class RiskDecision(Base):
     failed: Mapped[list[str]] = mapped_column(JSONType, default=list)
     checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
     capital_base: Mapped[Decimal | None] = mapped_column(Money)
+
+
+class ValidationReport(Base):
+    """Evidence for promoting one exact strategy version (and parameter set) to PAPER."""
+
+    __tablename__ = "validation_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    strategy_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[str] = mapped_column(String(32))
+    params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    params_hash: Mapped[str] = mapped_column(String(16))
+    target_status: Mapped[str] = mapped_column(String(32))
+    policy_sha256: Mapped[str] = mapped_column(String(64))
+    passed: Mapped[bool] = mapped_column(Boolean)
+    data_start: Mapped[date] = mapped_column(Date)
+    data_end: Mapped[date] = mapped_column(Date)
+    symbols: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    gates: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    equity_curve: Mapped[list[Any]] = mapped_column(JSONType, default=list)
+    caveats: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    runtime_seconds: Mapped[float] = mapped_column(Numeric(10, 1))
+    requested_by: Mapped[str] = mapped_column(String(64), default="system")

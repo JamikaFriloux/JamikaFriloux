@@ -29,6 +29,7 @@ def client(settings, session_factory, policy, dispatched):
         policy,
         redis_client=None,
         dispatcher=lambda: dispatched.append(1) or True,
+        validation_dispatcher=lambda sid, who: dispatched.append((sid, who)) or True,
     )
     with TestClient(app) as c:
         yield c
@@ -361,3 +362,60 @@ def test_status_with_account_snapshots(client, session_factory):
     assert Decimal(a["total_pl"]) == Decimal("250.50")  # vs first sync, not the policy budget
     assert Decimal(a["day_pl"]) == Decimal("150.50")
     assert Decimal(a["capital_base"]) == Decimal("10000") and a["shorting_enabled"] is True
+
+
+def test_validation_endpoints(client, session_factory, dispatched, policy):
+    from datetime import date
+    from decimal import Decimal
+
+    from atlas.core.backtesting.validation import params_hash
+    from atlas.core.models.db import ValidationReport
+    from atlas.core.strategies.registry import STRATEGIES
+
+    admin, viewer = _auth(client, "admin"), _auth(client, "viewer")
+    assert (
+        client.post("/api/v1/strategies/rsi_pullback/validate", headers=viewer).status_code == 403
+    )
+    assert client.post("/api/v1/strategies/nope/validate", headers=admin).status_code == 404
+    r = client.post("/api/v1/strategies/rsi_pullback/validate", headers=admin)
+    assert r.status_code == 202 and ("rsi_pullback", "admin") in dispatched
+
+    client.get("/api/v1/strategies", headers=viewer)  # registers strategies
+    params = STRATEGIES["rsi_pullback"].params.model_dump()
+    with session_factory() as s:
+        s.add(
+            ValidationReport(
+                strategy_id="rsi_pullback",
+                version="1.0.0",
+                params=params,
+                params_hash=params_hash(params),
+                target_status="PAPER",
+                policy_sha256=policy.sha256,
+                passed=False,
+                data_start=date(2016, 1, 4),
+                data_end=date(2026, 10, 23),
+                symbols=["SPY"],
+                gates=[
+                    {
+                        "name": "sharpe",
+                        "passed": False,
+                        "value": 0.1,
+                        "threshold": ">= 0.5",
+                        "detail": "",
+                    }
+                ],
+                metrics={"full": {"trades": 120, "sharpe": 0.1}},
+                equity_curve=[["2026-10-23", 10100.0]],
+                caveats=["survivorship_bias: ..."],
+                runtime_seconds=Decimal("12.5"),
+            )
+        )
+        s.commit()
+    rows = client.get("/api/v1/validation-reports?strategy_id=rsi_pullback", headers=viewer).json()
+    assert len(rows) == 1 and rows[0]["failed_gates"] == ["sharpe"]
+    assert (
+        rows[0]["headline"]["trades"] == 120 and rows[0]["currently_valid_for_promotion"] is False
+    )
+    full = client.get(f"/api/v1/validation-reports/{rows[0]['id']}", headers=viewer).json()
+    assert full["equity_curve"] == [["2026-10-23", 10100.0]] and full["caveats"]
+    assert client.get("/api/v1/validation-reports/999", headers=viewer).status_code == 404

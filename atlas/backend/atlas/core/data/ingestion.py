@@ -322,6 +322,7 @@ def ingest_bars(
                     symbol=symbol,
                     timeframe=timeframe,
                     source=source.source,
+                    adjustment=adjustment,
                     window_start=start,
                     window_end=now,
                     bars_fetched=len(series),

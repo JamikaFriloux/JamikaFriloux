@@ -90,4 +90,6 @@ enables the gate; no orders are generated.
 | Every entry rejected: "broker account allows shorting" | Disable shorting and margin on the Alpaca paper account (see STATUS.md, Required user action). `check_alpaca` shows the current setting. |
 | Every entry rejected: "earnings calendar unavailable" | No earnings data source is configured, so the earnings blackout fails closed. Add a provider, or set `block_entries_before_earnings_days: 0` in a reviewed policy change. |
 | Strategy status change refused: "requires a passing validation report" | Expected until Phase 4: promotion needs validation backtests for the exact strategy version. |
+| Validation fails: "no raw daily history" | Run the one-off history backfill in the executor: `docker compose exec executor python -m atlas.scripts.backfill_history --years 10.5` (or `make backfill` locally). The daily ingestion keeps it current afterwards. |
+| Validation report: few or no recent trades, `drawdown` in the risk-engine panel | The policy's drawdown limit halted new entries in the simulation, and it never resets. Production behaves the same. See STATUS.md. |
 | Calendar discrepancies in `check_alpaca` | Update `exchange-calendars` (new holiday rules) and re-run. |

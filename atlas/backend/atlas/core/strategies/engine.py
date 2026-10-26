@@ -74,18 +74,30 @@ def generate_signals(
     scope = [s for s in ingestion_symbols(session, default_symbols) if s in members]
     active = [r for r in rows if r.status != StrategyStatus.RETIRED and r.id in STRATEGIES]
     lookback = max((STRATEGIES[r.id].lookback for r in active), default=0)
-    bars = load_daily_bars(session, scope, as_of, lookback) if scope else {}
+    positions_by = {
+        r.id: open_positions_for(session, r.id, as_of, calendar)
+        for r in active
+        if r.status == StrategyStatus.PAPER
+    }
+    # Held symbols are always evaluated, even if they left the universe or a watchlist:
+    # otherwise no exit signal could ever be generated for them.
+    held = sorted({sym for pos in positions_by.values() for sym in pos} - set(scope))
+    bars = load_daily_bars(session, [*scope, *held], as_of, lookback) if scope or held else {}
     summary: dict[str, Any] = {
         "as_of": as_of.isoformat(),
         "universe_as_of": snap.as_of.isoformat() if snap else None,
         "scope": len(scope),
+        "held_outside_scope": held,
         "strategies": {},
     }
     for row in active:
         strat = STRATEGIES[row.id]
         paper = row.status == StrategyStatus.PAPER
-        positions = open_positions_for(session, row.id, as_of, calendar) if paper else {}
-        signals, skipped = strat.generate(as_of, bars, positions)
+        positions = positions_by.get(row.id, {})
+        universe_bars = {k: v for k, v in bars.items() if k in members or k in positions}
+        signals, skipped = strat.generate(as_of, universe_bars, positions)
+        # Entries only for universe members; exits for anything held.
+        signals = [s for s in signals if s.kind == "exit" or s.symbol in members]
         created = 0
         for sig in signals:
             if session.get(SignalRecord, sig.id) is not None:

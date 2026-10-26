@@ -62,7 +62,9 @@ def test_data_outage_alerts_and_marks_degraded(session_factory):
     assert "[PAPER TRADING]" in notifier.messages[0][0]
     with session_factory() as s:
         assert s.get(ServiceHeartbeat, "ingest_1day").status == "degraded"
-        assert len(s.scalars(select(DataQualityReport)).all()) == 4
+        reports = s.scalars(select(DataQualityReport)).all()
+        # Adjusted and raw daily bars each get a report per symbol.
+        assert sorted(r.adjustment for r in reports) == ["all"] * 4 + ["raw"] * 4
 
 
 def test_missing_credentials_fails_safely(session_factory):

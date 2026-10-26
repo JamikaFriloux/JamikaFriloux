@@ -196,20 +196,26 @@ def data_quality(
         select(
             DataQualityReport.symbol,
             DataQualityReport.timeframe,
+            DataQualityReport.adjustment,
             func.max(DataQualityReport.id).label("id"),
         )
-        .group_by(DataQualityReport.symbol, DataQualityReport.timeframe)
+        .group_by(
+            DataQualityReport.symbol, DataQualityReport.timeframe, DataQualityReport.adjustment
+        )
         .subquery()
     )
     rows = db.scalars(
         select(DataQualityReport)
         .join(latest, DataQualityReport.id == latest.c.id)
-        .order_by(DataQualityReport.symbol, DataQualityReport.timeframe)
+        .order_by(
+            DataQualityReport.symbol, DataQualityReport.timeframe, DataQualityReport.adjustment
+        )
     ).all()
     return [
         {
             "symbol": r.symbol,
             "timeframe": r.timeframe,
+            "adjustment": r.adjustment,
             "checked_at": _iso(r.ts),
             "source": r.source,
             "ok": r.ok,

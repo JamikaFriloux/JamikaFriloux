@@ -152,3 +152,34 @@ def test_universe_snapshots_are_immutable_but_deletable(engine):
         ).scalar()
         assert left == 0  # members cascade with their snapshot
         conn.commit()
+
+
+def test_validation_reports_are_immutable(engine):
+    from datetime import date
+
+    from atlas.core.models.db import ValidationReport
+
+    with sessionmaker(bind=engine)() as s:
+        r = ValidationReport(
+            strategy_id="x",
+            version="1",
+            params={},
+            params_hash="h" * 16,
+            target_status="PAPER",
+            policy_sha256="p" * 64,
+            passed=False,
+            data_start=date(2020, 1, 1),
+            data_end=date(2026, 1, 1),
+            symbols=[],
+            gates=[],
+            metrics={},
+            equity_curve=[],
+            caveats=[],
+            runtime_seconds=Decimal(1),
+        )
+        s.add(r)
+        s.commit()
+    with engine.connect() as conn:
+        with pytest.raises(DBAPIError, match="immutable"):
+            conn.execute(text("UPDATE validation_reports SET passed = true"))
+        conn.rollback()

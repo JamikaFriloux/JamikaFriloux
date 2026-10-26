@@ -88,6 +88,20 @@ def _run_ingestion(timeframe: Timeframe, now: datetime) -> dict[str, object]:
                 minute_tolerance=tolerance,
             )
             summary = result.summary()
+            if timeframe == "1Day":
+                # Raw (unadjusted) bars feed the backtester's point-in-time price screen.
+                raw = ingest_bars(
+                    s,
+                    source,
+                    ingestion_symbols(s, settings.ingest_default_symbols),
+                    timeframe,
+                    now=now,
+                    lookback=lookback,
+                    incremental=False,
+                    minute_tolerance=tolerance,
+                    adjustment="raw",
+                )
+                summary["raw_bars_written"] = raw.bars_written
             beat(s, service, "ok" if result.ok else "degraded", **summary)
     except Exception as exc:
         log.error("ingestion_failed", timeframe=timeframe, error=type(exc).__name__)

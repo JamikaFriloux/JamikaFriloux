@@ -60,12 +60,13 @@ class TrendBreakout(Strategy):
         c, h, lo = closes(bars), highs(bars), lows(bars)
         close = c[-1]
         if position is not None:
-            exit_level = rolling_min(lo, p.exit_n, exclude_current=True)[-1]
+            # Only the last value is used, so compute over just the tail (identical result).
+            exit_level = rolling_min(lo[-(p.exit_n + 1) :], p.exit_n, exclude_current=True)[-1]
             if exit_level is not None and close < exit_level:
                 return self.signal(symbol, "exit", bars, close=close, exit_level=exit_level)
             return None
-        breakout = rolling_max(h, p.breakout_n, exclude_current=True)[-1]
-        trend = sma(c, p.trend_n)[-1]
+        breakout = rolling_max(h[-(p.breakout_n + 1) :], p.breakout_n, exclude_current=True)[-1]
+        trend = sma(c[-p.trend_n :], p.trend_n)[-1]
         a = atr(h, lo, c, p.atr_n)[-1]
         if breakout is None or trend is None or a is None:
             return None

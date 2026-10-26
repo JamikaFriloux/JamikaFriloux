@@ -22,7 +22,9 @@ from atlas.core.models.db import (
     SignalRecord,
     StrategyStatus,
     User,
+    ValidationReport,
 )
+from atlas.core.security import audit
 from atlas.core.security.auth import verify_password
 from atlas.core.strategies import registry
 
@@ -210,3 +212,104 @@ def list_orders(
         }
         for o in rows
     ]
+
+
+@router.post("/strategies/{strategy_id}/validate", status_code=status.HTTP_202_ACCEPTED)
+def request_validation(
+    strategy_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    if strategy_id not in registry.STRATEGIES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "strategy not found")
+    dispatched = request.app.state.dispatch_validation(strategy_id, user.username)
+    audit.record(
+        db,
+        actor=user.username,
+        action="strategy.validation_requested",
+        target=strategy_id,
+        details={"dispatched": dispatched},
+        ip_address=client_ip(request),
+    )
+    if not dispatched:
+        db.commit()
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "could not queue the validation job"
+        )
+    return {"queued": True, "strategy_id": strategy_id}
+
+
+def _report_summary(r: ValidationReport, promotable_id: str | None) -> dict[str, Any]:
+    full = (r.metrics or {}).get("full", {})
+    return {
+        "id": r.id,
+        "created_at": _iso(r.created_at),
+        "strategy_id": r.strategy_id,
+        "version": r.version,
+        "params_hash": r.params_hash,
+        "passed": r.passed,
+        "currently_valid_for_promotion": promotable_id == str(r.id),
+        "data_start": r.data_start.isoformat(),
+        "data_end": r.data_end.isoformat(),
+        "symbols": len(r.symbols or []),
+        "failed_gates": [g["name"] for g in r.gates if not g["passed"]],
+        "headline": {
+            k: full.get(k)
+            for k in (
+                "trades",
+                "cagr_pct",
+                "sharpe",
+                "max_drawdown_pct",
+                "profit_factor",
+                "win_rate_pct",
+            )
+        },
+        "runtime_seconds": float(r.runtime_seconds),
+        "requested_by": r.requested_by,
+    }
+
+
+@router.get("/validation-reports")
+def list_validation_reports(
+    strategy_id: str | None = None,
+    limit: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role(Role.VIEWER)),
+) -> list[dict[str, Any]]:
+    q = select(ValidationReport)
+    if strategy_id:
+        q = q.where(ValidationReport.strategy_id == strategy_id)
+    rows = db.scalars(q.order_by(ValidationReport.id.desc()).limit(limit)).all()
+    promotable = {
+        sid: registry.passing_validation_report(db, sid, s.version, StrategyStatus.PAPER)
+        for sid, s in registry.STRATEGIES.items()
+    }
+    return [_report_summary(r, promotable.get(r.strategy_id)) for r in rows]
+
+
+@router.get("/validation-reports/{report_id}")
+def get_validation_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role(Role.VIEWER)),
+) -> dict[str, Any]:
+    r = db.get(ValidationReport, report_id)
+    if r is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "report not found")
+    strat = registry.STRATEGIES.get(r.strategy_id)
+    promotable = (
+        registry.passing_validation_report(db, r.strategy_id, strat.version, StrategyStatus.PAPER)
+        if strat
+        else None
+    )
+    return {
+        **_report_summary(r, promotable),
+        "params": r.params,
+        "policy_sha256": r.policy_sha256,
+        "symbol_list": r.symbols,
+        "gates": r.gates,
+        "metrics": r.metrics,
+        "equity_curve": r.equity_curve,
+        "caveats": r.caveats,
+    }

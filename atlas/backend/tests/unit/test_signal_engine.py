@@ -115,3 +115,37 @@ def test_execute_task_skips_closed_market_and_alerts_on_failure():
         dt.now.return_value = open_
         assert tasks.execute_signals.run() == {"ok": False, "error": "RuntimeError"}
     assert "[PAPER TRADING] Signal execution failed" in notifier.messages[0][0]
+
+
+def test_held_symbol_outside_universe_still_gets_exits(db):
+    from atlas.core.models.db import Order, OrderState, StrategyRecord, StrategyStatus
+    from atlas.core.strategies.registry import sync_registry
+
+    _seed(db)
+    sync_registry(db)
+    db.get(StrategyRecord, "trend_breakout").status = StrategyStatus.PAPER
+    # Held in GONE, which is in neither the universe nor any watchlist, and is breaking down.
+    falling = uptrend()
+    falling[-1] = falling[-21] - 10
+    upsert_bars(db, series(falling, symbol="GONE"))
+    db.add(
+        Order(
+            client_order_id="x1",
+            symbol="GONE",
+            side="buy",
+            order_type="limit",
+            qty=Decimal(5),
+            limit_price=Decimal(100),
+            state=OrderState.FILLED,
+            filled_qty=Decimal(5),
+            filled_avg_price=Decimal(100),
+            strategy_id="trend_breakout",
+            purpose="entry",
+            submitted_at=datetime(2026, 9, 1, 15, tzinfo=UTC),
+        )
+    )
+    db.flush()
+    summary = generate_signals(db, as_of=AS_OF, default_symbols=[], calendar=CAL)
+    assert summary["held_outside_scope"] == ["GONE"]
+    sigs = {(s.symbol, s.kind) for s in db.scalars(select(SignalRecord)).all()}
+    assert ("GONE", "exit") in sigs and ("OUT", "entry") not in sigs

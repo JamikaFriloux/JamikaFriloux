@@ -50,6 +50,22 @@ def _default_dispatcher(settings: AtlasSettings) -> Callable[[], bool]:
     return dispatch
 
 
+def _default_validation_dispatcher() -> Callable[[str, str], bool]:
+    def dispatch(strategy_id: str, requested_by: str) -> bool:
+        try:
+            from atlas.apps.worker.celery_app import celery_app
+
+            celery_app.send_task(
+                "atlas.worker.validate_strategy", args=[strategy_id, requested_by], queue="default"
+            )
+            return True
+        except Exception:
+            log.error("validation_dispatch_failed")
+            return False
+
+    return dispatch
+
+
 def _redis_client(settings: AtlasSettings) -> Any | None:
     try:
         import redis
@@ -65,6 +81,7 @@ def create_app(
     policy: LoadedPolicy | None = None,
     redis_client: Any | None = "auto",
     dispatcher: Callable[[], bool] | None = None,
+    validation_dispatcher: Callable[[str, str], bool] | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     if settings.trading_mode != "paper":  # pragma: no cover - Literal already enforces this
@@ -103,6 +120,7 @@ def create_app(
     app.state.redis = redis
     app.state.rate_limiter = RateLimiter(redis)
     app.state.dispatch_kill_switch_actions = dispatcher or _default_dispatcher(settings)
+    app.state.dispatch_validation = validation_dispatcher or _default_validation_dispatcher()
 
     app.add_middleware(
         CORSMiddleware,

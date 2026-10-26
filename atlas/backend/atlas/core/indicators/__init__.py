@@ -10,6 +10,7 @@ the first ``n`` values, then ``prev + (x - prev) / n``.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 
 Series = list[float | None]
@@ -99,26 +100,36 @@ def rsi(close: Sequence[float], n: int = 14) -> Series:
     return out
 
 
-def rolling_max(values: Sequence[float], n: int, *, exclude_current: bool = False) -> Series:
-    """Highest value of the last n (or, with ``exclude_current``, the n before this one)."""
+def _rolling_extreme(
+    values: Sequence[float], n: int, exclude_current: bool, is_max: bool
+) -> Series:
+    """O(len) sliding-window extreme with a monotonic deque of indices."""
     _check(n)
     out: Series = [None] * len(values)
+    window: deque[int] = deque()
     shift = 1 if exclude_current else 0
-    for i in range(len(values)):
-        end = i + 1 - shift
-        start = end - n
-        if start >= 0:
-            out[i] = max(values[start:end])
+    size = len(values)
+    for j, v in enumerate(values):
+        # Output index i = j + shift covers values[i - shift - n + 1 .. i - shift].
+        if is_max:
+            while window and values[window[-1]] <= v:
+                window.pop()
+        else:
+            while window and values[window[-1]] >= v:
+                window.pop()
+        window.append(j)
+        if window[0] <= j - n:
+            window.popleft()
+        i = j + shift
+        if j >= n - 1 and i < size:
+            out[i] = values[window[0]]
     return out
+
+
+def rolling_max(values: Sequence[float], n: int, *, exclude_current: bool = False) -> Series:
+    """Highest value of the last n (or, with ``exclude_current``, the n before this one)."""
+    return _rolling_extreme(values, n, exclude_current, True)
 
 
 def rolling_min(values: Sequence[float], n: int, *, exclude_current: bool = False) -> Series:
-    _check(n)
-    out: Series = [None] * len(values)
-    shift = 1 if exclude_current else 0
-    for i in range(len(values)):
-        end = i + 1 - shift
-        start = end - n
-        if start >= 0:
-            out[i] = min(values[start:end])
-    return out
+    return _rolling_extreme(values, n, exclude_current, False)

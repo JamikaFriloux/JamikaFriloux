@@ -12,10 +12,14 @@ Statuses: RESEARCH -> PAPER -> LIVE_CANDIDATE, plus RETIRED. Rules (CLAUDE.md ru
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from atlas.core.models.db import StrategyRecord, StrategyStatus
+from atlas.core.backtesting.validation import params_hash
+from atlas.core.configuration.policy import get_policy
+from atlas.core.models.db import StrategyRecord, StrategyStatus, ValidationReport
 from atlas.core.security import audit
 from atlas.core.strategies.base import Strategy
 from atlas.core.strategies.baselines import RsiPullback, TrendBreakout
@@ -40,11 +44,35 @@ class StatusChangeRefused(ValueError):
 def passing_validation_report(
     session: Session, strategy_id: str, version: str, target: StrategyStatus
 ) -> str | None:
-    """Id of a passing validation report for this exact version and target, else None.
+    """Id of a passing validation report that justifies ``target``, else None.
 
-    Phase 4 adds the validation reports; until then there are none, so this returns None.
+    Accepted for PAPER only when it passed, matches the exact version and parameters now
+    registered, was produced under the current policy (a policy change can change the
+    simulation), and is no older than ``report_max_age_days``. LIVE_CANDIDATE additionally
+    needs a paper-trading track record, which isn't implemented, so nothing qualifies.
     """
-    return None
+    if target != St.PAPER:
+        return None
+    row = session.get(StrategyRecord, strategy_id)
+    if row is None:
+        return None
+    policy = get_policy()
+    cutoff = datetime.now(UTC) - timedelta(days=policy.policy.promotion_gates.report_max_age_days)
+    report = session.scalars(
+        select(ValidationReport)
+        .where(
+            ValidationReport.strategy_id == strategy_id,
+            ValidationReport.version == version,
+            ValidationReport.params_hash == params_hash(row.params),
+            ValidationReport.policy_sha256 == policy.sha256,
+            ValidationReport.passed.is_(True),
+            ValidationReport.target_status == St.PAPER.value,
+            ValidationReport.created_at >= cutoff,
+        )
+        .order_by(ValidationReport.id.desc())
+        .limit(1)
+    ).first()
+    return str(report.id) if report is not None else None
 
 
 def sync_registry(session: Session) -> list[StrategyRecord]:
@@ -112,7 +140,7 @@ def set_status(
         if report_id is None:
             raise StatusChangeRefused(
                 f"{row.status.value} -> {new.value} requires a passing validation report for "
-                f"{strategy_id} v{row.version}; validation backtests arrive in Phase 4"
+                f"{strategy_id} v{row.version} under the current policy (run a validation)"
             )
     before = row.status
     row.status, row.updated_by = new, actor

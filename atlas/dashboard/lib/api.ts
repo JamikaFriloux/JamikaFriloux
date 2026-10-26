@@ -172,15 +172,59 @@ export type OrderRow = {
   last_error: string | null;
 };
 
+export type GateRow = { name: string; passed: boolean; value: unknown; threshold: string; detail: string };
+
+export type ValidationSummary = {
+  id: number;
+  created_at: string | null;
+  strategy_id: string;
+  version: string;
+  params_hash: string;
+  passed: boolean;
+  currently_valid_for_promotion: boolean;
+  data_start: string;
+  data_end: string;
+  symbols: number;
+  failed_gates: string[];
+  headline: Record<string, number | string | null>;
+  runtime_seconds: number;
+  requested_by: string;
+};
+
+export type Metrics = Record<string, number | string | null>;
+
+export type ValidationReportFull = ValidationSummary & {
+  params: Record<string, unknown>;
+  policy_sha256: string;
+  symbol_list: string[];
+  gates: GateRow[];
+  metrics: {
+    full: Metrics;
+    holdout: Metrics;
+    windows: Metrics[];
+    neighbors: { change: string; net_pnl: number; sharpe: number; trades: number }[];
+    bootstrap_lower_bound_pct: number | null;
+    rejections: Record<string, number>;
+    first_halt: Record<string, string>;
+    exit_reasons: Record<string, number>;
+    cost_model: Record<string, string>;
+    signals: number;
+    unfilled: number;
+    partial_fills: number;
+  };
+  equity_curve: [string, number][];
+  caveats: string[];
+};
+
 export class ApiUnavailable extends Error {}
 
 async function apiGet<T>(path: string): Promise<T> {
   const result = await apiGetOptional<T>(path);
-  if (result === null) throw new ApiUnavailable(`ATLAS API ${path} returned 503`);
+  if (result === null) throw new ApiUnavailable(`ATLAS API ${path} is unavailable (503) or not found (404)`);
   return result;
 }
 
-/** Like apiGet, but a 503 (e.g. live data not available yet) yields null instead of an error. */
+/** Like apiGet, but 503 (not available yet) or 404 (doesn't exist) yields null, not an error. */
 async function apiGetOptional<T>(path: string): Promise<T | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) redirect("/login");
@@ -194,7 +238,7 @@ async function apiGetOptional<T>(path: string): Promise<T | null> {
     throw new ApiUnavailable(`ATLAS API unreachable at ${path}`);
   }
   if (res.status === 401) redirect("/login?expired=1");
-  if (res.status === 503) return null;
+  if (res.status === 503 || res.status === 404) return null;
   if (!res.ok) throw new ApiUnavailable(`ATLAS API ${path} returned ${res.status}`);
   return (await res.json()) as T;
 }
@@ -209,3 +253,8 @@ export const getSignals = (limit = 25) => apiGet<SignalRow[]>(`/api/v1/signals?l
 export const getRiskDecisions = (rejectedOnly = false, limit = 25) =>
   apiGet<RiskDecisionRow[]>(`/api/v1/risk-decisions?limit=${limit}&rejected_only=${rejectedOnly}`);
 export const getOrders = (limit = 25) => apiGet<OrderRow[]>(`/api/v1/orders?limit=${limit}`);
+export const getValidationReports = (strategyId?: string, limit = 20) =>
+  apiGet<ValidationSummary[]>(
+    `/api/v1/validation-reports?limit=${limit}${strategyId ? `&strategy_id=${encodeURIComponent(strategyId)}` : ""}`,
+  );
+export const getValidationReport = (id: number) => apiGetOptional<ValidationReportFull>(`/api/v1/validation-reports/${id}`);
