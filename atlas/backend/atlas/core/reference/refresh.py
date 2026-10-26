@@ -27,7 +27,7 @@ class CompanySource(Protocol):
 class EarningsSource(Protocol):
     source: str
 
-    def calendar(self, start: Any, end: Any) -> list[EarningsItem]: ...
+    def calendar(self, start: Any, end: Any, symbols: Sequence[str]) -> list[EarningsItem]: ...
 
 
 def classify_from_provider(
@@ -86,7 +86,10 @@ def refresh_reference(
         start = now.astimezone(NY).date()
         end = start + timedelta(days=horizon_days)
         try:
-            items = earnings.calendar(start, end)
+            # Watched stocks are also queried by symbol: the market-wide calendar can omit
+            # a share class (see integrations/finnhub/earnings.py).
+            stocks = sorted(set(symbols) - set(instruments.data.etfs))
+            items = earnings.calendar(start, end, stocks)
             with session.begin_nested():
                 cov = store_calendar(
                     session, earnings.source, items, window_start=start, window_end=end, now=now

@@ -58,6 +58,19 @@ configuration and a clean `check_alpaca` run, an admin resumes it in **Risk Cent
 (requires re-entering the password). Until Phase 3, there are no strategies, so resuming only
 enables the gate; no orders are generated.
 
+## Before leaving it unattended
+Run the go/no-go preflight in the executor with every service up. It places no orders:
+```bash
+docker compose exec executor python -m atlas.scripts.check_readiness
+```
+It fails on anything that stops ATLAS from paper trading on its own or from being watched
+while it does: the broker account isn't paper, ACTIVE, long-only and margin-free; the kill
+switch is engaged; no strategy is in PAPER, or a PAPER strategy has no current passing
+validation report; broker sync, the worker or the executor aren't heartbeating; the universe,
+daily bars or earnings calendar are stale; a watched symbol is unclassified; Telegram alerts
+aren't configured. A stream that is down is only a warning, because orders fall back to REST
+quotes.
+
 ## Operation
 * **Overview**: equity/cash/P&L come from the last broker sync (every 60 s). If no sync has
   happened the page says so — it never shows placeholder numbers.
@@ -90,6 +103,8 @@ enables the gate; no orders are generated.
 | Every entry rejected: "broker account allows shorting" | Disable shorting and margin on the Alpaca paper account (see STATUS.md, Required user action). `check_alpaca` shows the current setting. |
 | Entry rejected: "earnings calendar unavailable or symbol unclassified" | ETFs listed in `config/instruments.yaml` are cleared without a calendar. Stocks need a calendar fetched within 30 h: set `ATLAS_REFDATA_FINNHUB_API_KEY` in `broker.env` and allow `finnhub.io` outbound. Symbols in neither the config nor a provider stay unclassified and always fail closed: add them to `instruments.yaml` in a reviewed change. The Risk Center's Reference data card shows each symbol's clearance. |
 | Reference heartbeat `degraded` / "Reference data provider failed" alert | A provider (SEC EDGAR or Finnhub) could not be reached or refused the request; the error is in the heartbeat. Stored data stays in use; stocks lose earnings clearance once the last calendar is over 30 h old. |
+| Reference error `Finnhub: HTTP 429` | Free-tier rate limit (60 calls/min). A refresh makes about 60 paced calls (one per day of the window plus one per watched stock), so don't run `check_reference` right after a refresh, and don't share the key with another client. The next scheduled refresh retries. |
+| Reference error `truncated response for <date>` | Finnhub returned its 1,500-row cap for a single day, so that day's list can't be trusted. Nothing is stored and stocks stay uncleared. If it keeps happening, the adapter needs to split the day further. |
 | Strategy status change refused: "requires a passing validation report" | Promotion to PAPER needs a passing validation report for the exact version and parameters, made under the current `policy.yaml` (any policy edit changes its hash) within 90 days. Run a validation from the Strategy Lab. |
 | Strategy status change refused: "requires a passing paper track record" | Promotion to LIVE_CANDIDATE needs the strategy's paper record (Performance page) to pass every `track_record_gates` check, evaluated within 7 days. The record is recomputed after each close by `update_track_records`. |
 | Validation fails: "no raw daily history" | Run the one-off history backfill in the executor: `docker compose exec executor python -m atlas.scripts.backfill_history --years 10.5` (or `make backfill` locally). The daily ingestion keeps it current afterwards. |

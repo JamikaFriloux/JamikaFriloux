@@ -24,7 +24,7 @@ from atlas.core.reference.instruments import (
 from atlas.core.reference.refresh import refresh_reference
 from atlas.core.reference.sectors import sector_for_sic
 from atlas.core.risk.engine import evaluate
-from atlas.integrations.finnhub.earnings import FinnhubEarnings, FinnhubError
+from atlas.integrations.finnhub.earnings import ROW_CAP, FinnhubEarnings, FinnhubError
 from atlas.integrations.sec.edgar import EdgarClient, EdgarError
 
 CAL = MarketCalendar()
@@ -145,36 +145,94 @@ def test_edgar_requires_contact_and_reports_errors():
 
 def test_finnhub_token_in_header_not_url_and_parsing():
     seen = []
+    rows = {
+        "2026-10-28": [
+            {"date": "2026-10-28", "hour": "amc", "symbol": "aapl"},
+            {"date": "2026-10-28", "hour": "amc", "symbol": "GOOGL"},
+            {"date": "bad", "symbol": "X"},
+            {"hour": "bmo", "symbol": "Y"},
+        ],
+        "2026-10-29": [{"date": "2026-10-29", "hour": "", "symbol": "MSFT"}],
+    }
+    by_symbol = {
+        # As live: the market-wide calendar omits GOOG and a GOOG query answers with the
+        # issuer's row labelled GOOGL. Rows outside the window are dropped.
+        "GOOG": [
+            {"date": "2026-10-28", "hour": "amc", "symbol": "GOOGL"},
+            {"date": "2027-01-27", "hour": "amc", "symbol": "GOOGL"},
+        ],
+        "META": [],
+    }
 
     def handler(req: httpx.Request) -> httpx.Response:
         seen.append(req)
-        return httpx.Response(
-            200,
-            json={
-                "earningsCalendar": [
-                    {"date": "2026-10-28", "hour": "amc", "symbol": "aapl"},
-                    {"date": "2026-10-29", "hour": "", "symbol": "MSFT"},
-                    {"date": "bad", "symbol": "X"},
-                    {"hour": "bmo", "symbol": "Y"},
-                ]
-            },
-        )
+        p = req.url.params
+        if "symbol" in p:
+            got = by_symbol[p["symbol"]]
+        else:
+            assert p["from"] == p["to"]
+            got = rows.get(p["from"], [])
+        return httpx.Response(200, json={"earningsCalendar": got})
 
-    f = FinnhubEarnings("sekret", _client(handler))
-    items = f.calendar(date(2026, 10, 26), date(2026, 11, 25))
+    waits = []
+    f = FinnhubEarnings("sekret", _client(handler), sleep=waits.append)
+    items = f.calendar(date(2026, 10, 26), date(2026, 11, 25), ["GOOG", "META"])
     assert items == [
         EarningsItem("AAPL", date(2026, 10, 28), "amc"),
+        EarningsItem("GOOGL", date(2026, 10, 28), "amc"),
         EarningsItem("MSFT", date(2026, 10, 29), "unknown"),
+        EarningsItem("GOOG", date(2026, 10, 28), "amc"),
     ]
-    req = seen[0]
-    assert req.headers["X-Finnhub-Token"] == "sekret" and "sekret" not in str(req.url)
-    assert req.url.params["from"] == "2026-10-26" and req.url.params["to"] == "2026-11-25"
+    days = [(date(2026, 10, 26) + timedelta(days=i)).isoformat() for i in range(31)]
+    assert [r.url.params.get("from") for r in seen[:31]] == days
+    assert [r.url.params["symbol"] for r in seen[31:]] == ["GOOG", "META"]
+    assert len(waits) == len(seen) - 1 and all(w > 0 for w in waits)  # paced under 60/min
+    for req in seen:
+        assert req.headers["X-Finnhub-Token"] == "sekret" and "sekret" not in str(req.url)
+
+
+def test_finnhub_truncated_day_raises():
+    # Finnhub caps a response at 1500 rows, keeping the latest dates; a capped day can't be
+    # trusted to list every report, so it must fail rather than clear stocks.
+    def handler(req: httpx.Request) -> httpx.Response:
+        d = req.url.params["from"]
+        n = ROW_CAP if d == "2026-10-27" else 3
+        return httpx.Response(
+            200, json={"earningsCalendar": [{"date": d, "symbol": f"S{i}"} for i in range(n)]}
+        )
+
+    with pytest.raises(FinnhubError, match="truncated"):
+        FinnhubEarnings("k", _client(handler), sleep=lambda _s: None).calendar(
+            TODAY, TODAY + timedelta(days=2)
+        )
+
+
+def test_finnhub_row_outside_requested_day_raises():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"earningsCalendar": [{"date": "2026-11-20", "symbol": "AAPL"}]}
+        )
+
+    with pytest.raises(FinnhubError, match="window"):
+        FinnhubEarnings("k", _client(handler), sleep=lambda _s: None).calendar(TODAY, TODAY)
+
+
+def test_finnhub_failed_symbol_query_fails_the_whole_fetch():
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "symbol" in req.url.params:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"earningsCalendar": []})
+
+    with pytest.raises(FinnhubError, match="429"):
+        FinnhubEarnings("k", _client(handler), sleep=lambda _s: None).calendar(
+            TODAY, TODAY, ["GOOG"]
+        )
 
 
 @pytest.mark.parametrize("resp", [httpx.Response(401), httpx.Response(200, json={"x": 1})])
 def test_finnhub_failures_raise(resp):
     with pytest.raises(FinnhubError):
-        FinnhubEarnings("k", _client(lambda _r: resp)).calendar(TODAY, TODAY)
+        FinnhubEarnings("k", _client(lambda _r: resp), sleep=lambda _s: None).calendar(TODAY, TODAY)
 
 
 # ---------- calendar and blackout ----------
@@ -277,8 +335,10 @@ class FakeEarnings:
 
     def __init__(self, items=(), error=None):
         self.items, self.error = list(items), error
+        self.symbols = None
 
-    def calendar(self, start, end):
+    def calendar(self, start, end, symbols):
+        self.symbols = list(symbols)
         if self.error:
             raise self.error
         return self.items
@@ -300,10 +360,11 @@ def test_refresh_applies_config_providers_and_reports(db, tmp_path):
         symbols=["SPY", "XOM", "SHEL"],
         now=NOW.astimezone(UTC),
         companies=comp,
-        earnings=FakeEarnings([EarningsItem("XOM", date(2026, 10, 30))]),
+        earnings=(fe := FakeEarnings([EarningsItem("XOM", date(2026, 10, 30))])),
         horizon_days=30,
     )
     assert comp.asked == ["XOM", "SHEL"]  # only symbols config doesn't cover
+    assert fe.symbols == ["SHEL", "XOM"]  # watched stocks queried by symbol; ETFs aren't
     assert out["sec_edgar"] == 1 and out["unclassified"] == ["SHEL"] and out["errors"] == {}
     assert out["earnings"]["events"] == 1
     assert db.get(InstrumentReference, "XOM").sic == 2911

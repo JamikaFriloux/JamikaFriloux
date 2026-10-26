@@ -17,7 +17,8 @@ The universe for ``d`` is point-in-time: the production ``liquidity_screen`` app
 
 Known simplifications (recorded as caveats in every report): the symbol list itself comes
 from today (survivorship bias); earnings blackouts and per-sector limits aren't simulated
-(no historical earnings calendar; all holdings share one sector budget, which is stricter); one strategy per simulated account.
+(no historical earnings calendar; all holdings share one sector budget, which is stricter);
+one strategy per simulated account.
 """
 
 from __future__ import annotations
