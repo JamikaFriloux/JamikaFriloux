@@ -138,6 +138,8 @@ class AccountSnapshot(Base):
     buying_power: Mapped[Decimal] = mapped_column(Money)
     long_market_value: Mapped[Decimal] = mapped_column(Money)
     trading_blocked: Mapped[bool] = mapped_column(Boolean)
+    shorting_enabled: Mapped[bool | None] = mapped_column(Boolean)
+    margin_multiplier: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
 
     __table_args__ = (CheckConstraint("is_paper", name="account_snapshot_paper_only"),)
 
@@ -179,6 +181,12 @@ class Order(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Phase 3: why the order exists. purpose is entry / exit / protective_stop; a protective
+    # stop points at the entry order it protects.
+    signal_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    purpose: Mapped[str | None] = mapped_column(String(16))
+    parent_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"))
+    time_in_force: Mapped[str] = mapped_column(String(8), default="day")
 
     __table_args__ = (CheckConstraint("side IN ('buy', 'sell')", name="order_side_valid"),)
 
@@ -291,3 +299,74 @@ class UniverseMember(Base):
     easy_to_borrow: Mapped[bool] = mapped_column(Boolean)
 
     __table_args__ = (Index("ix_universe_members_symbol", "symbol"),)
+
+
+class StrategyStatus(enum.StrEnum):
+    RESEARCH = "RESEARCH"  # signals are recorded and risk-checked in shadow; never ordered
+    PAPER = "PAPER"  # may submit paper orders (requires passing validation gates)
+    LIVE_CANDIDATE = "LIVE_CANDIDATE"  # still cannot submit live orders in this deployment
+    RETIRED = "RETIRED"
+
+
+class StrategyRecord(Base):
+    __tablename__ = "strategies"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[str] = mapped_column(String(32))
+    status: Mapped[StrategyStatus] = mapped_column(
+        _enum(StrategyStatus, "strategy_status"), default=StrategyStatus.RESEARCH
+    )
+    params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    updated_by: Mapped[str] = mapped_column(String(64), default="system")
+
+
+class SignalRecord(Base):
+    """A strategy's decision for one symbol and session. ``id`` is deterministic, so
+    re-running the signal engine for the same session never duplicates a signal."""
+
+    __tablename__ = "signals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(String(64), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(32))
+    symbol: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(8))  # entry / exit
+    side: Mapped[str] = mapped_column(String(8))
+    as_of: Mapped[date] = mapped_column(Date, index=True)  # session whose close produced it
+    ref_price: Mapped[Decimal] = mapped_column(Money)
+    stop_price: Mapped[Decimal | None] = mapped_column(Money)
+    reason: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    mode: Mapped[str] = mapped_column(String(8))  # shadow / paper
+    status: Mapped[str] = mapped_column(String(16), default="NEW", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('entry', 'exit')", name="signal_kind_valid"),
+        CheckConstraint("side IN ('buy', 'sell')", name="signal_side_valid"),
+    )
+
+
+class RiskDecision(Base):
+    """Every risk-engine evaluation, approved or not, with each check's outcome."""
+
+    __tablename__ = "risk_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    signal_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    strategy_id: Mapped[str] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(8))
+    mode: Mapped[str] = mapped_column(String(8))
+    approved: Mapped[bool] = mapped_column(Boolean)
+    qty: Mapped[Decimal | None] = mapped_column(Money)
+    limit_price: Mapped[Decimal | None] = mapped_column(Money)
+    failed: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, default=list)
+    capital_base: Mapped[Decimal | None] = mapped_column(Money)

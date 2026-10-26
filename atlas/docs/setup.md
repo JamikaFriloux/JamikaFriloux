@@ -87,4 +87,7 @@ enables the gate; no orders are generated.
 | Stream last error `406: connection limit exceeded` | Alpaca allows one data stream per account. Stop any other client (another ATLAS instance, a notebook) using the same keys. |
 | Stream last error `InvalidProxyStatus` / never connects | Outbound WebSocket to `stream.data.alpaca.markets:443` is blocked by a firewall or proxy. |
 | Stream `degraded` with symbols in `stale` | No quote within `max_quote_age_seconds` during market hours. Normal for thinly traded names on the free IEX feed. Trading treats them as unavailable. |
+| Every entry rejected: "broker account allows shorting" | Disable shorting and margin on the Alpaca paper account (see STATUS.md, Required user action). `check_alpaca` shows the current setting. |
+| Every entry rejected: "earnings calendar unavailable" | No earnings data source is configured, so the earnings blackout fails closed. Add a provider, or set `block_entries_before_earnings_days: 0` in a reviewed policy change. |
+| Strategy status change refused: "requires a passing validation report" | Expected until Phase 4: promotion needs validation backtests for the exact strategy version. |
 | Calendar discrepancies in `check_alpaca` | Update `exchange-calendars` (new holiday rules) and re-run. |

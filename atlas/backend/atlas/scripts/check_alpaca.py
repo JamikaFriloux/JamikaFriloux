@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.models import Calendar, Clock
@@ -41,6 +41,22 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[2/5] PAPER account verified: status={account.status} equity={account.equity} "
         f"cash={account.cash} buying_power={account.buying_power}"
+    )
+
+    # Policy is long-only, no margin. The broker accepts stop-sells without a position, so a
+    # stale protective stop could open a short unless shorting is disabled on the account.
+    raw = cast(dict[str, Any], client.get("/account"))
+    shorting, multiplier = raw.get("shorting_enabled"), raw.get("multiplier")
+    guard_ok = shorting is False
+    print(
+        f"[2b] broker guardrails: shorting_enabled={shorting} multiplier={multiplier} -> "
+        + (
+            "OK"
+            if guard_ok
+            else "WARN: entries are rejected until shorting is disabled "
+            "(Alpaca dashboard > Account > Configure, or PATCH /v2/account/configurations "
+            '{"no_shorting": true, "max_margin_multiplier": "1"})'
+        )
     )
 
     clock = cast(Clock, client.get_clock())

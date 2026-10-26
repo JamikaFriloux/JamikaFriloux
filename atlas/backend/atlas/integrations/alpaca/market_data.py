@@ -14,11 +14,12 @@ from typing import Any
 
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from atlas.core.configuration.settings import BrokerSettings
 from atlas.core.data.bars import BarRecord, Timeframe
+from atlas.core.risk.engine import QuoteState
 
 _TF = {
     "1Min": TimeFrame(1, TimeFrameUnit.Minute),
@@ -90,3 +91,16 @@ class AlpacaMarketData:
                 for b in bars
             ]
         return out
+
+    def latest_quote(self, symbol: str) -> QuoteState | None:
+        """Latest quote over REST, with its exchange timestamp (freshness is checked by the
+        risk engine). None when the broker has no two-sided quote."""
+        result = self._client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self._feed)
+        )
+        q = result.get(symbol) if isinstance(result, dict) else None
+        if q is None or not q.bid_price or not q.ask_price:
+            return None
+        return QuoteState(
+            bid=Decimal(str(q.bid_price)), ask=Decimal(str(q.ask_price)), ts=q.timestamp
+        )

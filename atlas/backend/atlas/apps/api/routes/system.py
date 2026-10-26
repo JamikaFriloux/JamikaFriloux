@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -52,6 +53,9 @@ def system_status(
 ) -> dict[str, Any]:
     policy = request.app.state.policy
     snap = db.scalar(select(AccountSnapshot).order_by(AccountSnapshot.ts.desc()).limit(1))
+    # Baseline for total P/L: the account's equity at ATLAS's first broker sync (real data;
+    # the policy's starting equity is a sizing budget and may differ from the paper account).
+    first = db.scalar(select(AccountSnapshot).order_by(AccountSnapshot.ts.asc()).limit(1))
     open_orders = db.scalar(
         select(func.count()).select_from(Order).where(Order.state.in_(OPEN_BROKER_STATES))
     )
@@ -74,7 +78,12 @@ def system_status(
             "buying_power": str(snap.buying_power),
             "long_market_value": str(snap.long_market_value),
             "day_pl": str(snap.equity - snap.last_equity),
-            "total_pl": str(snap.equity - policy.policy.account.starting_equity_usd),
+            "total_pl": str(snap.equity - first.equity) if first is not None else None,
+            "total_pl_since": _iso(first.ts) if first is not None else None,
+            "capital_base": str(
+                min(snap.equity, Decimal(str(policy.policy.account.starting_equity_usd)))
+            ),
+            "shorting_enabled": snap.shorting_enabled,
             "trading_blocked": snap.trading_blocked,
         },
         "positions": [

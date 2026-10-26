@@ -25,7 +25,7 @@ def _run(session_factory, assets, bars, notifier):
     with (
         patch.object(tasks, "session_scope", scope),
         patch.object(tasks, "get_gateway", lambda: assets),
-        patch.object(tasks, "get_universe_bar_source", lambda: bars),
+        patch.object(tasks, "get_sip_bar_source", lambda: bars),
         patch.object(tasks, "build_notifier", lambda: notifier),
         patch.object(tasks.UniverseCriteria, "from_policy", lambda _p: loose),
     ):

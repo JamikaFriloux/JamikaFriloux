@@ -27,6 +27,8 @@ class AccountInfo:
     long_market_value: Decimal
     trading_blocked: bool
     is_paper: bool
+    shorting_enabled: bool | None = None  # broker-side setting; policy requires False
+    margin_multiplier: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -45,8 +47,20 @@ class OrderRequest:
     symbol: str
     side: Literal["buy", "sell"]
     qty: Decimal
-    limit_price: Decimal
-    time_in_force: Literal["day"] = "day"
+    limit_price: Decimal | None
+    time_in_force: Literal["day", "gtc"] = "day"
+    order_type: Literal["limit", "stop"] = "limit"
+    stop_price: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if self.qty <= 0:
+            raise ValueError("qty must be positive")
+        if self.order_type == "limit" and (self.limit_price is None or self.limit_price <= 0):
+            raise ValueError("limit orders need a positive limit_price")
+        if self.order_type == "stop":
+            # Stops exist only to protect long positions (long-only policy).
+            if self.side != "sell" or self.stop_price is None or self.stop_price <= 0:
+                raise ValueError("stop orders must be sells with a positive stop_price")
 
 
 @dataclass(frozen=True)
@@ -87,6 +101,8 @@ class BrokerGateway(Protocol):
     def list_open_orders(self) -> list[BrokerOrder]: ...
     def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None: ...
     def submit_limit_order(self, request: OrderRequest) -> BrokerOrder: ...
+    def submit_stop_order(self, request: OrderRequest) -> BrokerOrder: ...
+    def cancel_order(self, broker_order_id: str) -> None: ...
     def cancel_all_open_orders(self) -> list[str]: ...
 
 
@@ -123,9 +139,12 @@ def submit_idempotent(
         log.info("order_already_at_broker", client_order_id=request.client_order_id)
         return existing
 
+    submit = (
+        gateway.submit_stop_order if request.order_type == "stop" else gateway.submit_limit_order
+    )
     for attempt in range(2):
         try:
-            return gateway.submit_limit_order(request)
+            return submit(request)
         except DuplicateClientOrderId:
             found, _ = _lookup_with_backoff(
                 gateway, request.client_order_id, lookup_attempts, base_delay

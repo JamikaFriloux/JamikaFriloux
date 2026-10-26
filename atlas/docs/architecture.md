@@ -28,6 +28,14 @@ and only this container has them. If either exits, both stop and the container r
 Implemented in `atlas/core/execution/state_machine.py`; every transition writes an
 `order_events` row. Illegal transitions raise.
 
+## Trading flow (Phase 3)
+1. **After the close** (worker, 16:45 NY): the signal engine runs every non-retired strategy on stored daily bars for benchmarks and watchlist symbols in the universe. Signals are persisted with deterministic ids (`shadow` for RESEARCH strategies, `paper` for PAPER).
+2. **Next session** (executor, every 5 min): `core/execution/pipeline.py` evaluates each signal with live inputs through the risk engine (`core/risk/engine.py`). Every decision is stored in `risk_decisions`. Approved paper signals become orders (state machine + `submit_idempotent`). Shadow signals are never ordered.
+3. **Every minute** (executor, broker sync): reconcile with the broker, cancel orphaned protective stops, and place GTC protective stops for any filled quantity not yet covered.
+4. **Exits** cancel and confirm the protective stop, then sell with a limit order off the bid.
+
+The API and dashboard can read all of this but cannot create orders. Strategy promotion is admin-only and gated by validation reports (Phase 4).
+
 ## Idempotent submission
 `atlas/core/execution/broker.py::submit_idempotent`:
 1. Look up the client order id at the broker; if present, return it.

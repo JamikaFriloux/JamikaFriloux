@@ -20,7 +20,7 @@ export default async function OverviewPage() {
           <Stat label="Account equity" value={fmtUsd(a.equity)} sub={`as of ${fmtTime(a.as_of)}`} />
           <Stat label="Available cash" value={fmtUsd(a.cash)} sub={`Buying power ${fmtUsd(a.buying_power)}`} />
           <Stat label="Daily P&L" value={fmtUsd(a.day_pl, true)} tone={plTone(a.day_pl)} sub="vs. prior close" />
-          <Stat label="Total P&L" value={fmtUsd(a.total_pl, true)} tone={plTone(a.total_pl)} sub="vs. starting equity" />
+          <Stat label="Total P&L" value={fmtUsd(a.total_pl, true)} tone={plTone(a.total_pl)} sub={a.total_pl_since ? `since first broker sync ${fmtTime(a.total_pl_since)}` : "unavailable"} />
         </div>
       ) : (
         <EmptyState title="No broker data yet">

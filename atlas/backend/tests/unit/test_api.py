@@ -257,3 +257,107 @@ def test_universe_and_watchlist_endpoints(client, session_factory):
     assert view["benchmarks"] == ["SPY", "QQQ", "IWM", "DIA"]
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 204
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 404
+
+
+def test_trading_endpoints_and_gated_promotion(client, session_factory):
+    from datetime import date
+    from decimal import Decimal
+
+    from atlas.core.models.db import RiskDecision, SignalRecord
+
+    viewer, admin, operator = (
+        _auth(client, "viewer"),
+        _auth(client, "admin"),
+        _auth(client, "operator"),
+    )
+    strategies = client.get("/api/v1/strategies", headers=viewer).json()
+    assert {s["id"]: s["status"] for s in strategies} == {
+        "rsi_pullback": "RESEARCH",
+        "trend_breakout": "RESEARCH",
+    }
+    assert all(not s["can_submit_paper_orders"] for s in strategies)
+
+    body = {"status": "PAPER", "reason": "looks good", "password": PW}
+    url = "/api/v1/strategies/trend_breakout/status"
+    assert client.post(url, json=body, headers=operator).status_code == 403
+    assert client.post(url, json={**body, "password": "wrong"}, headers=admin).status_code == 403
+    r = client.post(url, json=body, headers=admin)
+    assert r.status_code == 409 and "validation report" in r.json()["detail"]
+    r = client.post(url, json={**body, "status": "RETIRED"}, headers=admin)
+    assert r.status_code == 200 and r.json()["status"] == "RETIRED"
+    assert (
+        client.post("/api/v1/strategies/nope/status", json=body, headers=admin).status_code == 404
+    )
+
+    with session_factory() as s:
+        s.add(
+            SignalRecord(
+                id="a" * 32,
+                strategy_id="rsi_pullback",
+                strategy_version="1.0.0",
+                symbol="AAA",
+                kind="entry",
+                side="buy",
+                as_of=date(2026, 10, 23),
+                ref_price=Decimal(100),
+                stop_price=Decimal(95),
+                reason={"rsi": 4.2},
+                mode="shadow",
+                status="SHADOWED",
+            )
+        )
+        s.add(
+            RiskDecision(
+                signal_id="a" * 32,
+                strategy_id="rsi_pullback",
+                symbol="AAA",
+                kind="entry",
+                mode="shadow",
+                approved=False,
+                failed=["earnings_blackout"],
+                checks=[],
+                capital_base=Decimal(10000),
+            )
+        )
+        s.commit()
+    sig = client.get("/api/v1/signals", headers=viewer).json()[0]
+    assert sig["symbol"] == "AAA" and sig["decision"]["failed"] == ["earnings_blackout"]
+    rej = client.get("/api/v1/risk-decisions?rejected_only=true", headers=viewer).json()
+    assert len(rej) == 1 and rej[0]["capital_base"] == "10000.000000"
+    assert client.get("/api/v1/orders", headers=viewer).json() == []
+    # No endpoint can create an order.
+    assert client.post("/api/v1/orders", json={}, headers=admin).status_code == 405
+
+
+def test_status_with_account_snapshots(client, session_factory):
+    """Regression: /status crashed (Decimal - float) once a broker snapshot existed."""
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    from atlas.core.models.db import AccountSnapshot
+
+    now = datetime.now(UTC)
+    with session_factory() as s:
+        for ts, eq in ((now - timedelta(days=3), "100000"), (now, "100250.50")):
+            s.add(
+                AccountSnapshot(
+                    ts=ts,
+                    source="alpaca_paper",
+                    is_paper=True,
+                    account_status="ACTIVE",
+                    equity=Decimal(eq),
+                    last_equity=Decimal("100100"),
+                    cash=Decimal(eq),
+                    buying_power=Decimal(eq),
+                    long_market_value=Decimal(0),
+                    trading_blocked=False,
+                    shorting_enabled=True,
+                )
+            )
+        s.commit()
+    r = client.get("/api/v1/status", headers=_auth(client, "viewer"))
+    assert r.status_code == 200, r.text
+    a = r.json()["account"]
+    assert Decimal(a["total_pl"]) == Decimal("250.50")  # vs first sync, not the policy budget
+    assert Decimal(a["day_pl"]) == Decimal("150.50")
+    assert Decimal(a["capital_base"]) == Decimal("10000") and a["shorting_enabled"] is True

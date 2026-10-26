@@ -15,6 +15,7 @@ flips the persisted flag and enqueues the follow-up job.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -99,8 +100,16 @@ def resume(
     log.warning("kill_switch_resumed", actor=actor)
 
 
+class OpenOrder(Protocol):
+    @property
+    def broker_order_id(self) -> str: ...
+    @property
+    def client_order_id(self) -> str: ...
+
+
 class BrokerControl(Protocol):
-    def cancel_all_open_orders(self) -> list[str]: ...
+    def list_open_orders(self) -> Sequence[OpenOrder]: ...
+    def cancel_order(self, broker_order_id: str) -> None: ...
 
 
 class Notifier(Protocol):
@@ -110,6 +119,7 @@ class Notifier(Protocol):
 @dataclass
 class KillSwitchReport:
     cancelled_order_ids: list[str] = field(default_factory=list)
+    kept_order_ids: list[str] = field(default_factory=list)
     reconciled: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -119,13 +129,28 @@ def execute_engagement_actions(
     broker: BrokerControl,
     reconcile: object,
     notifier: Notifier,
+    keep_client_order_ids: frozenset[str] = frozenset(),
 ) -> KillSwitchReport:
-    """Run steps 2-4. Each step is attempted even if an earlier one fails."""
+    """Run steps 2-4. Each step is attempted even if an earlier one fails.
+
+    ``keep_client_order_ids`` are protective stops on open positions. They stay at the broker:
+    the kill switch does not liquidate, so cancelling them would leave positions unprotected.
+    """
     report = KillSwitchReport()
     try:
-        report.cancelled_order_ids = broker.cancel_all_open_orders()
+        open_orders = list(broker.list_open_orders())
     except Exception as exc:  # broker errors must not stop reconciliation/alerting
+        open_orders = []
         report.errors.append(f"cancel failed: {type(exc).__name__}")
+    for o in open_orders:
+        if o.client_order_id in keep_client_order_ids:
+            report.kept_order_ids.append(o.broker_order_id)
+            continue
+        try:
+            broker.cancel_order(o.broker_order_id)
+            report.cancelled_order_ids.append(o.broker_order_id)
+        except Exception as exc:
+            report.errors.append(f"cancel {o.client_order_id} failed: {type(exc).__name__}")
     try:
         if callable(reconcile):
             reconcile()
@@ -139,6 +164,7 @@ def execute_engagement_actions(
         action="kill_switch.actions",
         details={
             "cancelled": report.cancelled_order_ids,
+            "kept_protective_stops": report.kept_order_ids,
             "reconciled": report.reconciled,
             "errors": report.errors,
         },
@@ -147,6 +173,7 @@ def execute_engagement_actions(
         "[PAPER] KILL SWITCH ENGAGED\n"
         f"Reason: {row.reason}\nBy: {row.engaged_by}\n"
         f"Cancelled orders: {len(report.cancelled_order_ids)}\n"
+        f"Protective stops kept: {len(report.kept_order_ids)}\n"
         f"Reconciled: {report.reconciled}\n"
         + (f"Errors: {'; '.join(report.errors)}\n" if report.errors else "")
         + "New orders are disabled. Positions were NOT liquidated. "

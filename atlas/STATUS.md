@@ -1,13 +1,14 @@
 # ATLAS project status
 
-_Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked by this environment's network policy)._
+_Last updated: 2026-10-26 — Phase 3 trading engine built. Paper orders are gated until Phase 4 validation (by design)._
 
 | Phase | State |
 |---|---|
 | 1 Foundation | **Complete** |
 | 2 Market data | **Built; one live check outstanding**: Alpaca paper connectivity verified live (`check_alpaca` passes). Daily and minute bar ingestion with stored quality reports is built and tested live. The live WebSocket stream is built and tested against a local fake server, but not yet against Alpaca (this environment blocks the stream host). The universe screen with point-in-time snapshots, watchlist management and the Live Trading dashboard are built and tested live |
-| 3 Trading engine | Partially pre-built: order state machine, idempotent submission, kill switch. No strategies, signal engine or risk engine yet |
-| 4–8 | Not started |
+| 3 Trading engine | **Built**: indicators, strategy framework with 2 baseline strategies, signal engine, deterministic risk engine with sizing, signal→order pipeline, broker-side protective stops, exits, dashboard. Strategies run in RESEARCH (shadow); paper orders start only after a strategy passes Phase 4 validation |
+| 4 Backtesting & promotion gates | Not started (ADR 0003) |
+| 5–8 | Not started |
 
 ## Implemented and tested
 - Config: typed settings split by trust boundary; `config/policy.yaml` checked against hard ceilings in code; policy SHA-256 written to the audit log on every start.
@@ -42,6 +43,36 @@ _Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked
   - There is no manual order entry; orders arrive with the Phase 3 signal and risk engines.
   - New route handlers (`/api/live`, `/api/universe`, `/api/watchlists[/name]`) go through a shared `lib/proxy.ts` that adds the httpOnly session token and requires same-origin requests for writes. The API enforces roles.
 - `/health/ready` reports each service's own status (ok/degraded/error). The 3-minute staleness rule applies only to continuously reporting services (worker, executor, broker, stream). Before, a failing stream read as "ok" and scheduled jobs read as "stale" between runs.
+- **Phase 3, trading engine.** Everything below is deterministic; no LLM touches it.
+  - Indicators (`core/indicators`): SMA, EMA, Wilder ATR and RSI, rolling highs/lows. Values are `None` until fully warmed up.
+  - Strategies (`core/strategies`):
+    - Each one is a pure function of (bars up to the close of `as_of`, the strategy's own position), so the Phase 4 backtester can run the same code.
+    - The framework skips a symbol, with the reason recorded, when its history is short, it has no bar for the session, or its data fails validation.
+    - Every entry needs a stop below the close. Signal ids are deterministic.
+    - Baselines (both hypotheses, starting in RESEARCH):
+      - `trend_breakout` v1.0.0: 55-day breakout above the 200-day SMA, 2×ATR stop, exit on a 20-day low.
+      - `rsi_pullback` v1.0.0: RSI(2) < 10 above the 200-day SMA, 2.5×ATR stop, exit above the 5-day SMA or after 10 sessions.
+  - Registry and lifecycle: the `strategies` table, synced from code. Only admins change status (password re-entry, audited).
+    - RESEARCH→PAPER and PAPER→LIVE_CANDIDATE require a passing validation report for the exact version. Phase 4 produces those, so promotion is refused until then.
+    - A code or parameter change sends a strategy back to RESEARCH.
+  - Signal engine (worker, 16:45 NY): runs every active strategy on stored daily bars for benchmarks and watchlist symbols in the universe. RESEARCH signals are `shadow`; PAPER signals are orderable.
+  - Risk engine (`core/risk/engine.py`): one pure function that records every check, approved or not, in `risk_decisions`.
+    - Capital base = min(broker equity, policy `starting_equity_usd`).
+    - Entry checks: kill switch, strategy status, fresh account snapshot (≤3 min, no future timestamps), account not blocked, **broker-side shorting disabled**, entry window, universe membership and freshness, earnings blackout (**fails closed: no earnings data source yet**), fresh two-sided quote, spread ≤ 25 bps, no existing exposure, daily loss and drawdown (in dollars of the capital base), concurrent positions, trades per day, and a stop below the limit price.
+    - Sizing is the minimum of: risk per trade (with stop slippage), position allocation, order notional, gross exposure, cash buffer, and the sector budget (unknown sectors pooled into one sector).
+    - Exits are blocked only by the kill switch, account problems, a closed market or a missing price.
+  - Pipeline (executor, every 5 minutes in session): acts only on the previous session's signals; older ones expire.
+    - A rejection caused only by missing or stale data (quote, account, entry window) is retried until the window closes; anything else is a final rejection.
+    - Shadow signals get their decision recorded and are never ordered. Approved paper signals go through the state machine (CANDIDATE→VALIDATED→RISK_APPROVED) and `submit_idempotent`, with a final kill-switch check just before submission.
+    - Client order ids come from the signal, so a rerun can't double-submit. Each signal commits separately.
+  - Protection (each broker sync): every filled entry gets a **GTC broker-side stop** at the signal's stop price, covering partial fills. The stop is re-placed if an exit fails.
+    - Stops covering more than is held are cancelled. Alpaca accepts stop-sells without a position (verified live), and one could open a short.
+    - Protective stops may be placed, and are kept, while the kill switch is engaged: they reduce risk, and the kill switch never liquidates.
+    - Exits cancel the stop and confirm the cancel before selling. If the stop filled first, the exit is skipped.
+  - Kill switch now cancels open orders one by one and **keeps protective stops**.
+  - Daily bars now come from **SIP** (consolidated, with a 16-minute free-plan delay), so strategies see real highs, lows and volume, not IEX-only prints.
+  - API: `/api/v1/strategies` (+ admin status change), `/signals`, `/risk-decisions`, `/orders`. No endpoint can create an order.
+  - Dashboard: Strategy Lab (strategies, params, status control, signals), Live Trading (signals and paper orders), Risk Center (recent rejections, capital base).
 - REST minute ingestion now resumes from its own coverage (rows with its source), so a gap the stream missed during a disconnect is backfilled.
 - Data prep: NYSE (XNYS) calendar covering holidays, early closes and DST; bar validation (ordering, duplicates, OHLC consistency, stale data, gaps, future timestamps, extreme moves); Alpaca bar adapter.
 - Integrations: Telegram notifier (redaction, dedupe, per-event preferences); provider-agnostic LLM interface with an Anthropic structured-output adapter and an untrusted-content policy.
@@ -50,8 +81,8 @@ _Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-25)
-- Backend: **215 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
-- Migrations 0002 and 0003: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
+- Backend: **282 passed, 0 failed** (unit, failure scenarios, PostgreSQL integration). Phase 3 adds tests for indicators (hand-computed values), strategies and the registry, the risk engine (each rule failing alone), the signal engine, and the order pipeline against the FakeBroker (approvals, shadow mode, transient vs final rejections, broker rejection, lost response, protective stops, orphan stops, exits, kill switch). Stream client tests run against a local fake of Alpaca's WebSocket protocol and cover auth, subscribe, parsing, drop and reconnect, growing backoff, 402/405/406, the watchdog, and live subscription changes.
+- Migrations 0002–0004: upgrade, downgrade and upgrade again on PostgreSQL 16; `alembic check` finds no drift between models and schema.
 - **Live Alpaca paper (2026-10-25):** `check_alpaca` passed all 5 checks (paper endpoint, ACTIVE paper account, clock, 22-session calendar cross-check against XNYS, SPY daily bars validated). Live ingestion into PostgreSQL: 1,100 daily bars and 4,312 regular-hours minute bars across 4 symbols, all OK and none stale. An immediate re-run fetched incrementally (4 bars rewritten).
 - `ruff check`, `ruff format --check`, `mypy atlas`: clean. `pip-audit`: no known vulnerabilities.
 - Dashboard: `tsc --noEmit` and `next build` pass.
@@ -70,7 +101,23 @@ _Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked
   - executor without credentials fails safely and reports broker `error`
 
 ## Not tested / known limitations
+- **Phase 3 live checks (2026-10-26):**
+  - **Data:** SIP daily ingestion for 41 symbols (11,093 bars, none stale).
+  - **Signals:** the engine ran on the 2026-10-23 close in 0.6 s. RSI(2) pullback gave entries on AMZN, META and SNDK (META checked by hand: RSI 2.75, close above the 200-SMA, stop = close − 2.5×ATR). SPCX was correctly skipped for short history; there were no breakouts.
+  - **Order round trip on the Alpaca paper account:** a non-marketable limit buy (1 SPY at $100) was submitted, resubmitting returned the same order, a lookup by client id worked, and the cancel was confirmed. The account ended with no orders or positions.
+  - **Found live:** Alpaca accepted a GTC stop-sell with no position (it was cancelled). That led to the orphan-stop cleanup and the broker long-only check.
+  - **Broker sync:** snapshots now record `shorting_enabled=true, multiplier=4` for this account.
+  - **Playwright:** 14/14 Phase 3 checks (Strategy Lab with the real signals, refused promotion with its reason, signals and orders on Live Trading, rejections on Risk Center, viewer restrictions, no horizontal scroll at 390 px). The 26/26 Phase 2 Live Trading checks still pass.
+  - **Not yet run:** shadow risk evaluation of those signals in a live session. It runs from 09:35 on the next session; the market was closed.
 - **Live universe (2026-10-25):** 14,398 active assets → 2,684 members (as of 2026-10-23) in 26 s. Exclusions: 7,045 below the dollar-volume minimum, 3,364 below $10, 894 not tradable, 308 OTC, 96 too little history, 5 no print on `as_of`, 2 no data. Lowest member close is $10.00 and lowest dollar volume $20.0M, exactly at the policy limits. A watchlist with an OTC symbol was rejected with its reason; a valid one was created and audited, and ingestion and the stream picked up its symbols.
+- **No strategy can place paper orders yet.** That's by design: promotion needs Phase 4 validation reports. Even then, with the current policy and account, every entry is rejected for two reasons:
+  - **No earnings calendar:** `block_entries_before_earnings_days: 2` with no data source fails closed. Fix: add an earnings data source (needs a provider and API key), or set the value to 0 in a reviewed policy change.
+  - **The paper account allows shorting** (and 4× margin): see Required user action.
+- RESEARCH strategies have no simulated positions, so shadow mode records entries but never exits. Shadow performance belongs to the Phase 4 backtester.
+- No sector data: all holdings share one 25% "unknown sector" budget, which effectively caps gross exposure at 25% (policy allows 50%).
+- Protective stops are GTC; the policy's `order_time_in_force: day` applies to entries and exits. A GTC stop protects across sessions, but gaps through the stop fill at the open price.
+- Strategies use daily bars only; intraday bars and quotes are used for execution checks, not signals.
+- `/status` crashed with a 500 once any account snapshot existed (Decimal − float), and its total P/L compared equity to the policy budget (it would have shown +$90,000 on this account). Fixed: total P/L is now measured from ATLAS's first broker sync.
 - **The live stream has not connected to Alpaca.** This environment's network policy denies `stream.data.alpaca.markets` (403 from the egress proxy). Checked live with real Postgres, Redis and Celery: the executor launcher starts the worker and stream, the stream backs off correctly while blocked, the heartbeat and Redis status report `error` with the cause, `/api/v1/market/live` reports it (no invented quotes), and SIGTERM shuts down cleanly with exit 0. First live check once the host is allowed: Alpaca's 24/7 test feed (`feed="test"`, symbol `FAKEPACA`), then the IEX feed during market hours.
 - Order submission has not been exercised against Alpaca. Only read paths (account, clock, calendar, bars) have been run live.
 - The free IEX feed has gaps in thinly traded names (e.g. DIA: about 500 of 1,200 session minutes missing). These are reported as `missing_bars` warnings, not critical issues. Use the SIP feed if minute completeness matters.
@@ -93,6 +140,15 @@ _Last updated: 2026-10-25 — Phase 2 complete except a live stream run (blocked
 
 Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX during market hours) once `stream.data.alpaca.markets` is allowed.
 
+## Next engineering tasks (Phase 4)
+1. Event-driven backtester in `core/backtesting` reusing the strategy, sizing and risk-engine code, with cost, spread, slippage, gap and partial-fill models (ADR 0003).
+2. Walk-forward and out-of-sample validation, parameter-stability screens, and validation reports that `passing_validation_report()` can accept, which unlocks gated promotion.
+3. Simulated positions for shadow strategies, so they can be compared like for like with backtests.
+4. Earnings calendar and sector classification sources (both currently fail closed).
+
 ## Required user action
 - Alpaca paper keys: in place and verified. For Docker, make sure they are in `atlas/broker.env` (never in chat or git).
+- **Disable shorting and margin on the Alpaca paper account.** The policy is long-only with no margin, and ATLAS rejects entries until the broker enforces it too: Alpaca dashboard → paper account → Configure, or `PATCH /v2/account/configurations` with `{"no_shorting": true, "max_margin_multiplier": "1"}`. `check_alpaca` reports the current setting.
+- Decide on earnings data: connect a provider (needs an API key), or set `block_entries_before_earnings_days: 0` in a reviewed policy change.
+- Optional: the paper account holds $100,000 while the policy budget is $10,000. ATLAS sizes to $10,000 either way. You could reset the paper account to $10,000 in Alpaca, or raise `starting_equity_usd` in a reviewed policy change.
 - Optional: Telegram bot token and chat id in `atlas/.env`; Anthropic key in `atlas/llm.env`.

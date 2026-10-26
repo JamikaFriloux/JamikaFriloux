@@ -12,6 +12,7 @@ from atlas.core.data.universe import AssetInfo
 from atlas.core.execution.broker import (
     AccountInfo,
     BrokerOrder,
+    BrokerRejected,
     DuplicateClientOrderId,
     OrderRequest,
     PositionInfo,
@@ -40,6 +41,8 @@ class FakeBroker:
         self.on_lookup: list[Callable[[str], None]] = []
         self.accept_then_fail = False  # simulate "accepted but response lost"
         self.cancel_error: Exception | None = None
+        self.cancelled: list[str] = []
+        self.requests: dict[str, OrderRequest] = {}
 
     def get_account(self) -> AccountInfo:
         return self.account
@@ -76,9 +79,25 @@ class FakeBroker:
             filled_avg_price=None,
         )
         self.orders[request.client_order_id] = order
+        self.requests[request.client_order_id] = request
         if hook is not None and self.accept_then_fail:
             hook(request)
         return order
+
+    def submit_stop_order(self, request: OrderRequest) -> BrokerOrder:
+        return self.submit_limit_order(request)  # same bookkeeping; type is on the request
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        if self.cancel_error:
+            raise self.cancel_error
+        for cid, o in list(self.orders.items()):
+            if o.broker_order_id == broker_order_id:
+                if o.status not in ("new", "accepted", "partially_filled"):
+                    raise BrokerRejected(f"order {cid} is {o.status}")
+                self.orders[cid] = BrokerOrder(**{**o.__dict__, "status": "canceled"})
+                self.cancelled.append(cid)
+                return
+        raise BrokerRejected(f"unknown order {broker_order_id}")
 
     def cancel_all_open_orders(self) -> list[str]:
         if self.cancel_error:

@@ -70,6 +70,19 @@ celery_app.conf.update(
             "schedule": crontab(minute="*/5", hour="9-16", day_of_week="mon-fri"),
             "options": {"expires": 240},
         },
+        # After the 16:20 daily ingestion: strategies run on the day's bars.
+        "generate-signals": {
+            "task": "atlas.worker.generate_signals",
+            "schedule": crontab(hour=16, minute=45, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
+        # During the session: act on the previous close's signals (the risk engine enforces
+        # the entry window; transient rejections are retried on the next run).
+        "execute-signals": {
+            "task": "atlas.execution.execute_signals",
+            "schedule": crontab(minute="*/5", hour="9-15", day_of_week="mon-fri"),
+            "options": {"expires": 240},
+        },
         "premarket-readiness": {
             "task": "atlas.worker.premarket_readiness",
             "schedule": crontab(hour=8, minute=30, day_of_week="mon-fri"),

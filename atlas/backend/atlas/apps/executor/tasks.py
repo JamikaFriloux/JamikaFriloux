@@ -8,6 +8,8 @@ ALPACA_* environment variables.
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
@@ -32,10 +34,17 @@ from atlas.core.data.universe import (
     build_universe_snapshot,
 )
 from atlas.core.execution.broker import BrokerGateway
+from atlas.core.execution.pipeline import ExecutionDeps, process_pending_signals
+from atlas.core.execution.protection import (
+    cancel_orphan_stops,
+    ensure_protection,
+    protective_stop_ids,
+)
 from atlas.core.execution.reconciliation import reconcile
 from atlas.core.models.session import session_scope
 from atlas.core.observability.logging import get_logger
 from atlas.core.risk import kill_switch
+from atlas.core.risk.engine import QuoteState
 from atlas.integrations.telegram.notifier import Event, build_notifier
 
 log = get_logger(__name__)
@@ -59,12 +68,14 @@ def _run_ingestion(timeframe: Timeframe, now: datetime) -> dict[str, object]:
     settings = get_settings()
     if timeframe == "1Day":
         lookback, incremental = timedelta(days=settings.ingest_daily_lookback_days), False
+        # Consolidated (SIP) daily bars; the free plan serves SIP only up to 15 minutes ago.
+        now = now - timedelta(minutes=16)
     else:
         lookback, incremental = timedelta(days=settings.ingest_minute_lookback_days), True
     tolerance = timedelta(seconds=get_policy().policy.data_quality.max_bar_age_seconds)
     service = f"ingest_{timeframe.lower()}"
     try:
-        source = get_market_data()
+        source = get_sip_bar_source() if timeframe == "1Day" else get_market_data()
         with session_scope() as s:
             result: IngestionResult = ingest_bars(
                 s,
@@ -98,8 +109,9 @@ def _run_ingestion(timeframe: Timeframe, now: datetime) -> dict[str, object]:
 
 
 @lru_cache(maxsize=1)
-def get_universe_bar_source() -> BarSource:
-    """Consolidated (SIP) daily bars: IEX volume alone would understate dollar volume ~30x."""
+def get_sip_bar_source() -> BarSource:
+    """Consolidated (SIP) bars. IEX alone is a few percent of volume and its highs/lows come
+    only from IEX prints, so daily bars (strategies, universe) use the consolidated tape."""
     from atlas.integrations.alpaca.market_data import AlpacaMarketData
 
     return AlpacaMarketData.from_settings(BrokerSettings(), feed="sip")  # type: ignore[call-arg]
@@ -110,7 +122,7 @@ def refresh_universe(force: bool = False) -> dict[str, object]:
     now = datetime.now(UTC)
     try:
         gateway = get_gateway()
-        source = get_universe_bar_source()
+        source = get_sip_bar_source()
         with session_scope() as s:
             snap, created = build_universe_snapshot(
                 s,
@@ -173,6 +185,19 @@ def broker_sync() -> dict[str, object]:
         gateway = get_gateway()
         with session_scope() as s:
             report = reconcile(s, gateway)
+            orphans = cancel_orphan_stops(s, gateway)
+            if orphans:
+                log.warning("orphan_stops_cancelled", orders=orphans)
+            protection = ensure_protection(s, gateway, datetime.now(UTC))
+            for act in protection:
+                log.info(
+                    "protective_stop",
+                    symbol=act.symbol,
+                    strategy=act.strategy_id,
+                    qty=str(act.qty),
+                    stop=str(act.stop_price),
+                    outcome=act.outcome,
+                )
             beat(
                 s,
                 "broker",
@@ -218,6 +243,72 @@ def kill_switch_actions(self: Task) -> dict[str, object]:
         raise self.retry(exc=exc) from exc
     with session_scope() as s:
         result = kill_switch.execute_engagement_actions(
-            s, gateway, reconcile=lambda: reconcile(s, gateway), notifier=build_notifier()
+            s,
+            gateway,
+            reconcile=lambda: reconcile(s, gateway),
+            notifier=build_notifier(),
+            keep_client_order_ids=protective_stop_ids(s),
         )
     return {"cancelled": result.cancelled_order_ids, "errors": result.errors}
+
+
+def quote_provider() -> Callable[[str], QuoteState | None]:
+    """Latest quote: the stream's Redis cache if fresh, else Alpaca's REST latest quote."""
+    import redis
+
+    from atlas.core.data.live import LiveStore
+
+    settings = get_settings()
+    max_age = get_policy().policy.data_quality.max_quote_age_seconds
+    store = LiveStore(redis.Redis.from_url(settings.redis_url, socket_timeout=2))
+    md = get_market_data()
+
+    def quote_for(symbol: str) -> QuoteState | None:
+        try:
+            snap = store.read([symbol]).get(symbol)
+        except Exception:
+            snap = None
+        if snap is not None and snap.quote is not None:
+            age = (datetime.now(UTC) - snap.quote.ts).total_seconds()
+            if age <= max_age:
+                return QuoteState(bid=snap.quote.bid, ask=snap.quote.ask, ts=snap.quote.ts)
+        try:
+            return md.latest_quote(symbol)  # type: ignore[attr-defined]
+        except Exception as exc:
+            log.warning("latest_quote_failed", symbol=symbol, error=type(exc).__name__)
+            return None
+
+    return quote_for
+
+
+@celery_app.task(name="atlas.execution.execute_signals", soft_time_limit=240, time_limit=300)
+def execute_signals() -> dict[str, object]:
+    now = datetime.now(UTC)
+    cal = MarketCalendar()
+    if not cal.is_open(now):
+        return {"ok": True, "skipped": "market closed"}
+    try:
+        deps = ExecutionDeps(gateway=get_gateway(), quote_for=quote_provider())
+        with session_scope() as s:
+            outcomes = process_pending_signals(
+                s, deps, now=now, policy=get_policy().policy, calendar=cal
+            )
+            summary = Counter(f"{o.mode}:{o.status}" for o in outcomes)
+            beat(s, "execution", "ok", **dict(summary))
+    except Exception as exc:
+        log.error("execute_signals_failed", error=type(exc).__name__)
+        with session_scope() as s:
+            beat(s, "execution", "error", error=type(exc).__name__)
+        build_notifier().notify(
+            Event.CRITICAL_ERROR,
+            f"[PAPER TRADING] Signal execution failed: {type(exc).__name__}",
+        )
+        return {"ok": False, "error": type(exc).__name__}
+    for o in outcomes:
+        if o.mode == "paper" and o.status in ("ORDERED", "REJECTED"):
+            build_notifier().notify(
+                Event.ORDER_SUBMITTED,
+                f"[PAPER TRADING] {o.kind} {o.symbol}: {o.status}"
+                + (f" ({', '.join(o.failed)})" if o.failed else ""),
+            )
+    return {"ok": True, **dict(summary)}

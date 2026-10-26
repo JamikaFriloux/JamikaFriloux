@@ -16,7 +16,7 @@ import requests
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest
+from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, StopOrderRequest
 
 from atlas.core.configuration.settings import PAPER_TRADING_BASE_URL, BrokerSettings
 from atlas.core.data.universe import AssetInfo
@@ -41,6 +41,10 @@ class LiveEnvironmentDetected(RuntimeError):
 
 def _d(value: Any) -> Decimal:
     return Decimal(str(value)) if value is not None else Decimal(0)
+
+
+def _opt_bool(v: Any) -> bool | None:
+    return None if v is None else bool(v)
 
 
 def _translate(exc: Exception) -> BrokerError:
@@ -114,6 +118,8 @@ class AlpacaPaperGateway:
             long_market_value=_d(a.long_market_value),
             trading_blocked=bool(a.trading_blocked or a.account_blocked),
             is_paper=str(a.account_number).upper().startswith("PA"),
+            shorting_enabled=_opt_bool(getattr(a, "shorting_enabled", None)),
+            margin_multiplier=_d(m) if (m := getattr(a, "multiplier", None)) is not None else None,
         )
 
     def list_positions(self) -> list[PositionInfo]:
@@ -146,18 +152,36 @@ class AlpacaPaperGateway:
             raise _translate(exc) from exc
 
     def submit_limit_order(self, request: OrderRequest) -> BrokerOrder:
-        if request.side not in ("buy", "sell"):
-            raise BrokerRejected("invalid side")
+        if request.side not in ("buy", "sell") or request.limit_price is None:
+            raise BrokerRejected("invalid limit order")
         req = LimitOrderRequest(
             symbol=request.symbol,
             qty=float(request.qty),
             side=OrderSide.BUY if request.side == "buy" else OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=TimeInForce.GTC if request.time_in_force == "gtc" else TimeInForce.DAY,
             limit_price=float(request.limit_price),
             client_order_id=request.client_order_id,
             extended_hours=False,
         )
         return _order(self._call(self._client.submit_order, req))
+
+    def submit_stop_order(self, request: OrderRequest) -> BrokerOrder:
+        """Protective stop (sell) for a long position. GTC so it survives overnight."""
+        if request.order_type != "stop" or request.side != "sell" or request.stop_price is None:
+            raise BrokerRejected("invalid stop order")
+        req = StopOrderRequest(
+            symbol=request.symbol,
+            qty=float(request.qty),
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC if request.time_in_force == "gtc" else TimeInForce.DAY,
+            stop_price=float(request.stop_price),
+            client_order_id=request.client_order_id,
+            extended_hours=False,
+        )
+        return _order(self._call(self._client.submit_order, req))
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        self._call(self._client.cancel_order_by_id, broker_order_id)
 
     def cancel_all_open_orders(self) -> list[str]:
         responses = self._call(self._client.cancel_orders) or []

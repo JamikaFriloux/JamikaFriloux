@@ -26,13 +26,14 @@ def _patched(session_factory, source, notifier):
     return (
         patch.object(tasks, "session_scope", scope),
         patch.object(tasks, "get_market_data", (lambda: source) if source else no_source),
+        patch.object(tasks, "get_sip_bar_source", (lambda: source) if source else no_source),
         patch.object(tasks, "build_notifier", lambda: notifier),
     )
 
 
 def _run(session_factory, source, notifier):
-    p1, p2, p3 = _patched(session_factory, source, notifier)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patched(session_factory, source, notifier)
+    with p1, p2, p3, p4:
         return tasks._run_ingestion("1Day", NOW)
 
 

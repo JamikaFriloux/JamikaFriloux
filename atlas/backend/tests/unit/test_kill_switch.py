@@ -73,9 +73,43 @@ def test_engagement_actions_cancel_reconcile_alert(db):
 
 
 def test_engagement_actions_continue_after_cancel_failure(db):
+    from decimal import Decimal
+
+    from atlas.core.execution.broker import OrderRequest
+
     broker = FakeBroker()
+    broker.submit_limit_order(OrderRequest("c1", "SPY", "buy", Decimal(1), Decimal(1)))
     broker.cancel_error = TimeoutError()
     notifier = RecordingNotifier()
     report = kill_switch.execute_engagement_actions(db, broker, lambda: None, notifier)
     assert report.errors and report.reconciled
     assert notifier.messages, "operator must still be alerted"
+
+
+def test_engagement_keeps_protective_stops(db):
+    from decimal import Decimal
+
+    from atlas.core.execution.broker import OrderRequest
+
+    broker = FakeBroker()
+    broker.submit_limit_order(OrderRequest("entry1", "SPY", "buy", Decimal(1), Decimal(1)))
+    broker.submit_stop_order(
+        OrderRequest(
+            "stop1",
+            "AAPL",
+            "sell",
+            Decimal(5),
+            None,
+            time_in_force="gtc",
+            order_type="stop",
+            stop_price=Decimal(90),
+        )
+    )
+    notifier = RecordingNotifier()
+    report = kill_switch.execute_engagement_actions(
+        db, broker, lambda: None, notifier, keep_client_order_ids=frozenset({"stop1"})
+    )
+    assert broker.cancelled == ["entry1"]
+    assert broker.orders["stop1"].status == "new"  # the position stays protected
+    assert len(report.kept_order_ids) == 1
+    assert "Protective stops kept: 1" in notifier.messages[0][0]

@@ -2,15 +2,19 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
 import { QuoteBoard, type QuoteGroup } from "@/components/live/quote-board";
 import { WatchlistEditor } from "@/components/live/watchlist-editor";
-import { getLiveMarket, getMe, getStatus, getUniverseSummary, getWatchlists } from "@/lib/api";
+import { OrdersTable } from "@/components/trading/orders-table";
+import { SignalsTable } from "@/components/trading/signals-table";
+import { getLiveMarket, getMe, getOrders, getSignals, getStatus, getUniverseSummary, getWatchlists } from "@/lib/api";
 
 export default async function LiveTradingPage() {
-  const [market, lists, universe, status, me] = await Promise.all([
+  const [market, lists, universe, status, me, signals, orders] = await Promise.all([
     getLiveMarket(),
     getWatchlists(),
     getUniverseSummary(),
     getStatus(),
     getMe(),
+    getSignals(15),
+    getOrders(15),
   ]);
   const snap = universe.snapshot;
   const groups: QuoteGroup[] = [
@@ -38,13 +42,18 @@ export default async function LiveTradingPage() {
       </PageHeader>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <QuoteBoard initial={market} groups={groups} positions={status.positions} />
+        <div className="min-w-0 space-y-4">
+          <QuoteBoard initial={market} groups={groups} positions={status.positions} />
+          <SignalsTable signals={signals} />
+          <OrdersTable orders={orders} />
+        </div>
         <div className="space-y-4">
           <WatchlistEditor data={lists} canEdit={me.role === "operator" || me.role === "admin"} />
           <div className="rounded-xl border border-dashed border-line bg-panel/50 px-5 py-4 text-xs text-muted">
-            <div className="mb-1 text-sm font-medium text-fg">Orders and signals: Phase 3</div>
-            There is no manual order entry. Paper orders will come only from the deterministic signal engine, through
-            the risk engine and order state machine. Their activity will appear here.
+            <div className="mb-1 text-sm font-medium text-fg">How orders happen</div>
+            There is no manual order entry. Strategies run after each close; during the next session the executor
+            risk-checks each signal with live data. Only PAPER strategies can submit, through the order state machine,
+            and every filled entry gets a broker-side protective stop.
           </div>
         </div>
       </div>

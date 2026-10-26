@@ -53,6 +53,8 @@ def reconcile(
             buying_power=account.buying_power,
             long_market_value=account.long_market_value,
             trading_blocked=account.trading_blocked,
+            shorting_enabled=account.shorting_enabled,
+            margin_multiplier=account.margin_multiplier,
         )
     )
     report.account_equity = str(account.equity)

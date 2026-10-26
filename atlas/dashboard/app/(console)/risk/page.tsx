@@ -2,7 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KillSwitchControl } from "@/components/kill-switch-control";
 import { PageHeader } from "@/components/page-header";
-import { getMe, getStatus } from "@/lib/api";
+import { getMe, getRiskDecisions, getStatus } from "@/lib/api";
+import { checkLabel } from "@/components/trading/labels";
 import { fmtTime, fmtUsd } from "@/lib/utils";
 
 const LIMIT_LABELS: Record<string, [string, string]> = {
@@ -19,7 +20,7 @@ const LIMIT_LABELS: Record<string, [string, string]> = {
 };
 
 export default async function RiskPage() {
-  const [s, me] = await Promise.all([getStatus(), getMe()]);
+  const [s, me, rejections] = await Promise.all([getStatus(), getMe(), getRiskDecisions(true, 12)]);
   const ks = s.kill_switch;
   const a = s.account;
   const limits = s.policy.limits;
@@ -64,16 +65,37 @@ export default async function RiskPage() {
             <Meter label="Daily loss limit" value={dailyUse} />
             <Meter label="Gross exposure limit" value={grossUse} />
             <p className="text-xs text-muted">
-              {a ? `Based on broker sync at ${fmtTime(a.as_of)}.` : "Unavailable until the first broker sync."} Drawdown and sector
-              exposure tracking arrive with the risk engine (Phase 3).
+              {a ? `Based on broker sync at ${fmtTime(a.as_of)}.` : "Unavailable until the first broker sync."} The risk engine
+              sizes and limits against a capital base of min(broker equity, policy starting equity). Sector data isn&apos;t
+              available yet, so all holdings share one sector budget.
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Risk rejections</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Risk rejections</CardTitle>
+            <span className="text-[11px] text-muted">latest {rejections.length}</span>
+          </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted">No trade proposals exist yet. Rejections will be listed here once strategies run (Phase 3).</p>
+            {rejections.length === 0 ? (
+              <p className="text-sm text-muted">No rejections recorded. Signals are evaluated during the session after they are generated.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {rejections.map((d) => (
+                  <li key={d.id} className="border-t border-line pt-2 first:border-t-0 first:pt-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span>
+                        <span className="font-medium">{d.symbol}</span> <span className="text-muted">{d.kind} · {d.strategy_id}</span>
+                        {d.mode === "shadow" ? <Badge tone="neutral" className="ml-2">shadow</Badge> : null}
+                      </span>
+                      <span className="text-[11px] text-muted">{fmtTime(d.ts)}</span>
+                    </div>
+                    <div className="text-xs text-loss">{d.failed.map(checkLabel).join(", ")}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>

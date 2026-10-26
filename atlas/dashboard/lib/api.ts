@@ -26,7 +26,10 @@ export type SystemStatus = {
     buying_power: string;
     long_market_value: string;
     day_pl: string;
-    total_pl: string;
+    total_pl: string | null;
+    total_pl_since: string | null;
+    capital_base: string;
+    shorting_enabled: boolean | null;
     trading_blocked: boolean;
   };
   positions: {
@@ -106,6 +109,69 @@ export type UniverseSummary = {
   }[];
 };
 
+export type StrategyRow = {
+  id: string;
+  version: string;
+  status: "RESEARCH" | "PAPER" | "LIVE_CANDIDATE" | "RETIRED";
+  description: string | null;
+  lookback_sessions: number | null;
+  params: Record<string, number | string | boolean>;
+  updated_at: string | null;
+  updated_by: string;
+  signals: number;
+  can_submit_paper_orders: boolean;
+};
+
+export type SignalRow = {
+  id: string;
+  strategy_id: string;
+  strategy_version: string;
+  symbol: string;
+  kind: "entry" | "exit";
+  as_of: string;
+  ref_price: string | null;
+  stop_price: string | null;
+  mode: "shadow" | "paper";
+  status: string;
+  reason: Record<string, unknown>;
+  decision: null | { approved: boolean; failed: string[]; qty: string | null; limit_price: string | null; ts: string | null };
+};
+
+export type RiskDecisionRow = {
+  id: number;
+  ts: string | null;
+  signal_id: string | null;
+  strategy_id: string;
+  symbol: string;
+  kind: string;
+  mode: string;
+  approved: boolean;
+  qty: string | null;
+  limit_price: string | null;
+  capital_base: string | null;
+  failed: string[];
+  checks: { name: string; passed: boolean; detail: string }[];
+};
+
+export type OrderRow = {
+  client_order_id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  purpose: string | null;
+  qty: string | null;
+  limit_price: string | null;
+  stop_price: string | null;
+  time_in_force: string;
+  state: string;
+  filled_qty: string | null;
+  filled_avg_price: string | null;
+  strategy_id: string | null;
+  created_at: string | null;
+  submitted_at: string | null;
+  last_error: string | null;
+};
+
 export class ApiUnavailable extends Error {}
 
 async function apiGet<T>(path: string): Promise<T> {
@@ -138,3 +204,8 @@ export const getMe = () => apiGet<Me>("/api/v1/auth/me");
 export const getLiveMarket = () => apiGetOptional<LiveMarket>("/api/v1/market/live");
 export const getWatchlists = () => apiGet<Watchlists>("/api/v1/watchlists");
 export const getUniverseSummary = () => apiGet<UniverseSummary>("/api/v1/universe?limit=1");
+export const getStrategies = () => apiGet<StrategyRow[]>("/api/v1/strategies");
+export const getSignals = (limit = 25) => apiGet<SignalRow[]>(`/api/v1/signals?limit=${limit}`);
+export const getRiskDecisions = (rejectedOnly = false, limit = 25) =>
+  apiGet<RiskDecisionRow[]>(`/api/v1/risk-decisions?limit=${limit}&rejected_only=${rejectedOnly}`);
+export const getOrders = (limit = 25) => apiGet<OrderRow[]>(`/api/v1/orders?limit=${limit}`);
