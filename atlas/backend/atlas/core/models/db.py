@@ -497,3 +497,60 @@ class TrackRecord(Base):
     note: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_track_records_strategy_kind_asof", "strategy_id", "kind", "as_of"),)
+
+
+class InstrumentReference(Base):
+    """What an instrument is: asset type and sector bucket, with where that came from.
+
+    ``asset_type`` is ``etf`` or ``stock``. Symbols with no row are unknown: they get no
+    earnings clearance and share one sector bucket.
+    """
+
+    __tablename__ = "instrument_reference"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    asset_type: Mapped[str] = mapped_column(String(8))
+    sector: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str | None] = mapped_column(String(255))
+    leveraged: Mapped[bool] = mapped_column(Boolean, default=False)
+    sic: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32))  # config / sec_edgar
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        CheckConstraint("asset_type IN ('etf', 'stock')", name="instrument_asset_type_valid"),
+    )
+
+
+class EarningsEvent(Base):
+    """A scheduled earnings report from a calendar provider."""
+
+    __tablename__ = "earnings_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    day: Mapped[date] = mapped_column(Date)
+    timing: Mapped[str] = mapped_column(String(8), default="unknown")  # bmo / amc / dmh / unknown
+    source: Mapped[str] = mapped_column(String(32))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ux_earnings_symbol_day_source", "symbol", "day", "source", unique=True),
+        Index("ix_earnings_day", "day"),
+    )
+
+
+class EarningsCoverage(Base):
+    """One successful calendar fetch: the provider returned every report in [start, end].
+
+    The blackout check trusts the absence of an event only inside a recent fetch's window.
+    """
+
+    __tablename__ = "earnings_coverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(32))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    window_start: Mapped[date] = mapped_column(Date)
+    window_end: Mapped[date] = mapped_column(Date)
+    events: Mapped[int] = mapped_column(Integer, default=0)

@@ -1,6 +1,6 @@
 # ATLAS project status
 
-_Last updated: 2026-10-26: Phase 6 performance and track records built. The Performance page compares the paper account with SPY and shows each strategy's backtest, out-of-sample forward test and paper record. Promotion to LIVE_CANDIDATE is now gated on the paper record. The policy change (new `track_record_gates`) changed the policy hash, so both baselines were revalidated: reports #5 and #6 pass with identical metrics. Both remain eligible for PAPER, unpromoted._
+_Last updated: 2026-10-26: Phase 7 reference data built. ETFs are now cleared for the earnings check and exposure is capped per sector. Stocks still need an earnings calendar (a provider key plus network access), and the paper account must disable shorting before any entry can pass. Both baselines remain eligible for PAPER, unpromoted._
 
 | Phase | State |
 |---|---|
@@ -10,7 +10,8 @@ _Last updated: 2026-10-26: Phase 6 performance and track records built. The Perf
 | 4 Backtesting & promotion gates | **Built**: event-driven simulator reusing the production strategy, sizing and risk code; cost, gap and partial-fill models; validation gates in `policy.yaml`; immutable validation reports; gated promotion wired. Both baselines pass all 10 gates on 9.7 years of real data, after the drawdown cooldown rule |
 | 5 AI research agents | **Built; LLM output not yet verified live**: five advisory agents (market regime, technical analysis, news sentiment, performance, operations). Their deterministic features run live on real data; the AI narratives are tested with recorded responses only, because no Anthropic key is configured here |
 | 6 Performance & track record | **Built; no paper record yet**: paper trade ledger, account metrics vs SPY, an out-of-sample forward test per strategy, LIVE_CANDIDATE gates on the paper record, Performance page. There are no paper fills or recorded session closes yet, so paper and account sections are empty by design |
-| 7–8 | Not started |
+| 7 Reference data | **Built; providers blocked here**: reviewed `config/instruments.yaml` (14 ETFs, 23 stock sectors), per-sector exposure limits, an earnings calendar with fail-closed clearance, SEC EDGAR and Finnhub adapters. The providers' hosts are blocked by this environment's network policy, so stocks have no earnings clearance yet |
+| 8 | Not started |
 
 ## Implemented and tested
 - Config: typed settings split by trust boundary; `config/policy.yaml` checked against hard ceilings in code; policy SHA-256 written to the audit log on every start.
@@ -132,11 +133,44 @@ _Last updated: 2026-10-26: Phase 6 performance and track records built. The Perf
     - A per-strategy table comparing backtest, forward test and paper record.
     - Simulated open positions.
     - LIVE_CANDIDATE gate results with values and thresholds.
+- **Phase 7, reference data** (`core/reference`, migration 0009).
+  - `config/instruments.yaml`, reviewed like `policy.yaml`:
+    - 14 ETFs with exposure buckets: broad US equity, semiconductors, treasuries, credit, gold. Leveraged funds are flagged.
+    - GICS sectors for 23 stocks.
+    - BE, CRWV, NBIS and SPCX are deliberately left out: I couldn't name their classification with confidence, so they stay unclassified and fail closed.
+    - The file is validated strictly: symbol format, no symbol listed as both ETF and stock, the "unknown" name reserved, extra keys rejected.
+  - Providers (executor, optional):
+    - **SEC EDGAR** (`integrations/sec/edgar.py`, no key, contact User-Agent, ≤ 10 req/s): ticker → CIK → SIC → approximate GICS sector (`sectors.py`). Fills only symbols the config doesn't cover; config always wins.
+    - **Finnhub** earnings calendar (`integrations/finnhub/earnings.py`): the key goes in a header, never the URL.
+    - A fetch replaces the source's events in its window (moved dates are handled) and records an `earnings_coverage` row. Failures keep stored data and alert.
+  - Earnings clearance (`earnings.py`), for today plus the next N sessions (policy N = 2):
+    - ETF → clear.
+    - A stored report in the span → blackout, even if the calendar is old.
+    - A classified stock with a calendar under 30 h old covering the span and no report → clear.
+    - Anything else → unknown, so the risk engine rejects the entry. An unclassified symbol is never cleared by its absence from a calendar.
+  - Per-sector exposure: the pipeline passes the symbol's bucket and that bucket's exposure (positions plus open buy orders). `max_sector_exposure_pct` now caps each bucket; unclassified symbols share "unknown". The backtester passes no sector data and keeps the stricter single bucket, so validation results are unchanged.
+  - Executor task `refresh_reference_data` (06:30 and 17:30 NY on weekdays; heartbeat `reference` ok/degraded/error). `execute_signals` builds the blackout and sector lookups from it.
+  - API `GET /api/v1/reference` and a Risk Center card: clearance per watched symbol, sector buckets with held exposure, calendar coverage, upcoming reports.
 - Workers: Celery `default` and `execution` queues, beat schedule in New York time, heartbeats.
 - Dashboard: Next.js 16 with login, Overview, Risk Center (kill switch), Settings, and placeholder pages that say plainly what isn't built yet. PAPER banner on every page.
 - Ops: Docker Compose (credentials isolated per container), Dockerfiles, CI (lint, types, tests with Postgres, pip-audit, npm audit, gitleaks, compose validation), Dependabot, backup script, docs.
 
 ## Test results (local, 2026-10-26)
+- Phase 7: backend **404 passed, 0 failed** (35 new tests).
+  - Instrument file validation and the repository file; config upsert, removal and idempotence, with provider rows untouched.
+  - SIC mapping.
+  - EDGAR and Finnhub against mocked HTTP: User-Agent, token only in a header, malformed rows, errors.
+  - Calendar replacement and dedupe.
+  - Every blackout rule: ETF; no calendar; report in and out of the span; stale calendar; window not covering the span; unclassified symbol; weekend span.
+  - Refresh with providers, failing providers and none.
+  - Engine sector cap and its reason text; a pipeline test where the same order is rejected when an existing holding shares its sector and placed when it doesn't.
+  - Refresh task success, and an invalid config that alerts and keeps data; API.
+- Phase 7 live (2026-10-26):
+  - Migration 0009 applied; `alembic check` shows no drift.
+  - `refresh_reference_data` classified 37 instruments (14 ETFs, 23 stocks). BE, CRWV, NBIS and SPCX are unclassified as intended.
+  - The SEC EDGAR fetch failed with `ProxyError` (host blocked here). It was reported as a degraded heartbeat plus an alert, and nothing was deleted.
+  - Now: the 14 ETFs are cleared for earnings; the 27 stocks and unclassified symbols are not.
+- Playwright, Risk Center, 8/8: clearance counts (14 clear, 27 none), "no earnings calendar" warning, ETF tags, unknown bucket listing BE, CRWV, NBIS and SPCX, sector buckets, no console errors, no horizontal scroll at 390 px.
 - Phase 6: backend **369 passed, 0 failed** (17 new tests).
   - FIFO ledger with R-multiples and protective-stop risk; unmatched sells; unpriced fills skipped.
   - Account vs SPY returns; the fewer-than-two-closes case.
@@ -189,6 +223,10 @@ _Last updated: 2026-10-26: Phase 6 performance and track records built. The Perf
   - executor without credentials fails safely and reports broker `error`
 
 ## Not tested / known limitations
+- **No reference provider has been reached.** `www.sec.gov`, `data.sec.gov` and `finnhub.io` are denied by this environment's network policy (proxy 403), and no Finnhub key exists. Both adapters are tested only against recorded payloads. Until a calendar is configured, every stock entry is rejected; ETF entries pass the earnings check.
+- The stock sectors in `instruments.yaml` were written from general knowledge, not a data feed. Review them, especially recent listings and spin-offs (SNDK). SIC→GICS from EDGAR is approximate: for example, internet platforms land in Information Technology.
+- Sector buckets don't look through ETFs: SMH or SOXL exposure isn't counted against Information Technology stocks.
+- Backtests still don't simulate earnings blackouts or per-sector limits (no history); they use one sector budget, which is stricter.
 - **Phase 6 has no paper data to show yet.** No strategy is in PAPER, no paper order has filled, and `equity_closes` holds no sessions in this database, because the executor isn't running here. The Performance page shows those sections as unavailable. The forward test starts after 2026-10-23, the end of the validation data, so it accrues one session per trading day once the daily ingestion runs.
 - The paper drawdown gate uses cumulative **realised** P&L on the budget, marked at session closes. Open-position swings aren't included until the trade closes. The account-level drawdown, which includes them, is shown separately.
 - Account metrics cover the whole paper account ($100k) while ATLAS sizes against $10k, so account returns are diluted about 10×. Per-strategy records use the $10k budget.
@@ -229,10 +267,10 @@ _Last updated: 2026-10-26: Phase 6 performance and track records built. The Perf
   - Fills come from daily bars.
   - The 41 symbols include leveraged ETFs (SOXL, TQQQ).
 - Validation results are simulations under stated assumptions, not predictions.
-- **No strategy can place paper orders yet.** That's by design: promotion needs Phase 4 validation reports. Even then, with the current policy and account, every entry is rejected for two reasons:
-  - **No earnings calendar:** `block_entries_before_earnings_days: 2` with no data source fails closed. Fix: add an earnings data source (needs a provider and API key), or set the value to 0 in a reviewed policy change.
-  - **The paper account allows shorting** (and 4× margin): see Required user action.
-- RESEARCH strategies have no simulated positions, so shadow mode records entries but never exits. Shadow performance belongs to the Phase 4 backtester.
+- **No strategy places paper orders yet.** Promotion is an admin decision (both baselines are eligible). Even after promotion, with the current account:
+  - **Shorting is enabled on the paper account:** every entry is rejected until it is disabled (Required user action).
+  - **No earnings calendar for stocks:** stock entries fail closed until a calendar is connected (Phase 7). ETFs in `config/instruments.yaml` are cleared.
+- RESEARCH strategies have no positions in the order path, so shadow mode records entries but never exits. Their like-for-like record is the Phase 6 forward test.
 - No sector data: all holdings share one 25% "unknown sector" budget, which effectively caps gross exposure at 25% (policy allows 50%).
 - Protective stops are GTC; the policy's `order_time_in_force: day` applies to entries and exits. A GTC stop protects across sessions, but gaps through the stop fill at the open price.
 - Strategies use daily bars only; intraday bars and quotes are used for execution checks, not signals.
@@ -261,15 +299,15 @@ Phase 2 exit check still open: run the stream live (Alpaca test feed, then IEX d
 
 ## Next engineering tasks
 1. **Promotion decision (admin):** both baselines are eligible for PAPER. Even after promotion, entries stay blocked until (a) shorting is disabled on the Alpaca paper account and (b) an earnings calendar is connected or `block_entries_before_earnings_days` is set to 0.
-2. Simulated positions for shadow strategies, so they can be compared like for like with backtests.
-3. Earnings calendar and sector classification sources (both currently fail closed).
+2. ~~Simulated positions for shadow strategies~~: done in Phase 6 (out-of-sample forward test).
+3. Connect the earnings calendar: a Finnhub key in `broker.env` plus `finnhub.io` allowed outbound (and `www.sec.gov` / `data.sec.gov` for EDGAR sectors). Then check one live refresh on the Risk Center.
 4. First live LLM run of the Phase 5 agents once an Anthropic key is configured; review narrative quality and token cost.
 5. Strategy/quantitative research agents that propose hypotheses for the backtester (design needed first).
 
 ## Required user action
 - Alpaca paper keys: in place and verified. For Docker, make sure they are in `atlas/broker.env` (never in chat or git).
 - **Disable shorting and margin on the Alpaca paper account.** The policy is long-only with no margin, and ATLAS rejects entries until the broker enforces it too: Alpaca dashboard → paper account → Configure, or `PATCH /v2/account/configurations` with `{"no_shorting": true, "max_margin_multiplier": "1"}`. `check_alpaca` reports the current setting.
-- Decide on earnings data: connect a provider (needs an API key), or set `block_entries_before_earnings_days: 0` in a reviewed policy change.
+- Earnings data for stocks: get a Finnhub API key (free tier) and set `ATLAS_REFDATA_FINNHUB_API_KEY` in `broker.env`, and allow `finnhub.io`, `www.sec.gov` and `data.sec.gov` in this environment's network settings. ETFs no longer need it.
 - Optional: the paper account holds $100,000 while the policy budget is $10,000. ATLAS sizes to $10,000 either way. You could reset the paper account to $10,000 in Alpaca, or raise `starting_equity_usd` in a reviewed policy change.
 - Optional: Telegram bot token and chat id in `atlas/.env`.
 - **For AI narratives (Phase 5):** Anthropic API key in `atlas/llm.env` (`ATLAS_LLM_ANTHROPIC_API_KEY`) and `ATLAS_LLM_PROVIDER=anthropic`. Without it the agents still run and show their deterministic analysis.

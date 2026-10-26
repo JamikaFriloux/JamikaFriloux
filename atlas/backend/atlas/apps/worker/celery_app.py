@@ -58,6 +58,12 @@ celery_app.conf.update(
             "schedule": crontab(hour=6, minute=45, day_of_week="mon-fri"),
             "options": {"expires": 3600},
         },
+        # Reference data: before the universe/premarket and again after the close.
+        "refresh-reference-data": {
+            "task": "atlas.execution.refresh_reference_data",
+            "schedule": crontab(hour="6,17", minute=30, day_of_week="mon-fri"),
+            "options": {"expires": 3600},
+        },
         # Daily bars: after the close (also catches early closes) and a premarket catch-up.
         "ingest-daily-bars": {
             "task": "atlas.execution.ingest_daily_bars",

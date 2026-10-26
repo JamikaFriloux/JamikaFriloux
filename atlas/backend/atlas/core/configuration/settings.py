@@ -75,6 +75,20 @@ class AtlasSettings(BaseSettings):
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
 
+class RefDataSettings(BaseSettings):
+    """Reference-data providers (executor). Both are optional; without them stocks have no
+    earnings clearance (entries fail closed) and only config/instruments.yaml classifies."""
+
+    model_config = SettingsConfigDict(env_prefix="ATLAS_REFDATA_", env_file=".env", extra="ignore")
+
+    # SEC EDGAR requires a descriptive User-Agent with a contact address; no key.
+    sec_user_agent: str | None = None
+    finnhub_api_key: SecretStr | None = None
+    earnings_horizon_days: int = Field(default=30, ge=7, le=90)
+    # A calendar fetch older than this no longer clears a stock for entry.
+    earnings_max_age_hours: int = Field(default=30, ge=1, le=72)
+
+
 class BrokerSettings(BaseSettings):
     """Alpaca PAPER credentials. Executor service only."""
 

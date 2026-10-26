@@ -10,11 +10,13 @@ equity)``. If the paper account holds more than the policy's budget, ATLAS still
 an account of the policy's size; if it holds less, the smaller real equity applies.
 
 Fail closed (rule 6). Missing or stale inputs reject entries: no fresh account snapshot, no
-fresh two-sided quote, stale universe, and data sources ATLAS does not have yet:
-  * earnings dates: with ``block_entries_before_earnings_days > 0`` and no earnings calendar,
-    entries are rejected ("earnings calendar unavailable");
-  * sectors: unknown sectors are pooled as one sector, so ``max_sector_exposure_pct`` caps
-    the combined exposure of all holdings whose sector is unknown.
+fresh two-sided quote, stale universe, and missing reference data (``core/reference``):
+  * earnings: with ``block_entries_before_earnings_days > 0``, an entry needs a clearance
+    (ETF, or a stock with a fresh calendar and no report in the span); without one it is
+    rejected ("earnings calendar unavailable");
+  * sectors: ``max_sector_exposure_pct`` caps exposure per sector bucket. Unclassified
+    symbols share one "unknown" bucket. When the caller supplies no sector data at all
+    (``sector_exposure`` None, as in the backtester), every holding shares one bucket.
 
 Exits reduce risk, so only the kill switch, account problems, a closed market or a missing
 price can stop them; loss and position limits never do.
@@ -86,7 +88,10 @@ class RiskContext:
     strategy_position_qty: Decimal = Decimal(0)  # what this strategy holds in the symbol
     earnings_blackout: bool | None = None  # None: no earnings data available
     drawdown_cooldown_remaining: int = 0  # sessions left in a drawdown halt (core/risk/drawdown.py)
-    sector_known: bool = False  # no sector data source yet
+    # Sector bucket of the signal's symbol and the exposure (market value plus open entry
+    # notional) already in that bucket. None: no sector data, so all exposure is one bucket.
+    sector: str | None = None
+    sector_exposure: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -228,7 +233,11 @@ def evaluate(
     if days == 0:
         check("earnings_blackout", True, "disabled by policy")
     elif ctx.earnings_blackout is None:
-        check("earnings_blackout", False, "earnings calendar unavailable (fail closed)")
+        check(
+            "earnings_blackout",
+            False,
+            "earnings calendar unavailable or symbol unclassified (fail closed)",
+        )
     else:
         check(
             "earnings_blackout",
@@ -321,9 +330,9 @@ def evaluate(
                 / limit_price
             ),
         }
-        # Every holding's sector is unknown, so they all share one sector budget.
+        in_sector = exposure if ctx.sector_exposure is None else ctx.sector_exposure
         caps["sector_exposure"] = _floor(
-            (pct(lim.max_sector_exposure_pct) - exposure) / limit_price
+            (pct(lim.max_sector_exposure_pct) - in_sector) / limit_price
         )
         qty = max(min(caps.values()), Decimal(0))
         binding = min(caps, key=lambda k: caps[k])
@@ -331,6 +340,7 @@ def evaluate(
             "size",
             qty >= 1,
             f"{qty} shares at {limit_price} (binding: {binding}; "
+            + (f"sector {ctx.sector}; " if ctx.sector is not None else "")
             + ", ".join(f"{k} {v}" for k, v in caps.items())
             + ")",
         )

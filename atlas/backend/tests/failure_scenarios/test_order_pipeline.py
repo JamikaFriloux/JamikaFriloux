@@ -391,3 +391,21 @@ def test_drawdown_cooldown_blocks_entries_in_production(db):
     assert "cooldown, 19 sessions left" in next(
         c["detail"] for c in d.checks if c["name"] == "drawdown"
     )
+
+
+@pytest.mark.parametrize(("bbb_sector", "approved"), [("tech", False), ("energy", True)])
+def test_sector_budget_counts_only_the_same_sector(db, bbb_sector, approved):
+    # Capital base $10k, sector cap 25% = $2,500. BBB holds $2,400.
+    setup(db, positions=[("BBB", "24")])
+    signal(db)
+    sectors = {"AAA": "tech", "BBB": bbb_sector}
+    d = deps(FakeBroker())
+    d.sector_for = lambda s: sectors.get(s, "unknown")
+    out = run(db, d)
+    decision = db.scalars(select(RiskDecision)).one()
+    size = next(c for c in decision.checks if c["name"] == "size")
+    assert "sector tech" in size["detail"]
+    if approved:
+        assert out[0].status == "ORDERED" and decision.qty > 0
+    else:
+        assert out[0].status == "REJECTED" and "binding: sector_exposure" in size["detail"]

@@ -7,7 +7,7 @@ export const CHECK_LABELS: Record<string, string> = {
   entry_window: "outside entry window",
   market_open: "market closed",
   universe: "not in current universe",
-  earnings_blackout: "earnings calendar unavailable / blackout",
+  earnings_blackout: "no earnings clearance / blackout",
   quote: "no fresh two-sided quote",
   spread: "spread too wide",
   no_existing_exposure: "already held or ordered",

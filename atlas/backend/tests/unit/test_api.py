@@ -569,3 +569,33 @@ def test_performance_endpoints(client, session_factory, policy):
     full = client.get(f"/api/v1/track-records/{rid}", headers=v).json()
     assert full["trades"] == [{"symbol": "AAA"}] and full["equity_curve"]
     assert client.get("/api/v1/track-records/999", headers=v).status_code == 404
+
+
+def test_reference_endpoint(client, session_factory):
+    from datetime import UTC, datetime, timedelta
+
+    from atlas.core.models.db import EarningsCoverage, EarningsEvent, InstrumentReference
+
+    today = datetime.now(UTC).date()
+    with session_factory() as s:
+        s.add(InstrumentReference(symbol="SPY", asset_type="etf", sector="broad", source="config"))
+        s.add(InstrumentReference(symbol="QQQ", asset_type="stock", sector="IT", source="config"))
+        s.add(EarningsEvent(symbol="QQQ", day=today + timedelta(days=1), timing="amc", source="f"))
+        s.add(
+            EarningsCoverage(
+                source="f",
+                fetched_at=datetime.now(UTC),
+                window_start=today - timedelta(days=1),
+                window_end=today + timedelta(days=30),
+                events=1,
+            )
+        )
+        s.commit()
+    v = _auth(client, "viewer")
+    assert client.get("/api/v1/reference").status_code == 401
+    body = client.get("/api/v1/reference", headers=v).json()
+    w = {x["symbol"]: x for x in body["watched"]}
+    assert w["SPY"]["earnings"] == "clear" and w["SPY"]["asset_type"] == "etf"
+    assert w["IWM"]["earnings"] == "unknown" and w["IWM"]["sector"] == "unknown"
+    assert body["upcoming_earnings"][0]["symbol"] == "QQQ"
+    assert body["latest_coverage"]["events"] == 1 and body["blackout_days"] == 2

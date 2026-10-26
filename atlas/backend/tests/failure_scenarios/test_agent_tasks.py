@@ -119,3 +119,44 @@ def test_update_track_records_task_reports_failure(session_factory):
     assert out == {"ok": False, "error": "RuntimeError"}
     with session_factory() as s:
         assert s.get(ServiceHeartbeat, "track_records").status == "error"
+
+
+def test_refresh_reference_task_without_providers(session_factory, monkeypatch):
+    from atlas.core.models.db import InstrumentReference
+    from tests.fakes import RecordingNotifier
+
+    monkeypatch.delenv("ATLAS_REFDATA_SEC_USER_AGENT", raising=False)
+    monkeypatch.delenv("ATLAS_REFDATA_FINNHUB_API_KEY", raising=False)
+    n = RecordingNotifier()
+    with (
+        patch.object(executor_tasks, "session_scope", _scope(session_factory)),
+        patch.object(executor_tasks, "build_notifier", lambda: n),
+    ):
+        out = executor_tasks.refresh_reference_data.run()
+    assert out["ok"] is True and out["sec_edgar"] == out["earnings"] == "not configured"
+    assert n.messages == []
+    with session_factory() as s:
+        assert s.get(InstrumentReference, "SPY").asset_type == "etf"
+        hb = s.get(ServiceHeartbeat, "reference")
+        assert hb.status == "ok" and "QQQ" not in hb.details["unclassified"]
+
+
+def test_refresh_reference_task_bad_config_alerts_and_keeps_data(session_factory, tmp_path):
+    from tests.fakes import RecordingNotifier
+
+    (tmp_path / "policy.yaml").write_text("x")
+    (tmp_path / "instruments.yaml").write_text("version: 1\netfs:\n  spy: {sector: x}\n")
+    settings = executor_tasks.get_settings().model_copy(
+        update={"policy_path": tmp_path / "policy.yaml"}
+    )
+    n = RecordingNotifier()
+    with (
+        patch.object(executor_tasks, "session_scope", _scope(session_factory)),
+        patch.object(executor_tasks, "get_settings", lambda: settings),
+        patch.object(executor_tasks, "build_notifier", lambda: n),
+    ):
+        out = executor_tasks.refresh_reference_data.run()
+    assert out == {"ok": False, "error": "ValidationError"}
+    assert "stored classifications stay in use" in n.messages[0][0]
+    with session_factory() as s:
+        assert s.get(ServiceHeartbeat, "reference").status == "error"

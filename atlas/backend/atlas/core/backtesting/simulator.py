@@ -16,8 +16,8 @@ The universe for ``d`` is point-in-time: the production ``liquidity_screen`` app
 (unadjusted) bars up to the previous session. Prices for trading and P&L use adjusted bars.
 
 Known simplifications (recorded as caveats in every report): the symbol list itself comes
-from today (survivorship bias); earnings blackouts and sectors aren't simulated because
-there is no historical data for them; one strategy per simulated account.
+from today (survivorship bias); earnings blackouts and per-sector limits aren't simulated
+(no historical earnings calendar; all holdings share one sector budget, which is stricter); one strategy per simulated account.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from atlas.core.strategies.base import OpenPosition, Signal, Strategy
 CAVEATS = [
     "survivorship_bias: symbols are today's benchmarks/watchlists, not the historical universe",
     "earnings_blackout_not_simulated: no historical earnings calendar (production fails closed)",
-    "sectors_unknown: all holdings share one sector budget, as in production",
+    "sectors_not_simulated: all holdings share one sector budget (production caps each sector)",
     "daily_bars_only: fills modeled from session open/low/volume, not intraday quotes",
 ]
 

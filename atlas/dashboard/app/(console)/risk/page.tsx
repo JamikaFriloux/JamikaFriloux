@@ -2,7 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KillSwitchControl } from "@/components/kill-switch-control";
 import { PageHeader } from "@/components/page-header";
-import { getMe, getRiskDecisions, getStatus } from "@/lib/api";
+import { ReferenceCard } from "@/components/risk/reference-card";
+import { getMe, getReference, getRiskDecisions, getStatus } from "@/lib/api";
 import { checkLabel } from "@/components/trading/labels";
 import { fmtTime, fmtUsd } from "@/lib/utils";
 
@@ -21,7 +22,7 @@ const LIMIT_LABELS: Record<string, [string, string]> = {
 };
 
 export default async function RiskPage() {
-  const [s, me, rejections] = await Promise.all([getStatus(), getMe(), getRiskDecisions(true, 12)]);
+  const [s, me, rejections, reference] = await Promise.all([getStatus(), getMe(), getRiskDecisions(true, 12), getReference()]);
   const ks = s.kill_switch;
   const a = s.account;
   const limits = s.policy.limits;
@@ -131,6 +132,7 @@ export default async function RiskPage() {
           </div>
         </CardContent>
       </Card>
+      <ReferenceCard r={reference} />
     </>
   );
 }

@@ -14,13 +14,14 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 from celery import Task
+from sqlalchemy.orm import Session
 
 from atlas.apps.worker.celery_app import celery_app
 from atlas.apps.worker.heartbeat import beat
 from atlas.core.configuration.policy import get_policy
 from atlas.core.configuration.settings import BrokerSettings, get_settings
 from atlas.core.data.bars import Timeframe
-from atlas.core.data.calendar import MarketCalendar
+from atlas.core.data.calendar import NY, MarketCalendar
 from atlas.core.data.ingestion import (
     BarSource,
     IngestionResult,
@@ -196,6 +197,82 @@ def ingest_minute_bars() -> dict[str, object]:
     return _run_ingestion("1Min", now)
 
 
+@celery_app.task(name="atlas.execution.refresh_reference_data")
+def refresh_reference_data() -> dict[str, object]:
+    """Instrument classification and the earnings calendar (core/reference)."""
+    from atlas.core.configuration.settings import RefDataSettings
+    from atlas.core.reference.instruments import instruments_path, load_instruments
+    from atlas.core.reference.refresh import refresh_reference
+
+    now = datetime.now(UTC)
+    ref = RefDataSettings()
+    try:
+        instruments = load_instruments(instruments_path(get_settings().policy_path))
+        companies = earnings = None
+        if ref.sec_user_agent:
+            from atlas.integrations.sec.edgar import EdgarClient
+
+            companies = EdgarClient(ref.sec_user_agent)
+        if ref.finnhub_api_key is not None:
+            from atlas.integrations.finnhub.earnings import FinnhubEarnings
+
+            earnings = FinnhubEarnings(ref.finnhub_api_key.get_secret_value())
+        with session_scope() as s:
+            symbols = ingestion_symbols(s, get_settings().ingest_default_symbols)
+            summary = refresh_reference(
+                s,
+                instruments=instruments,
+                symbols=symbols,
+                now=now,
+                companies=companies,
+                earnings=earnings,
+                horizon_days=ref.earnings_horizon_days,
+            )
+            errors = summary["errors"]
+            beat(s, "reference", "degraded" if errors else "ok", **summary)
+    except Exception as exc:
+        # e.g. an invalid instruments.yaml: keep the stored reference data, report loudly.
+        log.error("reference_refresh_failed", error=type(exc).__name__, detail=str(exc)[:200])
+        with session_scope() as s:
+            beat(s, "reference", "error", error=type(exc).__name__)
+        build_notifier().notify(
+            Event.CRITICAL_ERROR,
+            f"[PAPER TRADING] Reference data refresh failed ({type(exc).__name__}); "
+            "stored classifications stay in use.",
+        )
+        return {"ok": False, "error": type(exc).__name__}
+    if errors:
+        build_notifier().notify(
+            Event.CRITICAL_ERROR,
+            "[PAPER TRADING] Reference data provider failed: "
+            + ", ".join(f"{k} ({v})" for k, v in errors.items())
+            + ". Entries without fresh clearance are rejected.",
+        )
+    log.info("reference_refreshed", **{k: v for k, v in summary.items() if k != "unclassified"})
+    return {"ok": not errors, **summary}
+
+
+def reference_lookups(
+    s: Session, now: datetime, cal: MarketCalendar
+) -> tuple[Callable[[str], bool | None], Callable[[str], str]]:
+    """Earnings blackout and sector bucket functions for the execution pipeline."""
+    from atlas.core.configuration.settings import RefDataSettings
+    from atlas.core.reference.earnings import blackout_lookup
+    from atlas.core.reference.instruments import UNKNOWN_SECTOR, sector_buckets
+
+    ref = RefDataSettings()
+    blackout = blackout_lookup(
+        s,
+        now=now,
+        today=now.astimezone(NY).date(),
+        days=get_policy().policy.session.block_entries_before_earnings_days,
+        calendar=cal,
+        max_age=timedelta(hours=ref.earnings_max_age_hours),
+    )
+    buckets = sector_buckets(s)
+    return blackout, lambda symbol: buckets.get(symbol, UNKNOWN_SECTOR)
+
+
 NEWS_LOOKBACK = timedelta(hours=36)
 
 
@@ -338,6 +415,7 @@ def execute_signals() -> dict[str, object]:
     try:
         deps = ExecutionDeps(gateway=get_gateway(), quote_for=quote_provider())
         with session_scope() as s:
+            deps.earnings_blackout, deps.sector_for = reference_lookups(s, now, cal)
             outcomes = process_pending_signals(
                 s, deps, now=now, policy=get_policy().policy, calendar=cal
             )

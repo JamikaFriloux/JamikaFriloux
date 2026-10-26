@@ -21,6 +21,7 @@ from atlas.apps.api.routes import (
     intelligence,
     market,
     performance,
+    reference,
     system,
     trading,
     universe,
@@ -176,6 +177,7 @@ def create_app(
     app.include_router(trading.router)
     app.include_router(intelligence.router)
     app.include_router(performance.router)
+    app.include_router(reference.router)
     return app
 
 

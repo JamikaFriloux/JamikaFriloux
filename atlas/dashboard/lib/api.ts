@@ -396,3 +396,23 @@ export type Performance = {
 };
 
 export const getPerformance = () => apiGet<Performance>("/api/v1/performance");
+
+export type ReferenceData = {
+  blackout_days: number;
+  blackout_span: string[];
+  earnings_max_age_hours: number;
+  latest_coverage: null | { source: string; fetched_at: string; window_start: string; window_end: string; events: number };
+  watched: {
+    symbol: string;
+    asset_type: "etf" | "stock" | null;
+    sector: string;
+    source: string | null;
+    leveraged: boolean;
+    earnings: "clear" | "blackout" | "unknown" | "disabled";
+  }[];
+  upcoming_earnings: { symbol: string; day: string; timing: string; source: string }[];
+  sector_exposure: Record<string, string>;
+  max_sector_exposure_pct: number;
+};
+
+export const getReference = () => apiGet<ReferenceData>("/api/v1/reference");

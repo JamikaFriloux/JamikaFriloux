@@ -78,7 +78,9 @@ def _utc(dt: datetime) -> datetime:
 class ExecutionDeps:
     gateway: BrokerGateway | None  # None: shadow evaluation only
     quote_for: Callable[[str], QuoteState | None]
-    earnings_blackout: Callable[[str], bool | None] = lambda _symbol: None  # no data source yet
+    # Reference data (core/reference); the defaults mean "no data", which fails closed.
+    earnings_blackout: Callable[[str], bool | None] = lambda _symbol: None
+    sector_for: Callable[[str], str] | None = None  # None: all exposure shares one bucket
     sleep: Callable[[float], None] = time.sleep
 
 
@@ -138,13 +140,28 @@ def build_context(
         if account is not None
         else (None, 0)
     )
-    positions = {p.symbol: p.qty for p in session.scalars(select(Position)).all()}
+    position_rows = session.scalars(select(Position)).all()
+    positions = {p.symbol: p.qty for p in position_rows}
     open_rows = session.scalars(select(Order).where(Order.state.in_(OPEN_BROKER_STATES))).all()
     open_orders = tuple(
         OpenOrderState(o.symbol, o.side, o.purpose, o.qty - o.filled_qty, o.limit_price)
         for o in open_rows
         if o.purpose != "protective_stop"
     )
+    sector = sector_exposure = None
+    if deps.sector_for is not None:
+        sector = deps.sector_for(rec.symbol)
+        sector_exposure = sum(
+            (p.market_value for p in position_rows if deps.sector_for(p.symbol) == sector),
+            Decimal(0),
+        ) + sum(
+            (
+                o.qty * (o.limit_price or Decimal(0))
+                for o in open_orders
+                if o.side == "buy" and deps.sector_for(o.symbol) == sector
+            ),
+            Decimal(0),
+        )
     session_open = calendar.current_or_next_session(now).open
     entries_today = (
         session.scalar(
@@ -175,6 +192,8 @@ def build_context(
         strategy_position_qty=held,
         earnings_blackout=deps.earnings_blackout(rec.symbol),
         drawdown_cooldown_remaining=cooldown_left,
+        sector=sector,
+        sector_exposure=sector_exposure,
     )
 
 
