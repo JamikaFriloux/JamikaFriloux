@@ -353,3 +353,25 @@ def test_earnings_rejection_says_why(policy):
     r = evaluate(ENTRY, ctx(earnings_blackout=None), policy.policy, CAL)
     detail = next(c.detail for c in r.checks if c.name == "earnings_blackout")
     assert "unclassified" in detail and "fail closed" in detail
+
+
+def test_check_reference_fails_closed_without_providers(session_factory, monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    from atlas.scripts import check_reference
+
+    @contextmanager
+    def scope():
+        with session_factory() as s:
+            yield s
+            s.commit()
+
+    monkeypatch.delenv("ATLAS_REFDATA_SEC_USER_AGENT", raising=False)
+    monkeypatch.delenv("ATLAS_REFDATA_FINNHUB_API_KEY", raising=False)
+    monkeypatch.setattr(check_reference, "session_scope", scope)
+    assert check_reference.main() == 2
+    out = capsys.readouterr().out
+    assert "FAIL  ATLAS_REFDATA_FINNHUB_API_KEY not set" in out
+    assert (
+        "unclassified watched symbols" in out and "RESULT 4 failing" in out
+    )  # SEC, Finnhub, unclassified, calendar
