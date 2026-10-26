@@ -12,7 +12,9 @@ import { fmtTime, fmtUsd } from "@/lib/utils";
 type Strat = Performance["strategies"][number];
 
 const num = (v: unknown, d = 2) =>
-  typeof v === "number" ? v.toFixed(d) : v === "inf" ? "∞" : v == null ? "—" : String(v);
+  typeof v === "number"
+    ? Number.isInteger(v) && d > 0 ? String(v) : v.toFixed(d)
+    : v === "inf" ? "∞" : v == null ? "—" : String(v);
 const pct = (v: unknown) => (typeof v === "number" ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : "—");
 const tone = (v: unknown) => (typeof v === "number" ? (v > 0 ? "gain" : v < 0 ? "loss" : "neutral") : "neutral");
 
@@ -171,7 +173,7 @@ function StrategyCard({ s }: { s: Strat }) {
         {gates.length ? (
           <div className="border-t border-line pt-3">
             <div className="mb-1.5 text-[11px] uppercase tracking-wider text-muted">LIVE_CANDIDATE gates (paper record)</div>
-            <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+            <ul className="grid grid-cols-1 gap-x-10 gap-y-1 text-xs sm:grid-cols-2">
               {gates.map((g) => (
                 <li key={g.name} className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">

@@ -1,6 +1,6 @@
 # ATLAS project status
 
-_Last updated: 2026-10-26: Phase 6 performance and track records built. The Performance page compares the paper account with SPY and shows each strategy's backtest, out-of-sample forward test and paper record. Promotion to LIVE_CANDIDATE is now gated on the paper record. The policy change (new `track_record_gates`) changes the policy hash, so both baselines are being revalidated; results to follow. Neither is promoted._
+_Last updated: 2026-10-26: Phase 6 performance and track records built. The Performance page compares the paper account with SPY and shows each strategy's backtest, out-of-sample forward test and paper record. Promotion to LIVE_CANDIDATE is now gated on the paper record. The policy change (new `track_record_gates`) changed the policy hash, so both baselines were revalidated: reports #5 and #6 pass with identical metrics. Both remain eligible for PAPER, unpromoted._
 
 | Phase | State |
 |---|---|
@@ -155,6 +155,14 @@ _Last updated: 2026-10-26: Phase 6 performance and track records built. The Perf
   - Executor and worker tasks (news outage, missing key).
   - API RBAC and the https-only link filter.
   - The agent isolation test.
+- Phase 6 live (2026-10-26):
+  - Migration 0008 applied.
+  - Revalidation under the new policy hash: `trend_breakout` report #5 (266 s) and `rsi_pullback` report #6 (465 s) both pass, with metrics identical to #3 and #4 (246 trades, Sharpe 0.785, PF 2.661, DD 6.93%; 1,404 trades, Sharpe 0.841, PF 1.37, DD 4.69%). The policy change doesn't touch the simulation.
+  - `update_track_records` wrote a forward record for each strategy, anchored to #5 and #6. Both show 0 sessions and say why: stored data ends 2026-10-23, the last day of the validation data.
+- Playwright, Performance page, 9/10 live checks plus 8/8 with sample data. The one live failure is expected: the first run came before any track record existed, and the page correctly said "not computed yet".
+  - Live: honest empty account state, both strategy cards, backtest column linked to its validation report, no LIVE_CANDIDATE badge, no console errors, no horizontal scroll at 390 px.
+  - Sample data (a throwaway copy of the database with 38 synthetic session closes and a synthetic promotion, dropped afterwards): account stats, two-line account-vs-SPY chart with legend and hover tooltip, paper gates with pass/fail, no console errors.
+  - Fixed after looking at the screenshots: blank backtest trades, drawdown, P&L and span (now taken from the report); integers shown as "37.00"; cramped gate columns.
 - Migration 0007 applied to the live database.
 - **Live (2026-10-26, no LLM key):**
   - `fetch_news` stored 25 real Alpaca articles; 19 fell in the 24-hour window for 20 watched symbols.
