@@ -91,3 +91,55 @@ def test_minute_task_runs_shortly_after_close():
         run.return_value = {"ok": True}
         tasks.ingest_minute_bars.run()
         run.assert_called_once_with("1Min", just_after)
+
+
+def _result(*outcomes):
+    import uuid
+
+    from atlas.core.data.ingestion import IngestionResult, SymbolOutcome
+
+    r = IngestionResult(run_id=uuid.uuid4(), timeframe="1Min")
+    for sym, ok, stale, critical in outcomes:
+        r.outcomes.append(SymbolOutcome(sym, ok, stale, 0, 0, None, critical, critical))
+    return r
+
+
+BENCH = ["SPY", "QQQ", "IWM", "DIA"]
+WATCH = [(s, True, False, ()) for s in ("AAPL", "MSFT", "NVDA", "AMD", "META", "TSLA")]
+
+
+def test_minute_alerts_skip_a_lone_stale_symbol():
+    # As seen live 2026-10-27: IVV went 3 minutes without an IEX print.
+    lone = _result(*WATCH, ("IVV", False, True, ("stale",)))
+    assert not lone.ok and tasks.needs_alert(lone, "1Min", BENCH) is False
+    assert tasks.needs_alert(lone, "1Day", BENCH) is True  # daily bars always alert
+
+
+def test_minute_alerts_fire_on_real_problems():
+    assert tasks.needs_alert(_result(*WATCH), "1Min", BENCH) is False
+    benchmark = _result(*WATCH, ("SPY", False, True, ("stale",)))
+    assert tasks.needs_alert(benchmark, "1Min", BENCH) is True
+    bad_data = _result(*WATCH, ("IVV", False, False, ("ohlc_inconsistent",)))
+    assert tasks.needs_alert(bad_data, "1Min", BENCH) is True
+    fetch = _result(*WATCH, ("IVV", False, True, ("fetch_error", "stale")))
+    assert tasks.needs_alert(fetch, "1Min", BENCH) is True
+    many = _result(*WATCH[:4], *[(s, False, True, ("stale",)) for s in ("A1", "A2")])
+    assert tasks.needs_alert(many, "1Min", BENCH) is True  # 2 of 6 > 25%
+
+
+def test_minute_outage_still_alerts(session_factory):
+    src = FakeBarSource({})
+    src.error = TimeoutError("read timed out")
+    notifier = RecordingNotifier()
+    p1, p2, p3, p4 = _patched(session_factory, src, notifier)
+    with p1, p2, p3, p4:
+        out = tasks._run_ingestion("1Min", NOW)
+    assert out["ok"] is False and notifier.events == [Event.CRITICAL_ERROR]
+
+
+def test_stream_default_fits_the_free_iex_subscription_limit():
+    from atlas.core.configuration.settings import AtlasSettings
+    from atlas.integrations.alpaca.stream import CHANNELS
+
+    cap = AtlasSettings.model_fields["stream_max_symbols"].default
+    assert cap * len(CHANNELS) <= 30

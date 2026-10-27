@@ -61,6 +61,7 @@ class SymbolOutcome:
     bars_written: int
     latest_bar_ts: datetime | None
     issue_codes: tuple[str, ...]
+    critical_codes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -343,6 +344,9 @@ def ingest_bars(
                     bars_written=written,
                     latest_bar_ts=latest,
                     issue_codes=tuple(dict.fromkeys(x.code for x in issues)),
+                    critical_codes=tuple(
+                        dict.fromkeys(x.code for x in issues if x.severity == "critical")
+                    ),
                 )
             )
     session.flush()

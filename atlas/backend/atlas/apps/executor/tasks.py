@@ -9,7 +9,7 @@ ALPACA_* environment variables.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
@@ -123,13 +123,37 @@ def _run_ingestion(timeframe: Timeframe, now: datetime) -> dict[str, object]:
         )
         return {"ok": False, "error": type(exc).__name__}
     log.info("ingestion_complete", **summary)
-    if not result.ok:
+    if needs_alert(result, timeframe, settings.ingest_default_symbols):
         build_notifier().notify(
             Event.CRITICAL_ERROR,
             f"[PAPER TRADING] {timeframe} data quality: failed={result.failed_symbols[:10]} "
             f"stale={result.stale_symbols[:10]}",
         )
     return {"ok": result.ok, **summary}
+
+
+MINUTE_STALE_ALERT_SHARE = 0.25
+
+
+def needs_alert(result: IngestionResult, timeframe: Timeframe, benchmarks: Sequence[str]) -> bool:
+    """Whether a data-quality problem should page the operator.
+
+    Daily bars: any problem (strategies trade on them). Minute bars only feed execution
+    checks, and on the free IEX feed a symbol can go a few minutes without a print, so a lone
+    stale symbol is recorded (heartbeat degraded, quality report) without an alert. Alert on a
+    genuine data error (failed fetch, invalid bars), a stale benchmark, or more than a quarter
+    of the symbols stale at once (a feed or pipeline failure).
+    """
+    if result.ok:
+        return False
+    if timeframe == "1Day":
+        return True
+    if any(set(o.critical_codes) - {"stale"} for o in result.outcomes):
+        return True
+    stale = set(result.stale_symbols)
+    if stale & {b.upper() for b in benchmarks}:
+        return True
+    return len(stale) > MINUTE_STALE_ALERT_SHARE * max(len(result.outcomes), 1)
 
 
 @lru_cache(maxsize=1)

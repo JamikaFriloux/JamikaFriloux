@@ -58,9 +58,11 @@ class AtlasSettings(BaseSettings):
     ingest_daily_lookback_days: int = Field(default=400, ge=30, le=3650)
     ingest_minute_lookback_days: int = Field(default=5, ge=1, le=30)
 
-    # Live market-data stream (executor). Alpaca's free IEX plan allows 30 streamed symbols.
+    # Live market-data stream (executor). Each symbol is subscribed to quotes, trades and bars.
+    # Alpaca's free IEX plan refused 30 symbols (90 subscriptions, "405 symbol limit exceeded")
+    # and accepted 10 (checked live 2026-10-27), consistent with 30 subscriptions in total.
     stream_enabled: bool = True
-    stream_max_symbols: int = Field(default=30, ge=1, le=1000)
+    stream_max_symbols: int = Field(default=10, ge=1, le=1000)
     stream_data_timeout_seconds: float = Field(default=60.0, ge=10, le=600)
 
     @model_validator(mode="after")

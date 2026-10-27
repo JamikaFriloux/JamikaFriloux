@@ -255,7 +255,7 @@ def test_universe_and_watchlist_endpoints(client, session_factory):
 
     view = client.get("/api/v1/watchlists", headers=viewer).json()
     assert view["watchlists"][0]["symbols"] == [{"symbol": "NVDA", "in_universe": True}]
-    assert view["stream"] == {"symbols": 5, "capacity": 30}  # NVDA + 4 benchmarks
+    assert view["stream"] == {"symbols": 5, "capacity": 10}  # NVDA + 4 benchmarks
     assert view["benchmarks"] == ["SPY", "QQQ", "IWM", "DIA"]
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 204
     assert client.delete("/api/v1/watchlists/core", headers=operator).status_code == 404
