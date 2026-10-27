@@ -18,6 +18,17 @@ def test_fresh_deployment_starts_engaged(db):
     assert kill_switch.is_trading_allowed(db) is False
 
 
+def test_row_created_without_a_state_defaults_to_engaged(session_factory):
+    # Fail closed: a kill-switch row created without an explicit state blocks trading.
+    with session_factory() as s:
+        s.delete(s.get(KillSwitch, 1))
+        s.flush()
+        s.add(KillSwitch(id=1))
+        s.flush()
+        assert s.get(KillSwitch, 1).engaged is True
+        assert kill_switch.is_trading_allowed(s) is False
+
+
 def test_engage_blocks_trading_and_is_idempotent(db):
     _disengage(db)
     assert kill_switch.is_trading_allowed(db)

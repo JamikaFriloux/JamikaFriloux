@@ -105,7 +105,7 @@ class KillSwitch(Base):
     __table_args__ = (CheckConstraint("id = 1", name="kill_switch_singleton"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    engaged: Mapped[bool] = mapped_column(Boolean, default=False)
+    engaged: Mapped[bool] = mapped_column(Boolean, default=True)
     reason: Mapped[str | None] = mapped_column(Text)
     engaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     engaged_by: Mapped[str | None] = mapped_column(String(64))
