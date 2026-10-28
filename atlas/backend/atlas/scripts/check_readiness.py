@@ -15,7 +15,7 @@ Exit 0 when nothing fails, 2 otherwise. Prints no secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 from sqlalchemy import select
@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 from atlas.core.configuration.policy import get_policy
 from atlas.core.configuration.settings import AtlasSettings, RefDataSettings, get_settings
 from atlas.core.data.calendar import NY, MarketCalendar
-from atlas.core.data.ingestion import ingestion_symbols
-from atlas.core.data.universe import current_universe, is_stale
+from atlas.core.data.ingestion import ingestion_symbols, last_completed_session
+from atlas.core.data.universe import current_universe
 from atlas.core.execution.broker import AccountInfo, BrokerOrder, PositionInfo
 from atlas.core.models.db import (
     AccountSnapshot,
@@ -46,6 +46,28 @@ from atlas.core.strategies.registry import passing_validation_report
 # back to Alpaca's REST latest quote when the stream cache is stale.
 REQUIRED_SERVICES = ("worker", "executor", "broker")
 ORDERABLE = (StrategyStatus.PAPER, StrategyStatus.LIVE_CANDIDATE)
+
+
+def required_universe_as_of(now: datetime, calendar: MarketCalendar) -> date:
+    """The snapshot ``as_of`` the most recently opened session trades on.
+
+    A snapshot ``as_of = D`` is built premarket (06:45 NY) for the session after D, so after a
+    close the next snapshot isn't due yet; it is missing only once its session has opened.
+    """
+    day = now.astimezone(NY).date()
+    opened = None
+    for offset in range(0, 15):
+        s = calendar.session(day - timedelta(days=offset))
+        if s is not None and s.open <= now:
+            opened = s.day
+            break
+    if opened is None:  # pragma: no cover - the calendar always has a session within 15 days
+        raise RuntimeError("no session opened in the last 15 days")
+    for offset in range(1, 15):
+        prev = calendar.session(opened - timedelta(days=offset))
+        if prev is not None:
+            return prev.day
+    raise RuntimeError("no session before the last opened one")  # pragma: no cover
 
 
 def _utc(ts: datetime) -> datetime:
@@ -164,11 +186,23 @@ def assess(
         add(f"service {svc}", ok, detail, warn_only=svc == "stream")
 
     uni = current_universe(session)
-    add(
-        "universe",
-        uni is not None and not is_stale(uni, now, calendar),
-        "no snapshot" if uni is None else f"as_of {uni.as_of}",
-    )
+    if uni is None:
+        add("universe", False, "no snapshot")
+    else:
+        required = required_universe_as_of(now, calendar)
+        latest_close = last_completed_session(calendar, now).day
+        if uni.as_of < required:
+            add("universe", False, f"as_of {uni.as_of}; the session in progress needs {required}")
+        elif uni.as_of < latest_close:
+            add(
+                "universe",
+                False,
+                f"as_of {uni.as_of}; the {latest_close} snapshot is built at 06:45 NY before "
+                "the next session",
+                warn_only=True,
+            )
+        else:
+            add("universe", True, f"as_of {uni.as_of}")
 
     watched = ingestion_symbols(session, settings.ingest_default_symbols)
     stale, missing = [], []

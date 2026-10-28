@@ -198,3 +198,24 @@ def test_main_prints_result_and_exit_code(session_factory, settings, monkeypatch
     assert check_readiness.main() == 2
     out = capsys.readouterr().out
     assert "FAIL  kill switch" in out and "RESULT NOT READY" in out
+
+
+def test_universe_is_only_due_once_its_session_opens(db, settings, monkeypatch):
+    _make_ready(db, settings, monkeypatch)  # snapshot as_of 2026-10-26 (Monday)
+
+    def universe(now):
+        checks = assess(
+            db, now=now, broker=BrokerView(_account()), settings=settings, ref=_ref(), calendar=CAL
+        )
+        return next(c for c in checks if c.name == "universe")
+
+    # Tuesday in session: trades on Monday's snapshot.
+    assert universe(NOW).level == "ok"
+    # Tuesday evening: Tuesday's snapshot isn't due until 06:45 Wednesday.
+    evening = universe(datetime(2026, 10, 27, 18, 0, tzinfo=NY).astimezone(UTC))
+    assert evening.level == "warn" and "06:45" in evening.detail
+    # Wednesday premarket, still before the open: not missing yet.
+    assert universe(datetime(2026, 10, 28, 7, 0, tzinfo=NY).astimezone(UTC)).level == "warn"
+    # Wednesday after the open without Tuesday's snapshot: entries would be refused.
+    missing = universe(datetime(2026, 10, 28, 10, 0, tzinfo=NY).astimezone(UTC))
+    assert missing.level == "fail" and "2026-10-27" in missing.detail
