@@ -4,6 +4,10 @@ Source: `MEKA_ALPHA_PRO_v3_SOURCE.pine` — Pine v6 `indicator(...)`, 1,595 line
 
 This document is the original r1 audit (preserved unchanged in `reference/r1/MEKA_ALPHA_PRO_v3_AUDIT_r1.md`) plus a second, independent read of all 1,595 lines. **Everything here is static inspection.** No TradingView compilation, replay or backtest of v3 was performed.
 
+## Part 2 — 4.0 specification gap audit
+
+The October 29, 2026 specification (states WAIT/WATCH/ENTER/HOLD/TAKE PROFIT/EXIT/NO TRADE, five market presets, CHoCH/sweeps/VWAP/sessions, Clean/Detailed views, pending entries, measured statistics) was audited against the 4.0-r2.1 code before implementation. The prioritised list of gaps and how 4.0 closes them is in `CHANGELOG.md` under **4.0**. The v3 findings below remain the basis for the execution model.
+
 ## Re-verification summary (r2 reviewer)
 
 Every finding's quoted lines were re-opened in the source and checked against the claim.

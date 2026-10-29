@@ -1,17 +1,16 @@
-# MEKA ALPHA PRO 4.0-r2 (research build)
+# MEKA ALPHA PRO 4.0
 
-Pine v6 indicator + companion strategy rebuilt from the audited MEKA ALPHA PRO v3. Trend filter + ICC (indication → correction → continuation) research hypothesis. Honest execution model, no performance claims.
+Private TradingView trading assistant (Pine v6 indicator) plus a companion backtesting strategy. It uses a trend-following ICC (indication → correction → continuation) method and gives plain-English instructions: WAIT, WATCH, ENTER, HOLD, TAKE PROFIT, EXIT, NO TRADE. It covers Gold, Nasdaq-100, S&P 500, EUR/USD and USD/JPY, in Scalp and Day Trade modes.
 
-**Not compiled in TradingView, not backtested.** See `MEKA_ALPHA_PRO_4_VALIDATION.md` for exactly what was checked.
+**Not yet compiled by the author in TradingView; not backtested; no performance claims.** See `MEKA_ALPHA_PRO_4_VALIDATION.md`.
 
-| Start here | |
+| | |
 |---|---|
-| Copy into TradingView | `MEKA_ALPHA_PRO_4_INDICATOR.pine`, `MEKA_ALPHA_PRO_4_STRATEGY.pine` |
-| How it works / setup | `MEKA_ALPHA_PRO_4_GUIDE.md` |
+| Paste into TradingView | `MEKA_ALPHA_PRO_4_INDICATOR.pine`, `MEKA_ALPHA_PRO_4_STRATEGY.pine` |
+| Install, settings, logic, limitations, checklist | `MEKA_ALPHA_PRO_4_GUIDE.md` |
 | What was tested | `MEKA_ALPHA_PRO_4_VALIDATION.md` |
-| v3 audit | `MEKA_ALPHA_PRO_v3_AUDIT.md` (original source: `MEKA_ALPHA_PRO_v3_SOURCE.pine`) |
-| r1 → r2 changes | `CHANGELOG.md` |
-| Brief | `MEKA_ALPHA_PRO_4_Claude_Brief.md` |
+| v3 audit | `MEKA_ALPHA_PRO_v3_AUDIT.md` (source: `MEKA_ALPHA_PRO_v3_SOURCE.pine`) |
+| Changes | `CHANGELOG.md` |
 
 Developer commands (Python 3.9+):
 

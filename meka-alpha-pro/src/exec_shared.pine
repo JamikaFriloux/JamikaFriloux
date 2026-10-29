@@ -1,12 +1,10 @@
 // SHARED EXECUTION HELPERS BEGIN
-// Trading-day counters reset at the configured trading-day boundary, never at midnight, and
-// never touch an open position. Execution-dependent gates live here (outside the signal engine)
-// because the indicator simulation and the strategy emulator can legitimately disagree on fills.
+// Trading-day counters reset at 17:00 New York (the futures day roll), never at midnight, and
+// never touch an open position.
 var int dayKey = na
 var float dayR = 0.0
 var int dayEntries = 0
 var int lossStreak = 0
-var array<string> eventLog = array.new<string>()
 int barDayKey = f_dayKey(time)
 if barstate.isconfirmed and (na(dayKey) or barDayKey != dayKey)
     dayKey := barDayKey
@@ -14,23 +12,66 @@ if barstate.isconfirmed and (na(dayKey) or barDayKey != dayKey)
     dayEntries := 0
     lossStreak := 0
 
-f_log(string txt) =>
-    array.unshift(eventLog, str.format_time(time_close, "MM-dd HH:mm", dayTZ) + " " + txt)
-    if array.size(eventLog) > 4
-        array.pop(eventLog)
+f_dayBlock() =>
+    dailyLossR > 0 and dayR <= -dailyLossR ? "Daily loss limit reached. No more entries today." : maxEntries > 0 and dayEntries >= maxEntries ? "Maximum entries for today reached." : maxLossStreak > 0 and lossStreak >= maxLossStreak ? "Paused after " + str.tostring(lossStreak) + " losses in a row." : ""
+
+// Modeled trading costs for one fill of q units: commission + half the spread, plus slippage on
+// market and stop fills. Limit fills (targets, limit entries) pay no slippage.
+f_cost(float q, bool marketLike) =>
+    commUnit * q + (spreadPx / 2 + (marketLike ? slipTicks * syminfo.mintick : 0.0)) * q * unitUSD
+
+// ---- Performance ledger: one record per COMPLETE position (partial targets are not trades) ------
+// Groups: 0 all, 1 long, 2 short, 3 Asia, 4 London, 5 New York, 6 trending, 7 ranging,
+//         8 high volatility, 9 normal volatility, 10 in-sample, 11 out-of-sample.
+var array<float> stN = array.new<float>(12, 0.0)
+var array<float> stW = array.new<float>(12, 0.0)
+var array<float> stSW = array.new<float>(12, 0.0)
+var array<float> stSL = array.new<float>(12, 0.0)
+var array<float> stGW = array.new<float>(12, 0.0)
+var array<float> stGL = array.new<float>(12, 0.0)
+var array<float> stCum = array.new<float>(12, 0.0)
+var array<float> stPeak = array.new<float>(12, 0.0)
+var array<float> stDD = array.new<float>(12, 0.0)
+var array<float> stNet = array.new<float>(12, 0.0)
+var array<int> tpTouch = array.new<int>(3, 0)
+var array<int> tpFill = array.new<int>(3, 0)
+var int ambiguousBars = 0
+
+f_rec(int g, float r, float cash) =>
+    array.set(stN, g, array.get(stN, g) + 1)
+    if r > 0
+        array.set(stW, g, array.get(stW, g) + 1)
+        array.set(stSW, g, array.get(stSW, g) + r)
+    else
+        array.set(stSL, g, array.get(stSL, g) - r)
+    if cash > 0
+        array.set(stGW, g, array.get(stGW, g) + cash)
+    else
+        array.set(stGL, g, array.get(stGL, g) - cash)
+    float cum = array.get(stCum, g) + r
+    array.set(stCum, g, cum)
+    array.set(stPeak, g, math.max(array.get(stPeak, g), cum))
+    array.set(stDD, g, math.max(array.get(stDD, g), array.get(stPeak, g) - cum))
+    array.set(stNet, g, array.get(stNet, g) + cash)
     true
 
-f_dayBlock() =>
-    dailyLossR > 0 and dayR <= -dailyLossR ? "Daily loss gate" : maxEntries > 0 and dayEntries >= maxEntries ? "Max entries this trading day" : maxLossStreak > 0 and lossStreak >= maxLossStreak ? "Loss-streak pause" : ""
+f_record(float r, float cash, int dir, int sess, bool trend, bool hv, bool oos) =>
+    f_rec(0, r, cash)
+    f_rec(dir == 1 ? 1 : 2, r, cash)
+    if sess > 0
+        f_rec(2 + sess, r, cash)
+    f_rec(trend ? 6 : 7, r, cash)
+    f_rec(hv ? 8 : 9, r, cash)
+    f_rec(oos ? 11 : 10, r, cash)
+    true
 
-// Tick-separated, monotonic targets from the frozen signal-close reference and planned risk.
-f_targets(int s, float ref, float risk) =>
-    float t1 = s == 1 ? f_ceilTick(ref + risk * r1) : f_floorTick(ref - risk * r1)
-    float t2 = s == 1 ? math.max(f_ceilTick(ref + risk * r2), t1 + syminfo.mintick) : math.min(f_floorTick(ref - risk * r2), t1 - syminfo.mintick)
-    float t3 = s == 1 ? math.max(f_ceilTick(ref + risk * r3), t2 + syminfo.mintick) : math.min(f_floorTick(ref - risk * r3), t2 - syminfo.mintick)
-    [t1, t2, t3]
+f_bump(array<int> a, int i) =>
+    array.set(a, i, array.get(a, i) + 1)
+    true
 
-f_num(float x) => na(x) ? "null" : str.tostring(x, format.mintick)
-f_payload(string evType, string detail, string basis, string id, string sid, int s, float price, float q, float sl, float t1, float t2, float t3) =>
-    "{\"version\":\"" + VERSION + "\",\"event\":\"" + evType + "\",\"event_id\":\"" + id + ":" + evType + ":" + str.tostring(time_close) + "\",\"detail\":\"" + detail + "\",\"fill_basis\":\"" + basis + "\",\"trade_id\":\"" + id + "\",\"setup_id\":\"" + sid + "\",\"ticker\":\"" + syminfo.tickerid + "\",\"timeframe\":\"" + timeframe.period + "\",\"native_side\":\"" + (s == 1 ? "LONG" : "SHORT") + "\",\"bar_close_ms\":" + str.tostring(time_close) + ",\"price\":" + f_num(price) + ",\"qty\":" + (na(q) ? "null" : str.tostring(q)) + ",\"stop\":" + f_num(sl) + ",\"tp1\":" + f_num(t1) + ",\"tp2\":" + f_num(t2) + ",\"tp3\":" + (useTP3 ? f_num(t3) : "null") + "}"
+// ---- Alerts: structured JSON, one message per distinct event, fired once at bar close ----------
+f_jnum(float x) => na(x) ? "null" : str.tostring(x, format.mintick)
+f_json(string ev, int s, string basis, string id, string msg, float entry, float sl, float t1, float t2, float t3, float q, float riskUsd) =>
+    "{\"app\":\"MEKA ALPHA PRO\",\"version\":\"" + VERSION + "\",\"event\":\"" + ev + "\",\"symbol\":\"" + syminfo.tickerid + "\",\"market\":\"" + fam + "\",\"timeframe\":\"" + timeframe.period + "\",\"mode\":\"" + mode + "\",\"logic\":\"" + framework + "\",\"side\":\"" + (s == 1 ? "LONG" : s == -1 ? "SHORT" : "NONE") + "\",\"session\":\"" + sessName + "\",\"entry\":" + f_jnum(entry) + ",\"stop\":" + f_jnum(sl) + ",\"tp1\":" + f_jnum(t1) + ",\"tp2\":" + f_jnum(t2) + ",\"tp3\":" + (use3 ? f_jnum(t3) : "null") + ",\"qty\":" + (na(q) ? "null" : str.tostring(q)) + ",\"risk_usd\":" + (na(riskUsd) ? "null" : str.tostring(riskUsd, "#.##")) + ",\"basis\":\"" + basis + "\",\"trade_id\":\"" + id + "\",\"bar_close_utc\":\"" + str.format_time(time_close, "yyyy-MM-dd HH:mm:ss", "UTC") + "\",\"message\":\"" + msg + "\"}"
+f_sideWord(int s) => s == 1 ? "LONG" : "SHORT"
 // SHARED EXECUTION HELPERS END

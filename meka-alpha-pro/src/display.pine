@@ -1,57 +1,238 @@
 // SHARED DISPLAY BEGIN
-// Main state: WAIT / ENTER / HOLD / TP / EXIT. Each event label lasts exactly its event bar.
-// Priority when several happen on one bar: EXIT > TP > ENTER > HOLD > WAIT. All events of the bar
-// are kept in the "Last events" history row.
-bool activeView = side != 0
-plot(emaFast, "EMA20", color=color.aqua)
-plot(emaSlow, "EMA50", color=color.orange)
-plot(showLevels and activeView ? refEntry : na, "Signal reference (not a fill)", color=color.yellow, style=plot.style_linebr)
-plot(showLevels and activeView and not pending ? fillEntry : na, "Fill (simulated or emulator)", color=color.white, style=plot.style_linebr)
-plot(showLevels and activeView ? curStop : na, "Protective stop", color=color.red, style=plot.style_linebr)
-plot(showLevels and activeView and part1 > 0 and not done1 ? target1 : na, "TP1", color=color.lime, style=plot.style_linebr)
-plot(showLevels and activeView and (useTP3 ? part2 > 0 and not done2 : not doneFinal) ? target2 : na, "TP2", color=color.green, style=plot.style_linebr)
-plot(showLevels and activeView and useTP3 and not doneFinal ? target3 : na, "TP3", color=color.teal, style=plot.style_linebr)
-plotshape(entered and side == 1, title="Long intent", text="ENTER", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
-plotshape(entered and side == -1, title="Short intent", text="ENTER", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
-plotshape(tpEvent and not exited, title="Partial target", text="TP", style=shape.diamond, location=location.abovebar, color=color.teal, size=size.tiny)
-plotshape(exited, title="Full exit", text="EXIT", style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny)
-// Data Window parity outputs: compare these bar by bar between indicator and strategy.
-plot(signal, "Raw eligible candidate direction", display=display.data_window)
-plot(candidate, "Raw candidate before gates", display=display.data_window)
-plot(setupState, "ICC setup state (0 idle, 1 indicated, 2 corrected)", display=display.data_window)
+// ---- Status: one instruction per bar. Priority: EXIT > TAKE PROFIT > ENTER > HOLD > NO TRADE >
+// WATCH > WAIT. Every event status lasts exactly the bar it happened on.
+string sideName = side == 1 ? "long" : "short"
+string status = exited or earlyNow ? "EXIT" : tpEvent ? "TAKE PROFIT" : side != 0 and pending ? (side == 1 ? "ENTER LONG" : "ENTER SHORT") : side != 0 ? "HOLD" : noTradeText != "" or execBlock != "" ? "NO TRADE" : setupState != 0 ? (setupSide == 1 ? "WATCH LONG" : "WATCH SHORT") : "WAIT"
+string doneWord = basisWord == "simulated" ? "reached (simulated)" : "filled"
+f_tpState(float part, bool done, bool touched) => part <= 0 ? "not used for this size" : done ? doneWord : touched ? "touched, not filled" : "open"
+string nextTarget = part1 > 0 and not done1 ? "TP1 " + f_px(target1) : part2 > 0 and not done2 ? "TP2 " + f_px(target2) : part3 > 0 and not done3 ? "TP3 " + f_px(target3) : "-"
+string tpList = (evTP1 ? "TP1 " : "") + (evTP2 ? "TP2 " : "") + (evTP3 ? "TP3 " : "")
+string actionText = exited ? "Position closed. Wait for the next setup." : earlyNow ? "Close the " + sideName + " at the next open." : tpEvent ? "Take profit: " + tpList + doneWord + ". Hold the remaining " + str.tostring(remaining) + " with the stop at " + f_px(curStop) + "." : side != 0 and pending ? (entered ? (isLimit ? "Place a " + (side == 1 ? "buy" : "sell") + " limit at " + f_px(refEntry) + " (valid " + str.tostring(limitBars) + " bars) with stop and targets." : (side == 1 ? "Buy" : "Sell") + " at the next open (about " + f_px(refEntry) + ") with stop and targets.") : (side == 1 ? "Buy" : "Sell") + " limit at " + f_px(refEntry) + " is working (" + str.tostring(math.max(0, limitBars - (bar_index - submittedBar))) + " bars left).") : side != 0 ? (closing ? "Exit requested - closing at the next open." : "Hold the " + sideName + ". Next target " + nextTarget + ".") : status == "NO TRADE" ? "Stand aside." : setupState != 0 ? (setupSide == 1 ? "Get ready to buy." : "Get ready to sell.") : "Do nothing yet."
+string reasonText = exited ? lastExitText : earlyNow ? closingWhy : side != 0 ? (evFill ? (side == 1 ? "Long" : "Short") + " filled at " + f_px(fillEntry) + (fillRiskRatio > 1.05 ? " (gap: risk " + str.tostring(fillRiskRatio, "#.#") + "x planned)" : "") + "." : tradeName + " setup. Stop " + f_px(curStop) + (curStop != initialStop ? " (moved from " + f_px(initialStop) + ")" : "") + ".") : cancelNow ? cancelText : execBlock != "" ? execBlock : noTradeText != "" ? noTradeText : setupState != 0 ? watchText : rejectText != "" ? rejectText : setupCanceled ? setupEndText : waitText
+string setupLine = side != 0 ? tradeName : setupState == 1 ? "ICC: break confirmed, waiting for pullback" : setupState == 2 ? "ICC: pullback done, waiting for trigger" : framework == "ICC hybrid" ? "No active setup" : framework
+string tradeLine = side == 0 ? "Flat" : pending ? "Order working" : (side == 1 ? "Long" : "Short") + " open: " + str.tostring(remaining) + " of " + str.tostring(initialQty) + " units left"
 
+// ---- Palette (dark-chart friendly, restrained) ---------------------------------------------------
+color cBg = color.rgb(13, 17, 28)
+color cHead = color.rgb(22, 29, 46)
+color cTxt = color.rgb(226, 232, 240)
+color cMute = color.rgb(148, 163, 184)
+color cUp = color.rgb(34, 197, 94)
+color cDn = color.rgb(239, 68, 68)
+color cAmber = color.rgb(245, 158, 11)
+color cBlue = color.rgb(96, 165, 250)
+color cGray = color.rgb(100, 116, 139)
+color statusColor = str.contains(status, "LONG") and not str.contains(status, "WATCH") ? cUp : str.contains(status, "SHORT") and not str.contains(status, "WATCH") ? cDn : status == "HOLD" ? cBlue : status == "TAKE PROFIT" ? color.rgb(20, 184, 166) : status == "EXIT" ? cAmber : str.contains(status, "WATCH") ? color.rgb(202, 138, 4) : status == "NO TRADE" ? color.rgb(127, 29, 29) : cGray
+bool detailed = viewMode == "Detailed"
+
+// ---- Indicator lines (Detailed view only) -------------------------------------------------------
+plot(detailed ? emaFast : na, "EMA 20", color=color.new(cBlue, 40))
+plot(detailed ? emaSlow : na, "EMA 50", color=color.new(cAmber, 50))
+plot(detailed and vwapReq ? vwapVal : na, "VWAP", color=color.new(color.white, 60), style=plot.style_circles)
+bool sl = detailed and showSessLv
+plot(sl ? sAsia.lastHi : na, "Prior Asia high", color=color.new(cMute, 55), style=plot.style_stepline)
+plot(sl ? sAsia.lastLo : na, "Prior Asia low", color=color.new(cMute, 55), style=plot.style_stepline)
+plot(sl ? sLondon.lastHi : na, "Prior London high", color=color.new(cBlue, 60), style=plot.style_stepline)
+plot(sl ? sLondon.lastLo : na, "Prior London low", color=color.new(cBlue, 60), style=plot.style_stepline)
+plot(sl ? sNY.lastHi : na, "Prior New York high", color=color.new(cAmber, 60), style=plot.style_stepline)
+plot(sl ? sNY.lastLo : na, "Prior New York low", color=color.new(cAmber, 60), style=plot.style_stepline)
+// Data Window outputs for indicator-vs-strategy parity checks.
+plot(signal, "Signal (+1 long, -1 short)", display=display.data_window)
+plot(candidate, "Candidate before filters", display=display.data_window)
+plot(setupState, "ICC stage (0 idle, 1 indicated, 2 corrected)", display=display.data_window)
+
+if barstate.isconfirmed and detailed
+    // Structure breaks: line from the swing that was broken to the bar that broke it.
+    if breakUp
+        line.new(breakUpOrigin, breakUpLevel, bar_index, breakUpLevel, color=color.new(cUp, 30), style=line.style_dotted)
+        label.new(math.round((breakUpOrigin + bar_index) / 2), breakUpLevel, chochUp ? "CHoCH" : "BOS", style=label.style_none, textcolor=cUp, size=size.small)
+    if breakDn
+        line.new(breakDnOrigin, breakDnLevel, bar_index, breakDnLevel, color=color.new(cDn, 30), style=line.style_dotted)
+        label.new(math.round((breakDnOrigin + bar_index) / 2), breakDnLevel, chochDn ? "CHoCH" : "BOS", style=label.style_none, textcolor=cDn, size=size.small)
+    if sweepLow
+        label.new(bar_index, low, "Sweep", style=label.style_label_up, color=color.new(cBg, 100), textcolor=color.new(cUp, 10), size=size.tiny)
+    if sweepHigh
+        label.new(bar_index, high, "Sweep", style=label.style_label_down, color=color.new(cBg, 100), textcolor=color.new(cDn, 10), size=size.tiny)
+
+// ICC pullback zone (Detailed): drawn from the indication bar while the setup is alive.
+var box zoneBox = na
+float dLeg = math.abs(impExt - impOrigin)
+float dTop = setupSide == 1 ? (useFib ? impExt - fibShallow * dLeg : brokenLevel + retestPad * indATR) : (useFib ? impExt + fibDeep * dLeg : brokenLevel + retestPad * indATR)
+float dBot = setupSide == 1 ? (useFib ? impExt - fibDeep * dLeg : brokenLevel - retestPad * indATR) : (useFib ? impExt + fibShallow * dLeg : brokenLevel - retestPad * indATR)
+if barstate.isconfirmed and detailed
+    if setupFormed
+        zoneBox := box.new(indBar, dTop, bar_index + 1, dBot, border_color=color.new(setupSide == 1 ? cUp : cDn, 60), bgcolor=color.new(setupSide == 1 ? cUp : cDn, 88), text="ICC pullback zone", text_color=color.new(cTxt, 40), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
+    else if setupState != 0 and not na(zoneBox)
+        box.set_right(zoneBox, bar_index + 1)
+        if setupState == 1
+            box.set_top(zoneBox, dTop)
+            box.set_bottom(zoneBox, dBot)
+    else if prevState != 0 and setupState == 0 and not na(zoneBox)
+        box.set_right(zoneBox, bar_index)
+        zoneBox := na
+
+// Opening range of the active session (Detailed).
+var box orBox = na
+if barstate.isconfirmed and sl and not na(sMain)
+    if sMain.startBar == bar_index or na(orBox)
+        orBox := box.new(sMain.startBar, sMain.orHi, bar_index, sMain.orLo, border_color=color.new(cMute, 50), bgcolor=color.new(cMute, 92), text="Opening range", text_color=color.new(cMute, 30), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
+    else
+        box.set_top(orBox, sMain.orHi)
+        box.set_bottom(orBox, sMain.orLo)
+        box.set_right(orBox, sMain.orDone ? sMain.orEndBar : bar_index)
+if barstate.isconfirmed and na(sMain)
+    orBox := na
+
+// ---- Trade markers and level lines (both views) --------------------------------------------------
+if entered
+    label.new(bar_index, side == 1 ? low : high, side == 1 ? "BUY" : "SELL", style=side == 1 ? label.style_label_up : label.style_label_down, color=side == 1 ? cUp : cDn, textcolor=color.white, size=size.normal)
+if evFill and isLimit and detailed
+    label.new(bar_index, fillEntry, "Filled", style=label.style_label_left, color=color.new(cBg, 100), textcolor=cTxt, size=size.tiny)
+if tpEvent and not exited
+    label.new(bar_index, evSide == 1 ? high : low, str.trim(tpList), style=evSide == 1 ? label.style_label_down : label.style_label_up, color=color.rgb(20, 184, 166), textcolor=color.white, size=size.small)
+if exited or earlyNow
+    label.new(bar_index, evSide == 1 ? high : low, evStopHit ? "STOP" : tpEvent ? "TP / EXIT" : "EXIT", style=evSide == 1 ? label.style_label_down : label.style_label_up, color=evStopHit ? cDn : cAmber, textcolor=color.white, size=size.small)
+
+var line lnE = na
+var line lnS = na
+var line ln1 = na
+var line ln2 = na
+var line ln3 = na
+var label lbE = na
+var label lbS = na
+var label lb1 = na
+var label lb2 = na
+var label lb3 = na
+var float drawnStop = na
+f_kill(line l) =>
+    if not na(l)
+        line.delete(l)
+    true
+f_killL(label l) =>
+    if not na(l)
+        label.delete(l)
+    true
+f_tag(label l, float y, string txt, color c) =>
+    label lab = l
+    if na(y)
+        f_killL(lab)
+        lab := na
+    else if na(lab)
+        lab := label.new(bar_index + 3, y, txt, style=label.style_label_left, color=color.new(cBg, 20), textcolor=c, size=size.small)
+    else
+        label.set_xy(lab, bar_index + 3, y)
+        label.set_text(lab, txt)
+    lab
+if barstate.isconfirmed
+    if entered
+        if not detailed
+            f_kill(lnE)
+            f_kill(lnS)
+            f_kill(ln1)
+            f_kill(ln2)
+            f_kill(ln3)
+        lnE := line.new(bar_index, refEntry, bar_index + 1, refEntry, color=color.new(cTxt, 30), style=line.style_dashed, width=1)
+        lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=2)
+        ln1 := part1 > 0 ? line.new(bar_index, target1, bar_index + 1, target1, color=color.new(cUp, 10), style=line.style_dotted, width=2) : na
+        ln2 := line.new(bar_index, target2, bar_index + 1, target2, color=color.new(cUp, 10), style=line.style_dotted, width=2)
+        ln3 := use3 and part3 > 0 ? line.new(bar_index, target3, bar_index + 1, target3, color=color.new(cUp, 10), style=line.style_dotted, width=2) : na
+        drawnStop := curStop
+    else if side != 0
+        if curStop != drawnStop
+            line.set_x2(lnS, bar_index)
+            if not detailed
+                f_kill(lnS)
+            lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=2)
+            drawnStop := curStop
+        for l in array.from(lnE, lnS, ln1, ln2, ln3)
+            if not na(l)
+                line.set_x2(l, bar_index + 1)
+    else if exited or cancelNow
+        for l in array.from(lnE, lnS, ln1, ln2, ln3)
+            if not na(l)
+                line.set_x2(l, bar_index)
+                if not detailed
+                    line.delete(l)
+bool showTags = side != 0
+lbE := f_tag(lbE, showTags ? refEntry : na, (pending ? "Entry (order) " : "Entry ") + f_px(pending ? refEntry : fillEntry), cTxt)
+lbS := f_tag(lbS, showTags ? curStop : na, "Stop " + f_px(curStop), cDn)
+lb1 := f_tag(lb1, showTags and part1 > 0 and not done1 ? target1 : na, "TP1 " + f_px(target1), cUp)
+lb2 := f_tag(lb2, showTags and part2 > 0 and not done2 ? target2 : na, "TP2 " + f_px(target2), cUp)
+lb3 := f_tag(lb3, showTags and use3 and part3 > 0 and not done3 ? target3 : na, "TP3 " + f_px(target3), cUp)
+
+// ---- Premium dashboard ---------------------------------------------------------------------------
+f_wrap(string txt, int w) =>
+    string out = ""
+    int len = 0
+    for wd in str.split(txt, " ")
+        int n = str.length(wd)
+        if len > 0 and len + 1 + n > w
+            out += "\n" + wd
+            len := n
+        else
+            out += (len > 0 ? " " : "") + wd
+            len += (len > 0 ? 1 : 0) + n
+    out
 dashPos = dashPosIn == "Top left" ? position.top_left : dashPosIn == "Bottom right" ? position.bottom_right : dashPosIn == "Bottom left" ? position.bottom_left : position.top_right
-dashSize = dashSizeIn == "Tiny" ? size.tiny : dashSizeIn == "Normal" ? size.normal : size.small
-var table dash = showDash ? table.new(dashPos, 2, 14, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 60)) : na
+tSize = dashSizeIn == "Small" ? size.small : dashSizeIn == "Large" ? size.large : size.normal
+tBig = dashSizeIn == "Small" ? size.normal : dashSizeIn == "Large" ? size.huge : size.large
+var table dash = table.new(dashPos, 2, 17, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cHead, border_width=1)
 f_row(int r, string k, string v, color vc) =>
-    table.cell(dash, 0, r, k, text_color=color.silver, text_size=dashSize, text_halign=text.align_left)
-    table.cell(dash, 1, r, v, text_color=vc, text_size=dashSize, text_halign=text.align_left)
+    table.cell(dash, 0, r, k, text_color=cMute, text_size=tSize, text_halign=text.align_left, bgcolor=cBg)
+    table.cell(dash, 1, r, v, text_color=vc, text_size=tSize, text_halign=text.align_left, bgcolor=cBg)
     r + 1
-if barstate.islast and showDash
-    table.clear(dash, 0, 0, 1, 13)
-    color stateColor = status == "EXIT" ? color.orange : status == "TP" ? color.teal : status == "ENTER" ? color.blue : status == "HOLD" ? color.green : color.gray
-    string dirText = side == 1 ? "LONG" : side == -1 ? "SHORT" : "FLAT"
-    string jpyText = profile == "JPY" and side != 0 ? (jpyPerUsdQuote ? " = long " + (side == 1 ? "JPY (USDJPY-equiv SHORT)" : "USD (USDJPY-equiv LONG)") : " = long " + (side == 1 ? "USD vs JPY" : "JPY vs USD")) : ""
-    string fillText = not activeView ? "-" : str.tostring(refEntry, format.mintick) + " / " + (pending ? "pending" : str.tostring(fillEntry, format.mintick)) + (na(fillRiskRatio) ? "" : " | fill risk " + str.tostring(fillRiskRatio, "#.##") + "x plan")
-    string tpText = not activeView ? "-" : (part1 > 0 ? str.tostring(target1, format.mintick) + (done1 ? " done" : "") : "skip") + " / " + (useTP3 and part2 == 0 ? "skip" : str.tostring(target2, format.mintick)) + (useTP3 ? " / " + str.tostring(target3, format.mintick) : "")
-    string stopText = activeView ? str.tostring(initialStop, format.mintick) + " / " + str.tostring(curStop, format.mintick) : "-"
-    int newsCount = (news1On ? 1 : 0) + (news2On ? 1 : 0) + (news3On ? 1 : 0)
-    table.cell(dash, 0, 0, "MEKA " + VERSION + " (uncalibrated)", text_color=color.white, text_size=dashSize)
-    table.cell(dash, 1, 0, status, text_color=color.white, bgcolor=stateColor, text_size=dashSize)
+if barstate.islast
+    table.clear(dash, 0, 0, 1, 16)
+    string modeLine = mode + " · confirms on " + f_tfName(tf1) + (useTF2 ? " + " + f_tfName(tf2) : "")
+    table.cell(dash, 0, 0, "MEKA ALPHA PRO\n" + fam + " · " + mode, text_color=cTxt, text_size=tSize, text_halign=text.align_left, bgcolor=cHead)
+    table.cell(dash, 1, 0, status, text_color=color.white, text_size=tBig, bgcolor=statusColor)
     int r = 1
-    r := f_row(r, profile + " / " + mode, dirText + jpyText, color.white)
-    r := f_row(r, sessionText == "" ? "No entry window" : sessionText, detail, marketOK ? color.white : color.orange)
-    r := f_row(r, "Setup", setupText, color.white)
-    if dashFull or activeView
-        r := f_row(r, "Reference / fill", fillText, color.white)
-        r := f_row(r, "Stop initial / now", stopText, color.white)
-        r := f_row(r, "TP1 / TP2" + (useTP3 ? " / TP3" : ""), tpText, color.white)
-    r := f_row(r, "Units", (activeView ? str.tostring(initialQty) + " / " + str.tostring(remaining) + " " : "") + posState, color.white)
-    r := f_row(r, "Day (" + resultLabel + ")", str.tostring(dayR, "#.##") + "R | entries " + str.tostring(dayEntries) + " | streak " + str.tostring(lossStreak) + (execBlock != "" ? " | BLOCK: " + execBlock : ""), execBlock != "" ? color.orange : color.white)
-    if dashFull
-        r := f_row(r, "Execution", executionLabel, color.yellow)
-        r := f_row(r, "News / blocks", (newsBlocked ? "BLOCKED now" : "clear") + " | " + str.tostring(newsCount) + " manual" + (recurOn ? " + daily" : "") + " | no calendar feed", newsBlocked ? color.orange : color.yellow)
-        r := f_row(r, "Tick / USD per unit / step", str.tostring(syminfo.mintick) + " / " + (na(unitUSD) ? "UNKNOWN" : str.tostring(unitUSD, "#.######")) + " (" + unitSource + ") / " + str.tostring(qtyStep), marketOK ? color.white : color.orange)
-        r := f_row(r, "Volume", volumeText, volumeRequired and volumeMissing ? color.orange : color.white)
-        r := f_row(r, "Last events", array.size(eventLog) == 0 ? "-" : array.join(eventLog, "\n"), color.white)
+    r := f_row(r, "Next step", f_wrap(actionText, 42), cTxt)
+    r := f_row(r, status == "EXIT" ? "Why" : side != 0 ? "Details" : "Missing", f_wrap(reasonText, 42), status == "NO TRADE" ? color.rgb(252, 165, 165) : cTxt)
+    if detailed
+        r := f_row(r, "Instrument", syminfo.ticker + " · " + fam + " · " + timeframe.period + "m chart", cTxt)
+        r := f_row(r, "Mode", modeLine, cTxt)
+        r := f_row(r, "Filters", filterText, cMute)
+        r := f_row(r, "Session", sessName + (not na(sMain) ? (sMain.orDone ? " · opening range set" : " · opening range forming") : ""), sessCode > 0 ? cTxt : cMute)
+        r := f_row(r, "Market bias", biasText + " (" + biasDetail + ")", htfBias == 1 ? cUp : htfBias == -1 ? cDn : cMute)
+        r := f_row(r, "Setup", setupLine, cTxt)
+        r := f_row(r, "Trade", tradeLine, side != 0 ? cBlue : cMute)
+    if side != 0
+        r := f_row(r, pending ? "Entry (order)" : "Entry", f_px(pending ? refEntry : fillEntry), cTxt)
+        r := f_row(r, "Stop", f_px(curStop) + (curStop != initialStop ? "  (moved)" : ""), cDn)
+        r := f_row(r, "TP1", part1 > 0 ? f_px(target1) + "  · " + f_tpState(part1, done1, touched1) : "skipped (size too small)", cUp)
+        r := f_row(r, "TP2", f_px(target2) + "  · " + f_tpState(part2, done2, touched2), cUp)
+        if use3
+            r := f_row(r, "TP3", f_px(target3) + "  · " + f_tpState(part3, done3, touched3), cUp)
+        r := f_row(r, "Risk / size", "$" + str.tostring(plannedCash, "#,###.##") + " · " + str.tostring(initialQty) + " units · " + str.tostring(remaining) + " open", cTxt)
+    else
+        r := f_row(r, "Risk per trade", "$" + str.tostring(account * riskPct / 100, "#,###.##") + " (" + str.tostring(riskPct) + "% of $" + str.tostring(account, "#,###") + ")", cMute)
+
+// ---- Performance table (complete positions, after modeled costs) --------------------------------
+statsPos = statsPosIn == "Bottom right" ? position.bottom_right : statsPosIn == "Top left" ? position.top_left : statsPosIn == "Top right" ? position.top_right : position.bottom_left
+var table perf = table.new(statsPos, 9, 15, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cHead, border_width=1)
+var array<string> grpNames = array.from("All trades", "Long", "Short", "Asia", "London", "New York", "Trending (ADX 25+)", "Ranging", "High volatility", "Normal volatility", "In-sample", "Out-of-sample")
+if barstate.islast and showStats
+    table.clear(perf, 0, 0, 8, 14)
+    table.cell(perf, 0, 0, "Measured performance (" + basisWord + ", after modeled costs)", text_color=cTxt, text_size=size.small, text_halign=text.align_left, bgcolor=cHead)
+    table.cell(perf, 1, 0, fam + " · " + mode + " · " + framework + " · " + timeframe.period + "m", text_color=cMute, text_size=size.small, text_halign=text.align_left, bgcolor=cHead)
+    array<string> heads = array.from("Group", "Trades", "Win rate", "Avg win", "Avg loss", "Profit factor", "Expectancy", "Max drawdown", "Net USD")
+    for c = 0 to 8
+        table.cell(perf, c, 1, array.get(heads, c), text_color=cMute, text_size=size.small, bgcolor=cBg)
+    for g = 0 to 11
+        float n = array.get(stN, g)
+        float w = array.get(stW, g)
+        float gl = array.get(stGL, g)
+        string pf = n == 0 ? "-" : gl == 0 ? (array.get(stGW, g) > 0 ? "no losses" : "-") : str.tostring(array.get(stGW, g) / gl, "#.##")
+        table.cell(perf, 0, g + 2, array.get(grpNames, g), text_color=cTxt, text_size=size.small, text_halign=text.align_left, bgcolor=cBg)
+        table.cell(perf, 1, g + 2, str.tostring(n, "#"), text_color=n < 30 ? cAmber : cTxt, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 2, g + 2, n == 0 ? "-" : str.tostring(w / n * 100, "#.#") + "%", text_color=cTxt, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 3, g + 2, w == 0 ? "-" : "+" + str.tostring(array.get(stSW, g) / w, "#.##") + "R", text_color=cUp, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 4, g + 2, n - w == 0 ? "-" : "-" + str.tostring(array.get(stSL, g) / (n - w), "#.##") + "R", text_color=cDn, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 5, g + 2, pf, text_color=cTxt, text_size=size.small, bgcolor=cBg)
+        float ex = n == 0 ? na : (array.get(stSW, g) - array.get(stSL, g)) / n
+        table.cell(perf, 6, g + 2, na(ex) ? "-" : (ex >= 0 ? "+" : "") + str.tostring(ex, "#.##") + "R", text_color=na(ex) ? cMute : ex >= 0 ? cUp : cDn, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 7, g + 2, n == 0 ? "-" : str.tostring(array.get(stDD, g), "#.##") + "R", text_color=cTxt, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 8, g + 2, n == 0 ? "-" : str.tostring(array.get(stNet, g), "#,###.##"), text_color=array.get(stNet, g) >= 0 ? cUp : cDn, text_size=size.small, bgcolor=cBg)
+    table.cell(perf, 0, 14, "Targets touched / " + doneWord + ": TP1 " + str.tostring(array.get(tpTouch, 0)) + "/" + str.tostring(array.get(tpFill, 0)) + " · TP2 " + str.tostring(array.get(tpTouch, 1)) + "/" + str.tostring(array.get(tpFill, 1)) + (use3 ? " · TP3 " + str.tostring(array.get(tpTouch, 2)) + "/" + str.tostring(array.get(tpFill, 2)) : "") + (basisWord == "simulated" ? " · stop-first bars " + str.tostring(ambiguousBars) : "") + " · amber = under 30 trades", text_color=cMute, text_size=size.tiny, text_halign=text.align_left, bgcolor=cBg)
 // SHARED DISPLAY END

@@ -1,5 +1,44 @@
 # Changelog
 
+## 4.0 — October 29, 2026 (new development requirements)
+
+Rebuilt on the 4.0-r2.1 code following the user's new 4.0 specification, which takes priority over earlier design decisions.
+
+**Gap audit of 4.0-r2.1 against the new specification (highest priority first)**
+
+1. No WATCH / NO TRADE / TAKE PROFIT states and no "next action". The dashboard used internal codes, IDs and timestamps.
+2. No CHoCH, liquidity sweeps, VWAP, session highs/lows or opening ranges. Bias used a single higher timeframe (no 1H + 4H for DAY).
+3. Identical thresholds for every market.
+4. Allocations hard-coded; no ATR stop, structure trail or early invalidation exit; no touched-vs-filled distinction.
+5. No pending limit entries, so no "pending entry filled / canceled" events. The indicator simulation ignored costs.
+6. No in-script statistics (win rate, PF, expectancy, drawdown) by session/regime, no in/out-of-sample split, no breakout baseline.
+7. No Clean/Detailed views and no BOS/CHoCH, sweep or zone drawings.
+8. Found during implementation: the Gold preset would have required VWAP on TVC:GOLD, which has no volume, so every entry would have been blocked.
+
+**Implemented**
+
+- **States and dashboard:** WAIT, WATCH LONG/SHORT, ENTER LONG/SHORT, HOLD, TAKE PROFIT, EXIT, NO TRADE. Premium dashboard in plain English (next step + what is missing). Clean and Detailed layouts, position and text size. No IDs, timestamps or programming terms.
+- **Market presets** (Gold, Nasdaq-100, S&P 500, EUR/USD, USD/JPY) per mode: confirmation timeframes, swing strength, break-candle body, ADX, ATR % minimum, stop range and buffer, extension limit, VWAP/volume filters, sessions, illustrative costs. Custom thresholds group for every value.
+- **Two confirmation timeframes:** 15m + 1H for Scalp, 1H + 4H for Day. Both use confirmed-candle `request.security` with `[1]` + `lookahead_on`.
+- **Structure engine:** confirmed swings, BOS vs CHoCH (each swing broken once), liquidity sweeps of swings and previous session highs/lows.
+- **ICC:**
+  - Correction = retracement 38.2–78.6% of the impulse and/or broken-level retest.
+  - Invalidation = close beyond the impulse origin.
+  - Trigger = high/low of the deepest pullback candle.
+  - Optional VWAP side, volume and required sweep.
+- **Sessions:** Asia/London/New York tracking (IANA zones) of highs, lows and opening ranges. Market-specific entry windows and full-session hours (FX/gold NY 08:00–17:00 vs index cash 09:30–16:00).
+- **Baselines:** trend pullback and opening-range breakout with identical execution and costs.
+- **Management:**
+  - Structure / ATR / wider stop.
+  - Configurable 2- and 3-target allocations (50/50, 50/30/20).
+  - Optional BE (default off, to be tested), ATR or swing trail after TP1.
+  - Early exits on structure break or bias flip; max hold; gap-risk exit.
+- **Execution:** market-at-next-open or limit-at-retest entries with trade-through fills, expiry and cancel events. Conservative intrabar rules in the indicator. Modeled commission, spread and slippage in both scripts. Strategy declares `backtest_fill_limits_assumption=1`.
+- **Measurement:** performance table by all/long/short/session/trend regime/volatility regime/in-sample/out-of-sample, with targets touched vs filled and stop-first counts.
+- **Alerts:** JSON for SETUP_FORMING, LONG/SHORT_ENTRY_CONFIRMED, ENTRY_FILLED, TP1/2/3_REACHED, STOP_HIT, EARLY_EXIT and SETUP_CANCELED, each with a human `message` for Telegram, plus named `alertcondition`s in the indicator.
+- **Feed-aware filters:** VWAP/volume presets only switch on when the feed reports volume; the dashboard says so.
+- **Tests:** reference model rewritten for the 4.0 rules; 36 tests.
+
 ## 4.0-r2.1 — October 29, 2026 (first TradingView feedback)
 
 - The user reported the strategy compiled and ran on `TVC:GOLD` 1m. The family showed **Unknown**, so every entry was blocked. Auto-detection now also matches common CFD and spot tickers: `GOLD`, `XAUUSD`, `GOLDUSD`, `NAS100`, `US100`, `USTEC`, `SPX500`, `US500`, `EURUSD`, `USDJPY` and their variants. The manual *Market family* override still wins.

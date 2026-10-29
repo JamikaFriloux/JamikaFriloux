@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Deterministic scenario + randomized property tests for the 4.0-r2 rules.
+"""Deterministic scenario + randomized property tests for the MEKA ALPHA PRO 4.0 rules.
 
 Run: python3 -I tools/test_reference.py   (stdlib only; Python 3.9+ for zoneinfo)
 These exercise tools/reference_model.py (a Python port) plus a port of the Pine session /
-trading-day formulas. They do NOT execute Pine or TradingView's broker emulator.
+trading-day formulas, and run static checks on the generated Pine text. They do NOT execute
+Pine or TradingView's broker emulator.
 """
 import pathlib
 import random
@@ -14,160 +15,253 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from reference_model import Bar, Cfg, Engine, Sim, parts, run, targets, floor_tick, ceil_tick  # noqa: E402
+from reference_model import Bar, Cfg, Sim, parts, run, targets, floor_tick, ceil_tick  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+NOEXIT = dict(exit_on_choch=False)
 
 
 def icc_bars():
     raw = [
-        (100, 101, 99, 100), (100, 102, 99.5, 101), (101, 105, 100.5, 104), (104, 104.5, 102, 103),
-        (103, 103.5, 101, 102), (102, 104, 101.5, 103.5),
-        (103.6, 106.2, 103.4, 106),   # 6 indication: close breaks pivot 105 (+1 tick), body 2.4 >= 0.6 ATR
-        (105.8, 106, 105, 105.5),     # 7 correction: retest band 104.75-105.25, trigger = 106
-        (105.6, 107, 105.3, 106.8),   # 8 continuation: close > 106.25, bullish
-        (106.9, 107.2, 106.5, 107),   # 9 fill bar
+        (101, 102, 100.5, 101.5), (101.5, 103, 101, 102.5), (102.5, 105, 102, 104),  # 2: swing high 105
+        (104, 104.5, 100.8, 101.5), (101.5, 103.5, 101.2, 103),   # 4: swing high 105 confirmed
+        (103, 104, 101.5, 103.6),     # 5: swing low 100.8 (bar 3) confirmed -> impulse origin
+        (103.6, 106.2, 103.4, 106),   # 6: indication - close breaks 105 by > 1 tick, body 2.4 ATR
+        (105.8, 106, 105, 105.5),     # 7: correction - retest band 104.75-105.25, trigger 106
+        (105.6, 107, 105.3, 106.8),   # 8: continuation - bullish close above 106.25
+        (106.9, 107.2, 106.5, 107),   # 9: fill bar
     ]
     return [Bar(*r) for r in raw]
 
 
+def stages(eng):
+    return [(e[0], e[1]) for e in eng.log if e[1] in ("INDICATION", "CORRECTION", "CONTINUATION")]
+
+
+class Structure(unittest.TestCase):
+    def test_choch_then_bos_and_swing_broken_once(self):
+        eng, _, _ = run(icc_bars(), Cfg(**NOEXIT))
+        kinds = [(e[0], e[1]) for e in eng.log if e[1] in ("BOS_UP", "CHOCH_UP", "BOS_DN", "CHOCH_DN")]
+        self.assertEqual(kinds, [(6, "CHOCH_UP")])  # first break with no prior trend = CHoCH
+        bars = icc_bars() + [Bar(107, 107.1, 105.6, 106), Bar(106, 106.5, 105.7, 106.2), Bar(106.2, 108.5, 106.1, 108.4)]
+        eng, _, _ = run(bars, Cfg(**NOEXIT))
+        ups = [e[1] for e in eng.log if e[1] in ("BOS_UP", "CHOCH_UP")]
+        self.assertEqual(ups[0], "CHOCH_UP")
+        self.assertTrue(all(k == "BOS_UP" for k in ups[1:]))
+        self.assertEqual(len(ups), len({e[2] for e in eng.log if e[1] in ("BOS_UP", "CHOCH_UP")}))
+
+    def test_choch_can_be_disallowed(self):
+        eng, _, out = run(icc_bars(), Cfg(allow_choch=False, **NOEXIT))
+        self.assertEqual(stages(eng), [])
+
+    def test_sweep_detection(self):
+        bars = icc_bars()[:6] + [Bar(103.5, 103.7, 100.6, 101.2)]  # wick below swing low 100.8, close back above
+        _, _, out = run(bars, Cfg(**NOEXIT))
+        self.assertTrue(out[6]["events"]["sweep_low"])
+
+
 class ICCStages(unittest.TestCase):
     def test_three_distinct_bars(self):
-        eng, sim, out = run(icc_bars(), Cfg())
-        stages = [(e[0], e[1]) for e in eng.log if e[1] in ("INDICATION", "CORRECTION", "CONTINUATION")]
-        self.assertEqual(stages, [(6, "INDICATION"), (7, "CORRECTION"), (8, "CONTINUATION")])
+        eng, sim, out = run(icc_bars(), Cfg(**NOEXIT))
+        self.assertEqual(stages(eng), [(6, "INDICATION"), (7, "CORRECTION"), (8, "CONTINUATION")])
         self.assertEqual(out[8]["signal"], 1)
-        # Stop beyond correction extremes incl. the continuation bar: min(105, 105.3) - 0.15 -> 104.75
-        self.assertAlmostEqual(out[8]["stop"], 104.75)
-        self.assertEqual(out[8]["qty"], 24.0)  # floor(50 / 2.05)
+        self.assertAlmostEqual(out[8]["stop"], 104.75)    # min(105, 105.3) - 0.15 -> tick floor
+        self.assertEqual(out[8]["qty"], 24.0)              # floor(50 / 2.05)
 
     def test_stages_never_collapse_on_one_bar(self):
-        bars = icc_bars()[:6]
-        # One huge bar satisfying indication, retest band and a close above its own high-ish trigger.
-        bars.append(Bar(103.6, 107, 104.8, 106.9))
-        eng, sim, out = run(bars, Cfg())
-        self.assertEqual([e[1] for e in eng.log if e[0] == 6 and e[1] in ("INDICATION", "CORRECTION", "CONTINUATION")], ["INDICATION"])
+        bars = icc_bars()[:6] + [Bar(103.6, 107, 104.8, 106.9)]
+        eng, _, out = run(bars, Cfg(**NOEXIT))
+        self.assertEqual(stages(eng), [(6, "INDICATION")])
         self.assertEqual(out[6]["signal"], 0)
 
-    def test_no_indication_before_pivot_available(self):
-        eng, _, _ = run(icc_bars(), Cfg())
-        first_pivot = min(e[0] for e in eng.log if e[1] == "PIVOT_HIGH_AVAILABLE")
-        self.assertEqual(first_pivot, 4)  # origin bar 2 + strength 2
-        self.assertTrue(all(e[0] > first_pivot for e in eng.log if e[1] == "INDICATION"))
+    def test_no_indication_without_known_swing(self):
+        eng, _, _ = run(icc_bars(), Cfg(**NOEXIT))
+        first_low = min(e[0] for e in eng.log if e[1] == "PIVOT_LOW_AVAILABLE")
+        self.assertEqual(first_low, 5)
+        self.assertTrue(all(e[0] > first_low for e in eng.log if e[1] == "INDICATION"))
 
-    def test_trigger_frozen_and_correction_strictly_later(self):
-        bars = icc_bars()
-        bars[8] = Bar(105.6, 106.2, 105.1, 106.1)   # closes above 106 but not above 106 + 1 tick
-        bars[9] = Bar(106.1, 106.6, 105.9, 106.5)   # breaks the frozen 106 trigger by > 1 tick
-        eng, _, out = run(bars, Cfg())
+    def test_deeper_pullback_moves_trigger_to_that_bar(self):
+        bars = icc_bars()[:8] + [Bar(105.4, 105.6, 104.6, 105.0), Bar(105.1, 106.0, 105.0, 105.9)]
+        eng, _, out = run(bars, Cfg(**NOEXIT))
         self.assertEqual(out[8]["signal"], 0)
-        self.assertEqual(out[9]["signal"], 1)
-        self.assertAlmostEqual(out[9]["stop"], 104.75)  # min(105, 105.1, 105.9) - 0.15 -> tick floor
+        # Bar 6's 106.2 high becomes a confirmed swing on bar 8: only 0.3 of room above 105.9.
+        self.assertEqual(out[9]["cand"], 1)
+        self.assertFalse(out[9]["room_ok"])
+        self.assertEqual(out[9]["signal"], 0)
+        eng, _, out = run(bars, Cfg(room_gate=False, **NOEXIT))
+        self.assertEqual(out[9]["signal"], 1)                # 105.9 > 105.6 + 1 tick
+        self.assertAlmostEqual(out[9]["stop"], 104.25)       # min(104.6, 105.0) - 0.15 -> 104.25
 
-    def test_invalidation_and_expiry(self):
-        bars = icc_bars()[:8]
-        bars.append(Bar(105.5, 105.6, 103.0, 103.5))   # breaks invalidation 103.25
-        eng, _, out = run(bars, Cfg())
-        self.assertIn((8, "END", "INVALID"), eng.log)
+    def test_retracement_zone_correction(self):
+        bars = icc_bars()[:7] + [Bar(106.1, 106.3, 104.0, 104.3)]   # never in the retest band? 104 < 104.75
+        eng, _, _ = run(bars, Cfg(corr_type="Retracement 38-79%", **NOEXIT))
+        self.assertIn((7, "CORRECTION"), stages(eng))       # 104.0 <= 106.2 - 0.382 * 5.4 = 104.137
+        bars = icc_bars()[:7] + [Bar(106.1, 106.3, 104.3, 104.6)]
+        eng, _, _ = run(bars, Cfg(corr_type="Retracement 38-79%", **NOEXIT))
+        self.assertNotIn((7, "CORRECTION"), stages(eng))
+
+    def test_close_beyond_origin_cancels(self):
+        bars = icc_bars()[:8] + [Bar(105, 105.2, 100.0, 100.5)]
+        eng, _, _ = run(bars, Cfg(**NOEXIT))
+        self.assertIn((8, "END", "ORIGIN"), eng.log)
+
+    def test_bias_loss_and_expiry_cancel(self):
+        bars = icc_bars()[:8] + [Bar(105.5, 105.8, 105.2, 105.6, bias=0)]
+        eng, _, _ = run(bars, Cfg(**NOEXIT))
+        self.assertIn((8, "END", "BIAS"), eng.log)
         bars = icc_bars()[:7] + [Bar(106.5, 107.5, 106.0, 107.2) for _ in range(30)]
-        eng, _, _ = run(bars, Cfg(expiry=5))
+        eng, _, _ = run(bars, Cfg(expiry=5, **NOEXIT))
         self.assertTrue(any(e[1] == "END" and e[2] == "EXPIRED" for e in eng.log))
 
-    def test_far_structure_is_rejected_not_clipped(self):
-        eng, _, out = run(icc_bars(), Cfg(max_stop=1.5))  # risk 2.05 ATR > 1.5
+    def test_vwap_volume_and_sweep_requirements_block_continuation(self):
+        bars = icc_bars()
+        bars[8] = Bar(105.6, 107, 105.3, 106.8, vwap_long=False)
+        _, _, out = run(bars, Cfg(**NOEXIT))
+        self.assertEqual(out[8]["signal"], 0)
+        bars[8] = Bar(105.6, 107, 105.3, 106.8, vol_ok=False)
+        _, _, out = run(bars, Cfg(**NOEXIT))
+        self.assertEqual(out[8]["signal"], 0)
+        _, _, out = run(icc_bars(), Cfg(need_sweep=True, **NOEXIT))
+        self.assertEqual(out[8]["signal"], 0)
+        bars = icc_bars()
+        bars[7] = Bar(105.8, 106, 100.5, 105.5)   # correction wick sweeps the 100.8 origin
+        _, _, out = run(bars, Cfg(need_sweep=True, max_stop=10, **NOEXIT))
+        self.assertEqual(out[8]["signal"], 1)
+
+    def test_far_structure_rejected_and_stop_methods(self):
+        _, _, out = run(icc_bars(), Cfg(max_stop=1.5, **NOEXIT))
         self.assertEqual(out[8]["cand"], 1)
         self.assertEqual(out[8]["signal"], 0)
+        self.assertTrue(out[8]["wide"])
+        _, _, out = run(icc_bars(), Cfg(stop_method="ATR", **NOEXIT))
+        self.assertAlmostEqual(out[8]["stop"], 105.25)       # 106.8 - 1.5 -> floor tick
+        _, _, out = run(icc_bars(), Cfg(stop_method="Wider of both", **NOEXIT))
+        self.assertAlmostEqual(out[8]["stop"], 104.75)
+
+    def test_limit_entry_reference_is_trigger(self):
+        _, _, out = run(icc_bars(), Cfg(limit=True, **NOEXIT))
+        self.assertAlmostEqual(out[8]["ref"], 106.0)         # rests at the broken trigger, below close
+        self.assertAlmostEqual(out[8]["risk"], 1.25)
 
 
-def sig(i, s, stop, risk, q):
-    return {i: (s, stop, risk, q)}
+def sig(i, s, ref, stop, q):
+    return {i: (s, ref, stop, q)}
 
 
 class Execution(unittest.TestCase):
     def test_signal_bar_target_touch_not_credited(self):
         bars = [Bar(99, 103, 98.5, 100), Bar(100, 100.5, 99.5, 100.2), Bar(100.2, 100.4, 99.8, 100)]
-        _, sim, out = run(bars, Cfg(), signals=sig(0, 1, 98.0, 2.0, 2.0))
-        kinds = [e[1] for e in sim.events]
-        self.assertEqual(kinds[:2], ["ENTER", "FILL"])
-        self.assertNotIn("TP1", kinds)
-        self.assertEqual([e[0] for e in sim.events if e[1] == "FILL"], [1])
+        _, sim, _ = run(bars, Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        kinds = [(e[0], e[1]) for e in sim.events]
+        self.assertEqual(kinds[:2], [(0, "ENTER"), (1, "FILL")])
+        self.assertNotIn("TP1", [k for _, k in kinds])
 
-    def test_favorable_gap_records_fill_and_gap_policy(self):
+    def test_gap_fill_risk_and_gap_policy(self):
         bars = [Bar(99, 100.5, 99, 100), Bar(103, 103.2, 102.6, 103), Bar(103, 103.5, 102.5, 103.1)]
-        _, sim, _ = run(bars, Cfg(), signals=sig(0, 1, 98.0, 2.0, 2.0))
-        fill = [e for e in sim.events if e[1] == "FILL"][0]
-        self.assertEqual(fill[3], 103)            # actual modeled open, not the 100 reference
-        self.assertAlmostEqual(sim.ratio, 2.5)    # (103 - 98) / 2
-        tp1 = [e for e in sim.events if e[1] == "TP1"][0]
-        self.assertEqual((tp1[0], tp1[3]), (1, 103))  # limit below market fills at the open
+        _, sim, _ = run(bars, Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "FILL", 2.0, 103), sim.events)
+        self.assertAlmostEqual(sim.ratio, 2.5)
+        self.assertIn((1, "TP1", 1.0, 103), sim.events)       # limit below market fills at the open
+        self.assertIn((1, "EXIT_REQUEST", "GAP_RISK", None), sim.events)
         self.assertIn((2, "EXIT_GAP_RISK", 1.0, 103), sim.events)
 
-    def test_adverse_gap_through_stop(self):
-        bars = [Bar(99, 100.5, 99, 100), Bar(97, 97.5, 96, 97.2)]
-        _, sim, _ = run(bars, Cfg(), signals=sig(0, 1, 98.0, 2.0, 2.0))
-        stop = [e for e in sim.events if e[1] == "STOP"][0]
-        self.assertEqual((stop[0], stop[3]), (1, 97))  # worse open, not the 98 stop price
+    def test_adverse_gaps_through_stop(self):
+        _, sim, _ = run([Bar(99, 100.5, 99, 100), Bar(97, 97.5, 96, 97.2)], Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "STOP", 2.0, 97), sim.events)
+        _, sim, _ = run([Bar(101, 101, 99.5, 100), Bar(103, 103.5, 102.5, 103)], Cfg(**NOEXIT), signals=sig(0, -1, 100.0, 102.0, 2.0))
+        self.assertIn((1, "STOP", 2.0, 103), sim.events)
 
-    def test_short_gap_through_stop(self):
-        bars = [Bar(101, 101, 99.5, 100), Bar(103, 103.5, 102.5, 103)]
-        _, sim, _ = run(bars, Cfg(), signals=sig(0, -1, 102.0, 2.0, 2.0))
-        stop = [e for e in sim.events if e[1] == "STOP"][0]
-        self.assertEqual((stop[0], stop[3]), (1, 103))
-
-    def test_stop_and_target_same_bar_is_stop_first_and_flagged(self):
-        bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.5, 97.5, 101)]
-        _, sim, _ = run(bars, Cfg(), signals=sig(0, 1, 98.0, 2.0, 2.0))
+    def test_stop_and_target_same_bar_is_stop_first(self):
+        _, sim, _ = run([Bar(99, 100.5, 99, 100), Bar(100, 102.5, 97.5, 101)], Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
         self.assertEqual(sim.ambiguous, 1)
         self.assertNotIn("TP1", [e[1] for e in sim.events])
-        self.assertIn("STOP", [e[1] for e in sim.events])
+        self.assertTrue(sim.touched[0])                       # touched, but not credited
 
     def test_tp1_then_breakeven_not_retroactive(self):
         bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.5, 99.0, 101.5), Bar(101.5, 101.8, 99.5, 100)]
-        _, sim, _ = run(bars, Cfg(be_on=True), signals=sig(0, 1, 98.0, 2.0, 2.0))
-        kinds = [(e[0], e[1]) for e in sim.events]
-        self.assertIn((1, "TP1"), kinds)
-        self.assertNotIn((1, "STOP"), kinds)          # dip to 99 on the TP1 bar does not hit BE
-        stop = [e for e in sim.events if e[1] == "STOP"][0]
-        self.assertEqual((stop[0], stop[2], stop[3]), (2, 1.0, 100))  # 1 remaining unit at BE
+        _, sim, _ = run(bars, Cfg(be_on=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "TP1", 1.0, 102.0), sim.events)
+        self.assertNotIn(1, [e[0] for e in sim.events if e[1] == "STOP"])
+        self.assertIn((2, "STOP", 1.0, 100.0), sim.events)
 
-    def test_one_contract_single_final_tranche(self):
-        self.assertEqual(parts(1.0, Cfg()), (0.0, 0.0, 1.0))
-        self.assertEqual(parts(2.0, Cfg(use_tp3=True)), (0.0, 0.0, 2.0))
+    def test_single_unit_goes_to_tp2(self):
+        self.assertEqual(parts(1.0, Cfg()), (0.0, 1.0, 0.0))
+        self.assertEqual(parts(2.0, Cfg(use3=True)), (1.0, 1.0, 0.0))
         bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.2, 99.5, 102), Bar(102, 104.5, 101.8, 104)]
-        _, sim, _ = run(bars, Cfg(), signals=sig(0, 1, 98.0, 2.0, 1.0))
-        kinds = [e[1] for e in sim.events]
-        self.assertNotIn("TP1", kinds)
-        self.assertEqual([e for e in sim.events if e[1] == "FINAL"][0][2:], (1.0, 104))
+        _, sim, _ = run(bars, Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 1.0))
+        self.assertNotIn("TP1", [e[1] for e in sim.events])
+        self.assertTrue(sim.touched[0])
+        self.assertIn((2, "TP2", 1.0, 104.0), sim.events)
 
-    def test_allocations_conserve_quantity(self):
-        for tp3 in (False, True):
-            for step in (1.0, 0.01, 1000.0):
-                cfg = Cfg(use_tp3=tp3, qty_step=step)
-                for units in range(1, 10001):
-                    q = units * step
-                    a, b, c = parts(q, cfg)
-                    self.assertTrue(min(a, b, c) >= 0)
-                    self.assertAlmostEqual(a + b + c, q, delta=step * 1e-6)
-                    for x in (a, b, c):
-                        self.assertAlmostEqual(round(x / step), x / step, delta=1e-6)
-                    if units >= (3 if tp3 else 2):
-                        self.assertTrue(a > 0 and c > 0 and (b > 0) == tp3)
+    def test_configurable_allocations_conserve_quantity(self):
+        self.assertEqual(parts(10.0, Cfg(use3=True, alloc3a=50, alloc3b=30)), (5.0, 3.0, 2.0))
+        self.assertEqual(parts(10.0, Cfg(alloc2=70)), (7.0, 3.0, 0.0))
+        for use3 in (False, True):
+            for a in (1, 33, 50, 70, 98):
+                for step in (1.0, 0.01):
+                    cfg = Cfg(use3=use3, qty_step=step, alloc2=a, alloc3a=min(a, 60), alloc3b=30)
+                    for units in range(1, 2001):
+                        q = units * step
+                        p = parts(q, cfg)
+                        self.assertTrue(min(p) >= 0)
+                        self.assertAlmostEqual(sum(p), q, delta=step * 1e-6)
+                        self.assertGreater(p[1], 0)               # TP2 always carries units
+                        if units >= 2:
+                            self.assertGreater(p[0], 0)
+                        if use3 and units >= 3:
+                            self.assertGreater(p[2], 0)
+
+    def test_limit_needs_trade_through_and_expires(self):
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(101, 101.2, 100.0, 100.8), Bar(100.8, 101, 100.6, 100.9), Bar(101, 101.3, 100.7, 101), Bar(101, 101.1, 100.8, 101)]
+        cfg = Cfg(limit=True, limit_bars=3, **NOEXIT)
+        _, sim, _ = run(bars, cfg, signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertNotIn("FILL", [e[1] for e in sim.events])  # low touched 100.0 but not 99.75
+        self.assertIn((3, "CANCEL", 0, None), sim.events)
+
+    def test_limit_intrabar_fill_defers_targets_and_gap_fill(self):
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(101, 102.5, 99.7, 102.2), Bar(102.2, 102.4, 101.5, 102)]
+        _, sim, _ = run(bars, Cfg(limit=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "FILL", 2.0, 100.0), sim.events)
+        self.assertNotIn(1, [e[0] for e in sim.events if e[1].startswith("TP")])  # TP1 102 not credited
+        self.assertIn((2, "TP1", 1.0, 102.2), sim.events)      # next bar opens above TP1 -> open fill
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(99.5, 99.8, 98.9, 99.6)]
+        _, sim, _ = run(bars, Cfg(limit=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "FILL", 2.0, 99.5), sim.events)      # gap through the limit fills at the open
+
+    def test_costs_reduce_result_exactly(self):
+        bars = [Bar(99, 100.5, 99, 100), Bar(100, 104.5, 99.5, 104)]
+        cfg = Cfg(comm=1.0, spread=0.5, slip_ticks=1, **NOEXIT)
+        _, sim, _ = run(bars, cfg, signals=sig(0, 1, 100.0, 98.0, 2.0))
+        res = sim.results[0]
+        self.assertAlmostEqual(res["gross"], 2.0 + 4.0)        # TP1 +2 on 1 unit, TP2 +4 on 1 unit
+        entry_cost = 1.0 * 2 + (0.25 + 0.25) * 2               # commission + half spread + 1 tick slip
+        exit_cost = (1.0 * 1 + 0.25 * 1) * 2                   # two limit fills: commission + half spread
+        self.assertAlmostEqual(res["cost"], entry_cost + exit_cost)
+        self.assertAlmostEqual(res["r"], (6.0 - entry_cost - exit_cost) / 4.0)
+
+    def test_early_exit_on_structure_break_next_open(self):
+        cfg = Cfg()
+        sim = Sim(cfg)
+        none = dict(break_up=False, break_dn=False)
+        sim.step(0, Bar(99, 100.5, 99, 100), dict(signal=1, ref=100.0, stop=98.0, risk=2.0, qty=2.0), none)
+        sim.step(1, Bar(100, 100.8, 99.6, 99.8), dict(signal=0), dict(break_up=False, break_dn=True))
+        self.assertIn((1, "EXIT_REQUEST", "STRUCTURE", None), sim.events)
+        sim.step(2, Bar(99.7, 100, 99.2, 99.5), dict(signal=0), none)
+        self.assertIn((2, "EXIT_STRUCTURE", 2.0, 99.7), sim.events)
 
     def test_cooldown_zero_blocks_same_bar_reentry(self):
         bars = [Bar(99, 100.5, 99, 100), Bar(100, 100.2, 97, 97.5), Bar(97.5, 98, 97, 97.8)]
-        signals = {0: (1, 98.0, 2.0, 2.0), 1: (-1, 99.5, 2.0, 2.0), 2: (-1, 99.5, 1.7, 2.0)}
-        _, sim, _ = run(bars, Cfg(cooldown=0), signals=signals)
-        enters = [e[0] for e in sim.events if e[1] == "ENTER"]
-        self.assertEqual(enters, [0, 2])
+        signals = {0: (1, 100.0, 98.0, 2.0), 1: (-1, 97.5, 99.5, 2.0), 2: (-1, 97.8, 99.5, 2.0)}
+        _, sim, _ = run(bars, Cfg(cooldown=0, **NOEXIT), signals=signals)
+        self.assertEqual([e[0] for e in sim.events if e[1] == "ENTER"], [0, 2])
 
     def test_targets_ordered_after_rounding(self):
         cfg = Cfg(tick=0.25, r1=1.0, r2=1.01, r3=1.02)
-        t1, t2, t3 = targets(1, 100.0, 0.3, cfg)
-        self.assertTrue(100 < t1 < t2 < t3)
-        t1, t2, t3 = targets(-1, 100.0, 0.3, cfg)
-        self.assertTrue(100 > t1 > t2 > t3)
-        self.assertEqual(floor_tick(0.3, 0.1), 0.30000000000000004 or 0.3)
+        self.assertTrue(100 < targets(1, 100.0, 0.3, cfg)[0] < targets(1, 100.0, 0.3, cfg)[1] < targets(1, 100.0, 0.3, cfg)[2])
+        t = targets(-1, 100.0, 0.3, cfg)
+        self.assertTrue(100 > t[0] > t[1] > t[2])
         self.assertAlmostEqual(ceil_tick(1.1, 0.1), 1.1)
+        self.assertAlmostEqual(floor_tick(0.3, 0.1), 0.3)
 
 
 def random_bars(rng, n):
@@ -176,37 +270,30 @@ def random_bars(rng, n):
         o = round((c + rng.gauss(0, 0.15)) * 4) / 4
         c = round((o + rng.gauss(0, 0.9)) * 4) / 4
         h = max(o, c) + round(abs(rng.gauss(0, 0.5)) * 4) / 4
-        l = min(o, c) - round(abs(rng.gauss(0, 0.5)) * 4) / 4
+        lo = min(o, c) - round(abs(rng.gauss(0, 0.5)) * 4) / 4
         up = (i // 150) % 2 == 0
-        bars.append(Bar(o, h, l, c, atr=1.0, trend_long=up, trend_short=not up, pull_long=up and rng.random() < 0.03, pull_short=(not up) and rng.random() < 0.03))
+        bars.append(Bar(o, h, lo, c, bias=1 if up else -1, vwap_long=rng.random() < 0.8, vwap_short=rng.random() < 0.8,
+                        pull_long=up and rng.random() < 0.03, pull_short=(not up) and rng.random() < 0.03, ema=c))
     return bars
 
 
 class Properties(unittest.TestCase):
     def test_random_series(self):
         rng = random.Random(20261029)
-        n_trades = n_icc = 0
-        for trial in range(150):
-            cfg = Cfg(engine=rng.choice(["ICC", "Either", "Trend pullback"]), use_tp3=rng.random() < 0.5,
-                      be_on=rng.random() < 0.5, trail_on=rng.random() < 0.3, cooldown=rng.choice([0, 1, 3]),
-                      hold_bars=rng.choice([5, 20, 48]), risk_cash=rng.choice([3.0, 50.0, 400.0]))
+        n_trades = n_icc = n_limit_fills = 0
+        for _ in range(150):
+            cfg = Cfg(framework=rng.choice(["ICC hybrid", "ICC hybrid", "Trend pullback (baseline)"]), use3=rng.random() < 0.5,
+                      be_on=rng.random() < 0.5, trail_atr=rng.choice([0.0, 0.0, 2.0]), cooldown=rng.choice([0, 1, 3]),
+                      hold_bars=rng.choice([5, 20, 60]), risk_cash=rng.choice([3.0, 50.0, 400.0]), limit=rng.random() < 0.4,
+                      corr_type=rng.choice(["Retracement or retest", "Retracement 38-79%", "Broken-level retest"]),
+                      stop_method=rng.choice(["Structure", "ATR", "Wider of both"]), exit_on_choch=rng.random() < 0.5,
+                      comm=rng.choice([0.0, 1.0]), spread=rng.choice([0.0, 0.25]), slip_ticks=rng.choice([0, 1]))
             bars = random_bars(rng, 600)
             eng, sim, out = run(bars, cfg)
-            # Stage ordering, freshness and pivot availability.
-            stage = {}
-            avail = {}
-            used = {1: set(), -1: set()}
+            stage, broken = {}, {"BOS_UP": set(), "CHOCH_UP": set(), "BOS_DN": set(), "CHOCH_DN": set()}
             for e in eng.log:
                 i, kind = e[0], e[1]
-                if kind.startswith("PIVOT"):
-                    avail[(kind, e[3])] = i
-                    self.assertEqual(i - e[3], cfg.strength)
-                elif kind == "INDICATION":
-                    side, pid = e[2], e[3]
-                    self.assertNotIn(pid, used[side], "pivot reused for a second indication")
-                    used[side].add(pid)
-                    key = ("PIVOT_HIGH_AVAILABLE" if side == 1 else "PIVOT_LOW_AVAILABLE", pid)
-                    self.assertLess(avail[key], i)
+                if kind == "INDICATION":
                     stage = {"ind": i}
                 elif kind == "CORRECTION":
                     self.assertGreater(i, stage["ind"])
@@ -217,40 +304,52 @@ class Properties(unittest.TestCase):
                     stage = {}
                 elif kind == "END":
                     stage = {}
-            # Execution ledger checks per trade.
-            trades, cur = [], None
+            levels_up = [e[2] for e in eng.log if e[1] in ("BOS_UP", "CHOCH_UP")]
+            cur = None
             for ev in sim.events:
                 i, kind = ev[0], ev[1]
                 if kind == "ENTER":
                     self.assertIsNone(cur)
                     cur = {"enter": i, "qty": out[i]["qty"], "closed": 0.0, "fill": None}
+                elif kind == "CANCEL":
+                    self.assertTrue(cfg.limit)
+                    self.assertEqual(i - cur["enter"], cfg.limit_bars)
+                    cur = None
                 elif kind == "FILL":
-                    self.assertEqual(i, cur["enter"] + 1)
+                    if cfg.limit:
+                        self.assertTrue(1 <= i - cur["enter"] <= cfg.limit_bars)
+                        n_limit_fills += 1
+                    else:
+                        self.assertEqual(i, cur["enter"] + 1)
                     cur["fill"] = i
                 elif kind == "CLOSED_R":
                     self.assertAlmostEqual(cur["closed"], cur["qty"], delta=1e-6)
-                    trades.append(cur)
+                    n_trades += 1
                     cur = None
+                elif kind == "EXIT_REQUEST":
+                    self.assertIsNotNone(cur["fill"])
                 else:
                     self.assertIsNotNone(cur["fill"], f"{kind} before fill")
-                    self.assertGreaterEqual(i, cur["fill"])
                     cur["closed"] += ev[2]
             for r in out:
                 if r["signal"] != 0:
-                    s, stop, risk = r["signal"], r["stop"], r["risk"]
-                    ref = bars[r["i"]].c
+                    s, stop, risk, ref = r["signal"], r["stop"], r["risk"], r["ref"]
                     t1, t2, t3 = targets(s, ref, risk, cfg)
                     seq = [stop, ref, t1, t2, t3] if s == 1 else [t3, t2, t1, ref, stop]
                     self.assertEqual(seq, sorted(seq))
-                    self.assertTrue(len(set(seq)) == 5)
-                    self.assertGreaterEqual(risk, cfg.min_stop * bars[r["i"]].atr - 1e-9)
-                    self.assertLessEqual(risk, cfg.max_stop * bars[r["i"]].atr + 1e-9)
-            n_trades += len(trades)
+                    self.assertEqual(len(set(seq)), 5)
+                    self.assertGreaterEqual(risk, cfg.min_stop - 1e-9)
+                    self.assertLessEqual(risk, cfg.max_stop + 1e-9)
+                    if cfg.limit:
+                        self.assertTrue(ref <= bars[r["i"]].c if s == 1 else ref >= bars[r["i"]].c)
+            for res in sim.results:
+                self.assertGreaterEqual(res["cost"], 0)
+                self.assertLessEqual(res["net"] if "net" in res else res["r"], res["gross"] + 1e-9)
         self.assertGreater(n_trades, 100)
         self.assertGreater(n_icc, 20)
+        self.assertGreater(n_limit_fills, 10)
 
 
-# ---- Port of the Pine local-time formulas (f_inside / f_left / f_dayKey) ---------------------
 def local_mins(t, zone):
     d = t.astimezone(ZoneInfo(zone))
     return d.hour * 60 + d.minute, d.date(), d.isoweekday() % 7 + 1  # Pine: 1=Sun ... 7=Sat
@@ -363,10 +462,11 @@ class StaticPine(unittest.TestCase):
         # Code and user-visible strings only (comments carry the disclaimers that name these words).
         for text in (self.ind, self.strat):
             low = code_only(text).lower()
-            for bad in ("win rate", "winrate", "probability", "accuracy", "institutional", "varip"):
+            # "Win rate" appears only as a measured-statistics column header, never as a claim.
+            for bad in ("probability", "accuracy", "institutional", "varip", "guarantee", "confidence"):
                 self.assertNotIn(bad, low)
             for lit in re.findall(r'"(?:[^"\\]|\\.)*"', low):
-                self.assertNotRegex(lit, r"\d\s*%", lit)  # no percentage claims in visible text
+                self.assertNotRegex(lit, r"\d\s*%\s*(win|accura|success|probab|hit rate)", lit)  # no % claims
 
     def test_balanced_and_tabs(self):
         for text in (self.ind, self.strat):
@@ -380,7 +480,7 @@ class StaticPine(unittest.TestCase):
 
     def test_assignments_target_declared_names(self):
         for text in (self.ind, self.strat):
-            declared = set(re.findall(r"^\s*(?:var\s+)?(?:(?:int|float|bool|string|color|table|array<string>)\s+)?([A-Za-z_]\w*)\s*=(?!=)", text, re.M))
+            declared = set(re.findall(r"^\s*(?:var\s+)?(?:(?:int|float|bool|string|color|table|box|line|label|SessTrack|array<\w+>)\s+)?([A-Za-z_]\w*)\s*=(?!=)", text, re.M))
             declared |= {n for tup in re.findall(r"\[([^\]]+)\]\s*=(?!=)", text) for n in re.split(r"\s*,\s*", tup)}
             for name in re.findall(r"^\s*([A-Za-z_]\w*)\s*(?::=|\+=|-=)", text, re.M):
                 self.assertIn(name, declared, name)
