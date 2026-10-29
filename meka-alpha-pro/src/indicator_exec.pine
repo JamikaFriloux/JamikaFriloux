@@ -1,0 +1,172 @@
+// INDICATOR SIMULATION. No broker orders, no fills, no costs, no account acknowledgment.
+// Convention (documented, conservative):
+//  - ENTER = confirmed-close intent. Modeled fill = OPEN of the next available bar.
+//  - From the fill bar onward, each bar is judged from its open: a touched stop wins over any
+//    touched target (stop-first). Stop gaps fill at the worse open; target gaps at the better open.
+//    Bars where stop and a target were both touched are counted as "ambiguous".
+//  - Break-even / trail update only after a bar closes, so they never act on an earlier price.
+//  - Close-based exit requests (time, window, gap policy, test end) fill at the next open.
+var int side = 0
+var bool pending = false
+var float refEntry = na
+var float fillEntry = na
+var float curStop = na
+var float initialStop = na
+var float riskPlan = na
+var float target1 = na
+var float target2 = na
+var float target3 = na
+var float initialQty = na
+var float part1 = 0.0
+var float part2 = 0.0
+var float partFinal = 0.0
+var float remaining = 0.0
+var bool done1 = false
+var bool done2 = false
+var bool doneFinal = false
+var bool trigSeen = false
+var int submittedBar = na
+var int filledBar = na
+var int lastClosed = na
+var string tradeID = ""
+var string tradeSetup = ""
+var string lockedName = ""
+var bool closing = false
+var string closingWhy = ""
+var float fillRiskRatio = na
+var float tradeR = 0.0
+var int ambiguityCount = 0
+var string execBlock = ""
+bool entered = false
+bool filledNow = false
+bool tpEvent = false
+bool exited = false
+string eventText = ""
+f_r(float px, float q) => (px - fillEntry) * side * q / (initialQty * riskPlan)
+f_add(string acc, string txt) => acc == "" ? txt : acc + " | " + txt
+
+if barstate.isconfirmed
+    int evSide = side
+    // 1) Pending intent -> modeled fill at this bar's open.
+    if pending and bar_index > submittedBar
+        fillEntry := open
+        filledBar := bar_index
+        pending := false
+        remaining := initialQty
+        tradeR := 0.0
+        fillRiskRatio := (side == 1 ? fillEntry - initialStop : initialStop - fillEntry) / riskPlan
+        filledNow := true
+        eventText := f_add(eventText, "SIM FILL " + str.tostring(initialQty) + "@" + str.tostring(fillEntry, format.mintick))
+    // 2) Position management for a position that exists from this bar's open.
+    if side != 0 and not pending
+        float finalT = useTP3 ? target3 : target2
+        bool stopHit = side == 1 ? low <= curStop : high >= curStop
+        bool hit1 = part1 > 0 and not done1 and (side == 1 ? high >= target1 : low <= target1)
+        bool hit2 = part2 > 0 and not done2 and (side == 1 ? high >= target2 : low <= target2)
+        bool hitF = not doneFinal and (side == 1 ? high >= finalT : low <= finalT)
+        if closing
+            tradeR += f_r(open, remaining)
+            eventText := f_add(eventText, "SIM EXIT " + closingWhy + " " + str.tostring(remaining) + "@" + str.tostring(open, format.mintick))
+            remaining := 0.0
+            exited := true
+        else if stopHit
+            float px = side == 1 ? math.min(open, curStop) : math.max(open, curStop)
+            bool ambiguous = hit1 or hit2 or hitF
+            if ambiguous
+                ambiguityCount += 1
+            tradeR += f_r(px, remaining)
+            eventText := f_add(eventText, "SIM STOP " + str.tostring(remaining) + "@" + str.tostring(px, format.mintick) + (ambiguous ? " (stop+target same bar: stop-first)" : ""))
+            remaining := 0.0
+            exited := true
+        else
+            if hit1
+                float px1 = side == 1 ? math.max(open, target1) : math.min(open, target1)
+                tradeR += f_r(px1, part1)
+                remaining -= part1
+                done1 := true
+                tpEvent := true
+                eventText := f_add(eventText, "SIM TP1 " + str.tostring(part1) + "@" + str.tostring(px1, format.mintick))
+            if hit2
+                float px2 = side == 1 ? math.max(open, target2) : math.min(open, target2)
+                tradeR += f_r(px2, part2)
+                remaining -= part2
+                done2 := true
+                tpEvent := true
+                eventText := f_add(eventText, "SIM TP2 " + str.tostring(part2) + "@" + str.tostring(px2, format.mintick))
+            if hitF
+                float pxF = side == 1 ? math.max(open, finalT) : math.min(open, finalT)
+                tradeR += f_r(pxF, remaining)
+                eventText := f_add(eventText, "SIM FINAL TP " + str.tostring(remaining) + "@" + str.tostring(pxF, format.mintick))
+                remaining := 0.0
+                doneFinal := true
+                tpEvent := true
+                exited := true
+            if remaining > 0
+                // Close-based updates; they apply from the next bar's open.
+                trigSeen := trigSeen or (side == 1 ? high >= target1 : low <= target1)
+                if beOn and trigSeen
+                    curStop := side == 1 ? math.max(curStop, f_floorTick(fillEntry)) : math.min(curStop, f_ceilTick(fillEntry))
+                if trailOn and trigSeen
+                    curStop := side == 1 ? math.max(curStop, f_floorTick(close - trailATR * atr)) : math.min(curStop, f_ceilTick(close + trailATR * atr))
+                string why = filledNow and gapMaxRisk > 0 and fillRiskRatio > gapMaxRisk ? "GAP RISK" : time_close >= testEnd ? "TEST END" : inForceFlat ? "FORCE FLAT" : flattenOutside and not inWindow ? "OUTSIDE WINDOWS" : bar_index - filledBar >= holdBars ? "MAX HOLD" : ""
+                if why != ""
+                    closing := true
+                    closingWhy := why
+        if exited
+            dayR += tradeR
+            lossStreak := tradeR < 0 ? lossStreak + 1 : 0
+            eventText := f_add(eventText, "position R " + str.tostring(tradeR, "#.##") + " (gross)")
+            lastClosed := bar_index
+            side := 0
+            closing := false
+    if eventText != ""
+        f_log(eventText)
+        string evType = exited ? "SIM_EXIT" : tpEvent ? "SIM_TP" : "SIM_FILL"
+        alert(f_payload(evType, eventText, "ASSUMED_SIMULATION", tradeID, tradeSetup, evSide, fillEntry, remaining, curStop, target1, target2, target3), alert.freq_once_per_bar_close)
+    // 3) New entry intent. Never on the bar a position closed (cooldown counts full bars after).
+    execBlock := f_dayBlock()
+    bool rested = na(lastClosed) or bar_index - lastClosed > cooldown
+    if signal != 0 and side == 0 and rested and execBlock == ""
+        side := signal
+        refEntry := close
+        fillEntry := na
+        curStop := plannedStop
+        initialStop := plannedStop
+        riskPlan := plannedRisk
+        [t1, t2, t3] = f_targets(signal, close, plannedRisk)
+        target1 := t1
+        target2 := t2
+        target3 := t3
+        initialQty := plannedQty
+        [a, b, c] = f_parts(plannedQty)
+        part1 := a
+        part2 := b
+        partFinal := c
+        remaining := 0.0
+        done1 := false
+        done2 := false
+        doneFinal := false
+        trigSeen := false
+        pending := true
+        closing := false
+        closingWhy := ""
+        fillRiskRatio := na
+        tradeR := 0.0
+        submittedBar := bar_index
+        lockedName := candidateName
+        tradeSetup := candidateSetup
+        tradeID := syminfo.tickerid + ":" + timeframe.period + ":" + str.tostring(time_close)
+        dayEntries += 1
+        entered := true
+        f_log("ENTER " + (side == 1 ? "LONG " : "SHORT ") + lockedName + " intent")
+        alert(f_payload("SIGNAL_INTENT_NOT_FILL", lockedName, "SIGNAL_CLOSE_REFERENCE", tradeID, tradeSetup, side, refEntry, initialQty, curStop, target1, target2, target3), alert.freq_once_per_bar_close)
+
+string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : side != 0 and not pending ? "HOLD" : "WAIT"
+string posState = side == 0 ? (not na(lastClosed) and bar_index - lastClosed <= cooldown ? "COOLDOWN" : "FLAT") : pending ? "PENDING" : remaining < initialQty ? "PARTIAL" : "OPEN"
+string detail = eventText != "" ? eventText : closing ? "Exit requested (" + closingWhy + ") at next open" : pending ? "Intent queued: modeled fill at next open" : side != 0 ? lockedName + " " + tradeID : execBlock != "" ? execBlock : reason
+string executionLabel = "SIMULATION (no fills, no costs) | stop-first ambiguous bars: " + str.tostring(ambiguityCount)
+string resultLabel = "Simulated gross R"
+alertcondition(entered, "ENTER intent", "MEKA 4.0 confirmed entry intent (not a fill)")
+alertcondition(filledNow, "Simulated fill", "MEKA 4.0 simulated next-open fill (assumed, not a broker fill)")
+alertcondition(tpEvent, "Simulated TP", "MEKA 4.0 simulated target event")
+alertcondition(exited, "Simulated EXIT", "MEKA 4.0 simulated full exit")

@@ -1,0 +1,180 @@
+// STRATEGY EXECUTION. TradingView's broker emulator is the execution record.
+// Contract: confirmed-bar signals; calc_on_every_tick=false; calc_on_order_fills=false;
+// process_orders_on_close=false; no pyramiding; no automatic reversal.
+//  - The market entry AND every tranche's fixed absolute bracket are submitted together at the
+//    signal close, so the earliest fill is protected from its first tick (no unprotected bar).
+//  - Planned R and sizing use the signal-close reference; a gap can make the real fill risk larger
+//    or smaller. The ratio is observed at the fill-bar close and the gap policy may request an exit.
+//  - Fills, TP flags and P&L come only from strategy.closedtrades / opentrades (execution evidence).
+//  - calc_on_order_fills stays off: it would recalculate mid-bar on historical bars using the bar's
+//    completed OHLC and can make history look better than real time. Brackets are pre-submitted.
+var int side = 0
+var bool pending = false
+var float refEntry = na
+var float fillEntry = na
+var float curStop = na
+var float initialStop = na
+var float riskPlan = na
+var float target1 = na
+var float target2 = na
+var float target3 = na
+var float initialQty = na
+var float part1 = 0.0
+var float part2 = 0.0
+var float partFinal = 0.0
+var float remaining = 0.0
+var bool done1 = false
+var bool done2 = false
+var bool doneFinal = false
+var bool trigSeen = false
+var int submittedBar = na
+var int filledBar = na
+var int lastClosed = na
+var int seenClosed = 0
+var int closedAtSubmit = 0
+var float tradeNet = 0.0
+var float plannedCash = na
+var string tradeID = ""
+var string tradeSetup = ""
+var string lockedName = ""
+var bool closing = false
+var string closingWhy = ""
+var float fillRiskRatio = na
+var float tradeR = 0.0
+var string execBlock = ""
+bool entered = false
+bool filledNow = false
+bool tpEvent = false
+bool exited = false
+string eventText = ""
+f_add(string acc, string txt) => acc == "" ? txt : acc + " | " + txt
+f_sendExits() =>
+    float finalT = useTP3 ? target3 : target2
+    if part1 > 0 and not done1
+        strategy.exit("TP1", "ENTRY", qty=part1, limit=target1, stop=curStop, comment_profit="TP1", comment_loss="STOP", alert_message=tradeID)
+    if part2 > 0 and not done2
+        strategy.exit("TP2", "ENTRY", qty=part2, limit=target2, stop=curStop, comment_profit="TP2", comment_loss="STOP", alert_message=tradeID)
+    if partFinal > 0 and not doneFinal
+        strategy.exit("FINAL", "ENTRY", qty=partFinal, limit=finalT, stop=curStop, comment_profit="FINAL TP", comment_loss="STOP", alert_message=tradeID)
+    true
+
+if barstate.isconfirmed
+    int evSide = side
+    int nowClosed = strategy.closedtrades
+    // 1) Execution evidence: every tranche closed since the last calculation.
+    if nowClosed > seenClosed
+        for n = seenClosed to nowClosed - 1
+            string xid = strategy.closedtrades.exit_id(n)
+            string xc = strategy.closedtrades.exit_comment(n)
+            string why = na(xc) or xc == "" ? xid : xc
+            tradeNet += strategy.closedtrades.profit(n)
+            if na(fillEntry)
+                fillEntry := strategy.closedtrades.entry_price(n)
+                filledBar := strategy.closedtrades.entry_bar_index(n)
+            if xid == "TP1"
+                done1 := true
+            else if xid == "TP2"
+                done2 := true
+            else if xid == "FINAL"
+                doneFinal := true
+            if why == "TP1" or why == "TP2" or why == "FINAL TP"
+                tpEvent := true
+            eventText := f_add(eventText, why + " " + str.tostring(math.abs(strategy.closedtrades.size(n))) + "@" + str.tostring(strategy.closedtrades.exit_price(n), format.mintick))
+        seenClosed := nowClosed
+    // 2) Entry fill observed (position open, or it opened and fully closed inside this bar).
+    if pending and (strategy.position_size != 0 or nowClosed > closedAtSubmit)
+        pending := false
+        filledNow := true
+        if strategy.position_size != 0
+            fillEntry := strategy.opentrades.entry_price(0)
+            filledBar := strategy.opentrades.entry_bar_index(0)
+        fillRiskRatio := (side == 1 ? fillEntry - initialStop : initialStop - fillEntry) / riskPlan
+        eventText := f_add("EMULATOR FILL " + str.tostring(initialQty) + "@" + str.tostring(fillEntry, format.mintick), eventText)
+    // 3) Flat again -> final exit; or market intent never filled (capital, margin, quantity).
+    bool noFill = false
+    if side != 0 and not pending and strategy.position_size == 0
+        exited := true
+    else if side != 0 and pending and bar_index > submittedBar and strategy.position_size == 0
+        exited := true
+        noFill := true
+        eventText := f_add(eventText, "NO FILL: check capital, margin, quantity - intent dropped")
+    if exited
+        strategy.cancel_all()
+        if not noFill
+            tradeR := tradeNet / plannedCash
+            dayR += tradeR
+            lossStreak := tradeR < 0 ? lossStreak + 1 : 0
+            eventText := f_add(eventText, "position net " + str.tostring(tradeNet, "#.##") + " = " + str.tostring(tradeR, "#.##") + "R")
+        lastClosed := bar_index
+        side := 0
+        pending := false
+        closing := false
+    // 4) Manage the open position. Stop changes are close-based and only ever tighten.
+    if side != 0 and not pending and strategy.position_size != 0
+        remaining := math.abs(strategy.position_size)
+        trigSeen := trigSeen or (side == 1 ? high >= target1 : low <= target1)
+        if beOn and trigSeen
+            curStop := side == 1 ? math.max(curStop, f_floorTick(fillEntry)) : math.min(curStop, f_ceilTick(fillEntry))
+        if trailOn and trigSeen
+            curStop := side == 1 ? math.max(curStop, f_floorTick(close - trailATR * atr)) : math.min(curStop, f_ceilTick(close + trailATR * atr))
+        f_sendExits()
+        string why = filledNow and gapMaxRisk > 0 and fillRiskRatio > gapMaxRisk ? "GAP RISK" : time_close >= testEnd ? "TEST END" : inForceFlat ? "FORCE FLAT" : flattenOutside and not inWindow ? "OUTSIDE WINDOWS" : bar_index - filledBar >= holdBars ? "MAX HOLD" : ""
+        if why != "" and not closing
+            strategy.close("ENTRY", comment=why, alert_message=tradeID)
+            closing := true
+            closingWhy := why
+    if eventText != ""
+        f_log(eventText)
+        string evType = exited ? "EMULATOR_EXIT_OBSERVED" : tpEvent ? "EMULATOR_TP_OBSERVED" : "EMULATOR_FILL_OBSERVED"
+        alert(f_payload(evType, eventText, "TV_EMULATOR", tradeID, tradeSetup, evSide, fillEntry, math.abs(strategy.position_size), curStop, target1, target2, target3), alert.freq_once_per_bar_close)
+    // 5) New entry intent: market order + all brackets in the same calculation.
+    execBlock := f_dayBlock()
+    bool rested = na(lastClosed) or bar_index - lastClosed > cooldown
+    if signal != 0 and side == 0 and strategy.position_size == 0 and rested and execBlock == ""
+        side := signal
+        refEntry := close
+        fillEntry := na
+        filledBar := na
+        curStop := plannedStop
+        initialStop := plannedStop
+        riskPlan := plannedRisk
+        [t1, t2, t3] = f_targets(signal, close, plannedRisk)
+        target1 := t1
+        target2 := t2
+        target3 := t3
+        initialQty := plannedQty
+        [a, b, c] = f_parts(plannedQty)
+        part1 := a
+        part2 := b
+        partFinal := c
+        remaining := 0.0
+        done1 := false
+        done2 := false
+        doneFinal := false
+        trigSeen := false
+        pending := true
+        closing := false
+        closingWhy := ""
+        fillRiskRatio := na
+        tradeR := 0.0
+        tradeNet := 0.0
+        plannedCash := plannedQty * plannedRisk * unitUSD
+        closedAtSubmit := strategy.closedtrades
+        submittedBar := bar_index
+        lockedName := candidateName
+        tradeSetup := candidateSetup
+        tradeID := syminfo.tickerid + ":" + timeframe.period + ":" + str.tostring(time_close)
+        dayEntries += 1
+        strategy.entry("ENTRY", side == 1 ? strategy.long : strategy.short, qty=initialQty, comment=lockedName, alert_message=tradeID)
+        f_sendExits()
+        entered := true
+        f_log("ENTER " + (side == 1 ? "LONG " : "SHORT ") + lockedName + " intent")
+        alert(f_payload("SIGNAL_INTENT_NOT_FILL", lockedName, "SIGNAL_CLOSE_REFERENCE", tradeID, tradeSetup, side, refEntry, initialQty, curStop, target1, target2, target3), alert.freq_once_per_bar_close)
+
+if not barstate.isconfirmed
+    remaining := math.abs(strategy.position_size)
+string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : strategy.position_size != 0 ? "HOLD" : "WAIT"
+string posState = side == 0 ? (not na(lastClosed) and bar_index - lastClosed <= cooldown ? "COOLDOWN" : "FLAT") : pending ? "PENDING" : remaining < initialQty ? "PARTIAL" : "OPEN"
+string detail = eventText != "" ? eventText : closing ? "Exit requested (" + closingWhy + "); brackets stay active" : pending ? "Market intent queued for next tick" : side != 0 ? lockedName + " " + tradeID : execBlock != "" ? execBlock : reason
+string executionLabel = "TV emulator | costs, slippage, margin, Bar Magnifier = Properties" + (isFuture ? "" : " | NON-FUTURE: check commission units")
+string resultLabel = "Emulator net R"

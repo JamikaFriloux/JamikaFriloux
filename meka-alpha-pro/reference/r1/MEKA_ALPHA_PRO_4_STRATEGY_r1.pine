@@ -1,0 +1,363 @@
+//@version=6
+strategy("MEKA ALPHA PRO 4.0-r1 Research Strategy", overlay=true, pyramiding=0, initial_capital=10000, currency=currency.USD, default_qty_type=strategy.fixed, commission_type=strategy.commission.cash_per_contract, commission_value=2.50, slippage=1, margin_long=100, margin_short=100, calc_on_every_tick=false, calc_on_order_fills=false, process_orders_on_close=false, use_bar_magnifier=false)
+// RESEARCH BUILD 4.0-r1. Not compiled in TradingView; no performance claim.
+// Rebuilt from the audited v3 concepts. Signal engine identical in both files.
+// Native chart direction only: 6J LONG = long JPY, opposite USDJPY LONG.
+// COMMON SIGNAL ENGINE BEGIN
+mode = input.string("DAY TRADE", "Mode", options=["SCALP", "DAY TRADE"], group="Setup")
+engine = input.string("ICC", "Entry framework", options=["ICC", "Trend pullback", "Either"], group="Setup")
+profileInput = input.string("Auto", "Market family", options=["Auto", "Gold", "Nasdaq", "S&P", "EURUSD", "JPY"], group="Market")
+unitValueInput = input.float(0, "USD per 1.0 price move per order unit (0 = USD metadata)", minval=0, group="Market")
+qtyStepInput = input.float(1, "Non-futures quantity step", minval=0.000001, group="Market")
+account = input.float(10000, "Sizing reference balance USD (fixed)", minval=1, group="Risk")
+riskPct = input.float(0.5, "Initial planned risk %", minval=0.01, maxval=5, group="Risk")
+maxQty = input.float(100000, "Maximum order units", minval=1, group="Risk")
+third = input.bool(false, "Enable TP3", group="Risk")
+r1 = input.float(1, "TP1 planned R", minval=0.1, group="Risk")
+r2 = input.float(2, "TP2 planned R", minval=0.2, group="Risk")
+r3 = input.float(3, "TP3 planned R", minval=0.3, group="Risk")
+be = input.bool(false, "Move remaining stop to entry after TP1 (next close update)", group="Risk")
+stopPad = input.float(0.15, "Structure padding ATR", minval=0, group="Risk")
+minStop = input.float(0.6, "Minimum stop ATR", minval=0.1, group="Risk")
+maxStop = input.float(3, "Maximum stop ATR (reject farther structure)", minval=0.2, group="Risk")
+roomGate = input.bool(true, "Require last opposing pivot to allow TP1", group="Risk")
+cooldown = input.int(3, "Full bars to wait after closure", minval=0, group="Risk")
+useAsia = input.bool(true, "Asia enabled", group="Sessions")
+asia = input.session("0900-1500", "Asia / Tokyo local", group="Sessions")
+useLondon = input.bool(true, "London enabled", group="Sessions")
+london = input.session("0800-1200", "London local", group="Sessions")
+useNY = input.bool(true, "New York enabled", group="Sessions")
+ny = input.session("0830-1200", "New York local", group="Sessions")
+flatten = input.bool(false, "Request exit outside all enabled windows", group="Sessions")
+blockEntries = input.bool(false, "Manual block new entries", group="News / dates")
+newsOn = input.bool(false, "Enable ONE manual event blackout (not a news feed)", group="News / dates")
+newsAt = input.time(timestamp("01 Jan 2026 13:30 +0000"), "Manual event timestamp", group="News / dates")
+newsPre = input.int(30, "Minutes before event", minval=0, group="News / dates")
+newsPost = input.int(30, "Minutes after event", minval=0, group="News / dates")
+testStart = input.time(timestamp("01 Jan 2020 00:00 +0000"), "Entry evaluation start", group="News / dates")
+testEnd = input.time(timestamp("01 Jan 2035 00:00 +0000"), "Entry evaluation end / request flatten", group="News / dates")
+scalpTF = input.timeframe("15", "Scalp trend timeframe (> chart)", group="Calibration")
+dayTF = input.timeframe("60", "Day trend timeframe (> chart)", group="Calibration")
+scalpPivot = input.int(3, "Scalp pivot strength", minval=2, maxval=20, group="Calibration")
+dayPivot = input.int(5, "Day pivot strength", minval=2, maxval=20, group="Calibration")
+scalpExpiry = input.int(12, "Scalp setup expiry bars", minval=3, group="Calibration")
+dayExpiry = input.int(24, "Day setup expiry bars", minval=3, group="Calibration")
+scalpHold = input.int(20, "Scalp maximum hold bars", minval=1, group="Calibration")
+dayHold = input.int(48, "Day maximum hold bars", minval=1, group="Calibration")
+minADX = input.float(18, "Minimum ADX", minval=1, group="Calibration")
+displace = input.float(0.6, "Indication body / prior ATR minimum", minval=0.1, group="Calibration")
+retestPad = input.float(0.25, "Broken-level retest band ATR", minval=0.01, group="Calibration")
+minAtrTicks = input.int(4, "Minimum ATR in ticks", minval=1, group="Calibration")
+maxExtension = input.float(2.5, "Maximum distance from EMA20 in ATR", minval=0.1, group="Calibration")
+volumeRequired = input.bool(false, "Require relative volume (blocks missing volume)", group="Calibration")
+showLevels = input.bool(true, "Show active/queued planned levels", group="Display")
+showDash = input.bool(true, "Show dashboard", group="Display")
+
+string root = syminfo.root
+string autoProfile = root == "GC" or root == "MGC" or syminfo.basecurrency == "XAU" ? "Gold" : root == "NQ" or root == "MNQ" ? "Nasdaq" : root == "ES" or root == "MES" ? "S&P" : root == "6E" or (syminfo.basecurrency == "EUR" and syminfo.currency == "USD") ? "EURUSD" : root == "6J" or (syminfo.basecurrency == "USD" and syminfo.currency == "JPY") ? "JPY" : "Unknown"
+profile = profileInput == "Auto" ? autoProfile : profileInput
+isFuture = syminfo.type == "futures"
+qtyStep = isFuture ? 1.0 : qtyStepInput
+unitUSD = unitValueInput > 0 ? unitValueInput : syminfo.currency == "USD" ? syminfo.pointvalue : na
+bool marketOK = profile != "Unknown" and not na(unitUSD) and unitUSD > 0
+string htf = mode == "SCALP" ? scalpTF : dayTF
+int strength = mode == "SCALP" ? scalpPivot : dayPivot
+int expiry = mode == "SCALP" ? scalpExpiry : dayExpiry
+int holdBars = mode == "SCALP" ? scalpHold : dayHold
+if barstate.isfirst
+    if not timeframe.isintraday or timeframe.in_seconds(htf) <= timeframe.in_seconds()
+        runtime.error("Use an intraday chart strictly below the selected trend timeframe.")
+    if r2 <= r1 or (third and r3 <= r2) or maxStop < minStop or testEnd <= testStart
+        runtime.error("Check target ordering, stop limits, and date range.")
+    if not chart.is_standard
+        runtime.error("Use standard time-based candles for this research build.")
+
+// Whole chart bar must fit one local session. Session fragments are rejected.
+f_window(string sess, string zone) =>
+    int a = time(timeframe.period, sess + ":23456", zone)
+    int b = time_close(timeframe.period, sess + ":23456", zone)
+    not na(a) and not na(b) and a == time and b == time_close
+inAsia = f_window(asia, "Asia/Tokyo")
+inLondon = f_window(london, "Europe/London")
+inNY = f_window(ny, "America/New_York")
+inWindow = (useAsia and inAsia) or (useLondon and inLondon) or (useNY and inNY)
+sessionText = (useAsia and inAsia ? "Asia " : "") + (useLondon and inLondon ? "London " : "") + (useNY and inNY ? "NY" : "")
+newsBlocked = newsOn and time <= newsAt + newsPost * 60000 and time_close >= newsAt - newsPre * 60000
+entryGate = marketOK and inWindow and not blockEntries and not newsBlocked and time >= testStart and time_close < testEnd
+// Next available market fill can occur outside this signal window after a gap.
+emaFast = ta.ema(close, 20)
+emaSlow = ta.ema(close, 50)
+atr = ta.atr(14)
+[plusDI, minusDI, adx] = ta.dmi(14, 14)
+[hc, he, heOld] = request.security(syminfo.tickerid, htf, [close[1], ta.ema(close, 50)[1], ta.ema(close, 50)[2]], lookahead=barmerge.lookahead_on)
+trendLong = hc > he and he > heOld and emaFast > emaSlow
+trendShort = hc < he and he < heOld and emaFast < emaSlow
+vAvg = ta.sma(volume, 20)
+volumeOK = not volumeRequired or (not na(volume) and not na(vAvg) and vAvg > 0 and volume >= vAvg)
+qualityGate = not na(heOld) and atr >= minAtrTicks * syminfo.mintick and adx >= minADX and math.abs(close - emaFast) <= maxExtension * atr and volumeOK
+ph = ta.pivothigh(high, strength, strength)
+pl = ta.pivotlow(low, strength, strength)
+var float swingHigh = na
+var float swingLow = na
+var int highID = na
+var int lowID = na
+var int consumedHigh = na
+var int consumedLow = na
+// Read previous confirmed structure before committing today's newly confirmed pivots.
+bosLong = not na(swingHigh) and close > swingHigh + syminfo.mintick and close[1] <= swingHigh + syminfo.mintick
+bosShort = not na(swingLow) and close < swingLow - syminfo.mintick and close[1] >= swingLow - syminfo.mintick
+crossUp = ta.crossover(close, emaFast)
+crossDown = ta.crossunder(close, emaFast)
+pullLong = crossUp and low[1] <= emaFast[1] and close > open and trendLong
+pullShort = crossDown and high[1] >= emaFast[1] and close < open and trendShort
+
+// 0 idle -> 1 indication -> 2 correction -> continuation event, strictly later bars.
+var int setupState = 0
+var int setupSide = 0
+var int indicationBar = na
+var int correctionBar = na
+var float brokenLevel = na
+var float indicationATR = na
+var float invalidation = na
+var float correctionLow = na
+var float correctionHigh = na
+var float trigger = na
+int candidate = 0
+float candidateStop = na
+string candidateName = ""
+if barstate.isconfirmed
+    if setupState != 0
+        bool invalid = setupSide == 1 ? low <= invalidation or not trendLong : high >= invalidation or not trendShort
+        if invalid or bar_index - indicationBar > expiry or not inWindow or newsBlocked or blockEntries
+            setupState := 0
+        else if setupState == 1 and bar_index > indicationBar
+            bool revisit = low <= brokenLevel + retestPad * indicationATR and high >= brokenLevel - retestPad * indicationATR
+            bool closesCorrectSide = setupSide == 1 ? close >= brokenLevel - retestPad * indicationATR : close <= brokenLevel + retestPad * indicationATR
+            if revisit and closesCorrectSide
+                correctionLow := low
+                correctionHigh := high
+                trigger := setupSide == 1 ? high : low
+                correctionBar := bar_index
+                setupState := 2
+        else if setupState == 2 and bar_index > correctionBar
+            bool continuation = setupSide == 1 ? close > trigger + syminfo.mintick and close > open : close < trigger - syminfo.mintick and close < open
+            if continuation
+                candidate := setupSide
+                candidateStop := setupSide == 1 ? correctionLow - stopPad * indicationATR : correctionHigh + stopPad * indicationATR
+                candidateName := "ICC"
+                setupState := 0
+            else
+                correctionLow := math.min(correctionLow, low)
+                correctionHigh := math.max(correctionHigh, high)
+                // Trigger remains the first correction candle's opposite extreme.
+    else if engine != "Trend pullback" and entryGate and qualityGate
+        bool freshLong = na(consumedHigh) or highID != consumedHigh
+        bool freshShort = na(consumedLow) or lowID != consumedLow
+        if bosLong and trendLong and freshLong and close - open >= displace * atr[1]
+            setupSide := 1
+            brokenLevel := swingHigh
+            invalidation := low - stopPad * atr[1]
+            indicationATR := atr[1]
+            indicationBar := bar_index
+            consumedHigh := highID
+            setupState := 1
+        else if bosShort and trendShort and freshShort and open - close >= displace * atr[1]
+            setupSide := -1
+            brokenLevel := swingLow
+            invalidation := high + stopPad * atr[1]
+            indicationATR := atr[1]
+            indicationBar := bar_index
+            consumedLow := lowID
+            setupState := 1
+    if candidate == 0 and setupState == 0 and engine != "ICC"
+        if pullLong
+            candidate := 1
+            candidateStop := math.min(low, low[1]) - stopPad * atr[1]
+            candidateName := "Trend pullback"
+        else if pullShort
+            candidate := -1
+            candidateStop := math.max(high, high[1]) + stopPad * atr[1]
+            candidateName := "Trend pullback"
+    if not na(ph)
+        swingHigh := ph
+        highID := bar_index - strength
+    if not na(pl)
+        swingLow := pl
+        lowID := bar_index - strength
+
+f_floorTick(float x) => math.floor(x / syminfo.mintick) * syminfo.mintick
+f_ceilTick(float x) => math.ceil(x / syminfo.mintick) * syminfo.mintick
+f_qty(float distance) =>
+    float raw = distance > 0 and marketOK ? account * riskPct / 100 / (distance * unitUSD) : 0.0
+    math.floor(math.min(raw, maxQty) / qtyStep) * qtyStep
+f_parts(float q) =>
+    int units = int(math.round(q / qtyStep))
+    // Too few units: one tranche at the final enabled target; never fractional futures.
+    float a = units >= (third ? 3 : 2) ? math.floor(units * (third ? 0.4 : 0.5)) * qtyStep : 0.0
+    float b = third and units >= 3 ? math.max(1, math.floor(units * 0.3)) * qtyStep : 0.0
+    float c = q - a - b
+    [a, b, c]
+f_payload(string eventName, string id, int side, float price, float q, float sl, float t1, float t2, float t3) =>
+    "{\"version\":\"4.0-r1\",\"event\":\"" + eventName + "\",\"id\":\"" + id + "\",\"symbol\":\"" + syminfo.tickerid + "\",\"timeframe\":\"" + timeframe.period + "\",\"native_side\":\"" + (side == 1 ? "LONG" : "SHORT") + "\",\"bar_close_ms\":" + str.tostring(time_close) + ",\"reference_price\":" + str.tostring(price, format.mintick) + ",\"units\":" + str.tostring(q) + ",\"stop\":" + str.tostring(sl, format.mintick) + ",\"tp1\":" + str.tostring(t1, format.mintick) + ",\"tp2\":" + str.tostring(t2, format.mintick) + ",\"tp3\":" + (third ? str.tostring(t3, format.mintick) : "null") + "}"
+float plannedStop = candidate == 1 ? f_floorTick(candidateStop) : candidate == -1 ? f_ceilTick(candidateStop) : na
+float plannedRisk = candidate == 1 ? close - plannedStop : candidate == -1 ? plannedStop - close : na
+bool stopOK = not na(plannedRisk) and plannedRisk >= math.max(minStop * atr, syminfo.mintick) and plannedRisk <= maxStop * atr
+float plannedQty = stopOK ? f_qty(plannedRisk) : 0
+float opposing = candidate == 1 ? swingHigh : swingLow
+float room = candidate == 1 ? opposing - close : close - opposing
+bool roomOK = not roomGate or na(opposing) or room <= 0 or room >= plannedRisk * r1 + syminfo.mintick
+int signal = barstate.isconfirmed and entryGate and qualityGate and stopOK and roomOK and plannedQty >= qtyStep ? candidate : 0
+string reason = not marketOK ? "Set profile / USD unit value" : not inWindow ? "Outside entry windows" : blockEntries ? "Manual entry block" : newsBlocked ? "Manual news blackout" : time < testStart or time_close >= testEnd ? "Outside test dates" : not qualityGate ? "Trend/volatility/volume gate" : candidate != 0 and not stopOK ? "Invalid stop distance" : candidate != 0 and not roomOK ? "Insufficient TP1 room" : candidate != 0 and plannedQty < qtyStep ? "Risk budget below unit size" : setupState == 1 ? "ICC: wait correction" : setupState == 2 ? "ICC: wait continuation" : "Wait for setup"
+// COMMON SIGNAL ENGINE END
+
+// EXECUTION: fixed absolute bracket submitted with market intent at signal close.
+// Emulator fills no earlier than next tick. Planned R uses signal close, not fill.
+var int side = 0
+var bool pending = false
+var float refEntry = na
+var float fillEntry = na
+var float stop = na
+var float initialStop = na
+var float target1 = na
+var float target2 = na
+var float target3 = na
+var float initialQty = na
+var float part1 = na
+var float part2 = na
+var float partFinal = na
+var bool tp1Profit = false
+var bool done1 = false
+var bool done2 = false
+var bool doneFinal = false
+var int submittedBar = na
+var int filledBar = na
+var int lastClosed = na
+var int seenClosed = 0
+var string tradeID = ""
+var string lockedName = ""
+var bool closing = false
+bool entered = false
+bool tpEvent = false
+bool exited = false
+string eventText = ""
+if barstate.isconfirmed
+    // A position can enter AND close between two script calculations.
+    if strategy.closedtrades > seenClosed
+        for n = seenClosed to strategy.closedtrades - 1
+            string exitID = strategy.closedtrades.exit_id(n)
+            string why = strategy.closedtrades.exit_comment(n)
+            done1 := done1 or exitID == "TP1"
+            tp1Profit := tp1Profit or (exitID == "TP1" and why == "TP1")
+            done2 := done2 or exitID == "TP2"
+            doneFinal := doneFinal or exitID == "FINAL"
+            tpEvent := tpEvent or why == "TP1" or why == "TP2" or why == "FINAL TP"
+            eventText := eventText + (eventText == "" ? "" : " / ") + (na(why) ? exitID : why)
+        seenClosed := strategy.closedtrades
+    if pending and strategy.position_size != 0
+        pending := false
+        fillEntry := strategy.position_avg_price
+        filledBar := strategy.opentrades.entry_bar_index(0)
+    if side != 0 and not pending and strategy.position_size == 0
+        exited := true
+    if side != 0 and pending and strategy.closedtrades > nz(strategy.closedtrades[1]) and strategy.position_size == 0
+        exited := true
+    if pending and bar_index > submittedBar and strategy.position_size == 0 and not exited
+        // Market intent was not filled (e.g. insufficient capital/margin). Do not stick forever.
+        exited := true
+        eventText := "NO FILL: check capital, margin, quantity"
+    if exited
+        strategy.cancel_all()
+        pending := false
+        side := 0
+        closing := false
+        lastClosed := bar_index
+    if strategy.position_size != 0
+        // Stop can only tighten after TP1 was observed. Updates apply after this close.
+        if be and tp1Profit and not na(fillEntry)
+            stop := side == 1 ? math.max(stop, f_floorTick(fillEntry)) : math.min(stop, f_ceilTick(fillEntry))
+        if part1 > 0 and not done1
+            strategy.exit("TP1", "ENTRY", qty=part1, limit=target1, stop=stop, comment_profit="TP1", comment_loss="STOP", alert_message=tradeID)
+        if part2 > 0 and not done2
+            strategy.exit("TP2", "ENTRY", qty=part2, limit=target2, stop=stop, comment_profit="TP2", comment_loss="STOP", alert_message=tradeID)
+        if partFinal > 0 and not doneFinal
+            strategy.exit("FINAL", "ENTRY", qty=partFinal, limit=third ? target3 : target2, stop=stop, comment_profit="FINAL TP", comment_loss="STOP", alert_message=tradeID)
+        bool exitRequest = time_close >= testEnd or (flatten and not inWindow) or bar_index - filledBar >= holdBars
+        if exitRequest and not closing
+            strategy.close("ENTRY", comment="TIME / WINDOW EXIT", alert_message=tradeID)
+            closing := true
+    bool flat = side == 0 and strategy.position_size == 0 and not pending
+    bool rested = na(lastClosed) or bar_index - lastClosed > cooldown
+    if signal != 0 and flat and rested and not exited
+        side := signal
+        refEntry := close
+        fillEntry := na
+        stop := plannedStop
+        initialStop := stop
+        float risk = plannedRisk
+        target1 := side == 1 ? f_ceilTick(refEntry + risk * r1) : f_floorTick(refEntry - risk * r1)
+        target2 := side == 1 ? math.max(f_ceilTick(refEntry + risk * r2), target1 + syminfo.mintick) : math.min(f_floorTick(refEntry - risk * r2), target1 - syminfo.mintick)
+        target3 := side == 1 ? math.max(f_ceilTick(refEntry + risk * r3), target2 + syminfo.mintick) : math.min(f_floorTick(refEntry - risk * r3), target2 - syminfo.mintick)
+        initialQty := plannedQty
+        [a, b, c] = f_parts(initialQty)
+        part1 := a
+        part2 := b
+        partFinal := c
+        tp1Profit := false
+        done1 := false
+        done2 := false
+        doneFinal := false
+        pending := true
+        closing := false
+        submittedBar := bar_index
+        lockedName := candidateName
+        tradeID := syminfo.tickerid + ":" + timeframe.period + ":" + str.tostring(time_close)
+        strategy.entry("ENTRY", side == 1 ? strategy.long : strategy.short, qty=initialQty, alert_message=tradeID)
+        // Protect all tranches immediately with the entry request, before fill observation.
+        if part1 > 0
+            strategy.exit("TP1", "ENTRY", qty=part1, limit=target1, stop=stop, comment_profit="TP1", comment_loss="STOP", alert_message=tradeID)
+        if part2 > 0
+            strategy.exit("TP2", "ENTRY", qty=part2, limit=target2, stop=stop, comment_profit="TP2", comment_loss="STOP", alert_message=tradeID)
+        strategy.exit("FINAL", "ENTRY", qty=partFinal, limit=third ? target3 : target2, stop=stop, comment_profit="FINAL TP", comment_loss="STOP", alert_message=tradeID)
+        entered := true
+        alert(f_payload("SIGNAL_INTENT_NOT_FILL", tradeID, side, refEntry, initialQty, stop, target1, target2, target3), alert.freq_once_per_bar_close)
+float remaining = math.abs(strategy.position_size)
+bool activeView = side != 0
+string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : strategy.position_size != 0 ? "HOLD" : "WAIT"
+string detail = eventText != "" ? eventText : closing ? "Exit requested; bracket remains" : pending ? "Queued next-tick market intent" : activeView ? lockedName : reason
+string executionLabel = "Strategy emulator; costs in Properties"
+
+plot(emaFast, "EMA20", color=color.aqua)
+plot(emaSlow, "EMA50", color=color.orange)
+plot(showLevels and activeView ? refEntry : na, "Signal reference (not fill)", color=color.yellow, style=plot.style_linebr)
+plot(showLevels and activeView ? stop : na, "Protective stop", color=color.red, style=plot.style_linebr)
+plot(showLevels and activeView and part1 > 0 and not done1 ? target1 : na, "TP1", color=color.lime, style=plot.style_linebr)
+plot(showLevels and activeView and not (third ? done2 or part2 == 0 : doneFinal) ? target2 : na, "TP2", color=color.green, style=plot.style_linebr)
+plot(showLevels and activeView and third and not doneFinal ? target3 : na, "TP3", color=color.teal, style=plot.style_linebr)
+plotshape(entered and side == 1, title="Long intent", text="ENTER", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
+plotshape(entered and side == -1, title="Short intent", text="ENTER", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
+plotshape(exited, title="Full exit", text="EXIT", style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny)
+// Candidate markers for comparing identical signal engines irrespective of execution state.
+plot(signal, "Raw eligible candidate direction", display=display.data_window)
+var table dash = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 15))
+if barstate.islast and showDash
+    color stateColor = status == "EXIT" ? color.orange : status == "WAIT" ? color.gray : color.green
+    table.cell(dash, 0, 0, "MEKA 4.0 RESEARCH", text_color=color.white)
+    table.cell(dash, 1, 0, status, text_color=color.white, bgcolor=stateColor)
+    table.cell(dash, 0, 1, profile + " / " + mode, text_color=color.silver)
+    table.cell(dash, 1, 1, activeView ? (side == 1 ? "LONG" : "SHORT") : "FLAT", text_color=color.white)
+    table.cell(dash, 0, 2, sessionText == "" ? "No entry session" : sessionText, text_color=color.silver)
+    table.cell(dash, 1, 2, detail, text_color=color.white)
+    table.cell(dash, 0, 3, "Reference / modeled fill", text_color=color.silver)
+    table.cell(dash, 1, 3, activeView ? str.tostring(refEntry, format.mintick) + " / " + str.tostring(fillEntry, format.mintick) : "-", text_color=color.white)
+    table.cell(dash, 0, 4, "Stop", text_color=color.silver)
+    table.cell(dash, 1, 4, activeView ? str.tostring(stop, format.mintick) : "-", text_color=color.white)
+    table.cell(dash, 0, 5, "TP1 / TP2 / optional TP3", text_color=color.silver)
+    table.cell(dash, 1, 5, activeView ? (part1 > 0 ? str.tostring(target1, format.mintick) : "skip") + " / " + (third and part2 == 0 ? "skip" : str.tostring(target2, format.mintick)) + (third ? " / " + str.tostring(target3, format.mintick) : "") : "-", text_color=color.white)
+    table.cell(dash, 0, 6, "Initial / remaining units", text_color=color.silver)
+    table.cell(dash, 1, 6, activeView ? str.tostring(initialQty) + " / " + str.tostring(remaining) : "-", text_color=color.white)
+    table.cell(dash, 0, 7, "Execution", text_color=color.silver)
+    table.cell(dash, 1, 7, executionLabel, text_color=color.yellow)
+    table.cell(dash, 0, 8, "News coverage", text_color=color.silver)
+    table.cell(dash, 1, 8, newsOn ? "ONE manual event only" : "OFF - no calendar feed", text_color=color.yellow)
+    table.cell(dash, 0, 9, "Quote / calibration", text_color=color.silver)
+    table.cell(dash, 1, 9, root == "6J" ? "6J LONG = JPY strength; uncalibrated" : "Native chart direction; uncalibrated", text_color=color.silver)

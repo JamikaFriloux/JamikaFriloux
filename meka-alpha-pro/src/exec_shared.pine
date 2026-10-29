@@ -1,0 +1,36 @@
+// SHARED EXECUTION HELPERS BEGIN
+// Trading-day counters reset at the configured trading-day boundary, never at midnight, and
+// never touch an open position. Execution-dependent gates live here (outside the signal engine)
+// because the indicator simulation and the strategy emulator can legitimately disagree on fills.
+var int dayKey = na
+var float dayR = 0.0
+var int dayEntries = 0
+var int lossStreak = 0
+var array<string> eventLog = array.new<string>()
+int barDayKey = f_dayKey(time)
+if barstate.isconfirmed and (na(dayKey) or barDayKey != dayKey)
+    dayKey := barDayKey
+    dayR := 0.0
+    dayEntries := 0
+    lossStreak := 0
+
+f_log(string txt) =>
+    array.unshift(eventLog, str.format_time(time_close, "MM-dd HH:mm", dayTZ) + " " + txt)
+    if array.size(eventLog) > 4
+        array.pop(eventLog)
+    true
+
+f_dayBlock() =>
+    dailyLossR > 0 and dayR <= -dailyLossR ? "Daily loss gate" : maxEntries > 0 and dayEntries >= maxEntries ? "Max entries this trading day" : maxLossStreak > 0 and lossStreak >= maxLossStreak ? "Loss-streak pause" : ""
+
+// Tick-separated, monotonic targets from the frozen signal-close reference and planned risk.
+f_targets(int s, float ref, float risk) =>
+    float t1 = s == 1 ? f_ceilTick(ref + risk * r1) : f_floorTick(ref - risk * r1)
+    float t2 = s == 1 ? math.max(f_ceilTick(ref + risk * r2), t1 + syminfo.mintick) : math.min(f_floorTick(ref - risk * r2), t1 - syminfo.mintick)
+    float t3 = s == 1 ? math.max(f_ceilTick(ref + risk * r3), t2 + syminfo.mintick) : math.min(f_floorTick(ref - risk * r3), t2 - syminfo.mintick)
+    [t1, t2, t3]
+
+f_num(float x) => na(x) ? "null" : str.tostring(x, format.mintick)
+f_payload(string evType, string detail, string basis, string id, string sid, int s, float price, float q, float sl, float t1, float t2, float t3) =>
+    "{\"version\":\"" + VERSION + "\",\"event\":\"" + evType + "\",\"event_id\":\"" + id + ":" + evType + ":" + str.tostring(time_close) + "\",\"detail\":\"" + detail + "\",\"fill_basis\":\"" + basis + "\",\"trade_id\":\"" + id + "\",\"setup_id\":\"" + sid + "\",\"ticker\":\"" + syminfo.tickerid + "\",\"timeframe\":\"" + timeframe.period + "\",\"native_side\":\"" + (s == 1 ? "LONG" : "SHORT") + "\",\"bar_close_ms\":" + str.tostring(time_close) + ",\"price\":" + f_num(price) + ",\"qty\":" + (na(q) ? "null" : str.tostring(q)) + ",\"stop\":" + f_num(sl) + ",\"tp1\":" + f_num(t1) + ",\"tp2\":" + f_num(t2) + ",\"tp3\":" + (useTP3 ? f_num(t3) : "null") + "}"
+// SHARED EXECUTION HELPERS END
