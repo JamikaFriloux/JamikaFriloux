@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0-r2.1 — October 29, 2026 (first TradingView feedback)
+
+- The user reported the strategy compiled and ran on `TVC:GOLD` 1m. The family showed **Unknown**, so every entry was blocked. Auto-detection now also matches common CFD and spot tickers: `GOLD`, `XAUUSD`, `GOLDUSD`, `NAS100`, `US100`, `USTEC`, `SPX500`, `US500`, `EURUSD`, `USDJPY` and their variants. The manual *Market family* override still wins.
+- Dashboard: compact by default (9 rows when flat; levels appear while a position is open). New *Full dashboard*, *position* and *text size* inputs. Shorter execution label.
+
 ## 4.0-r2 — October 29, 2026 (review of the supplied 4.0-r1)
 
 The r1 research files were reviewed against the brief, the v3 source and the v3 audit. r1's core architecture was sound and is kept: one shared signal engine, next-tick market entry with pre-submitted absolute brackets, whole-unit tranches, stop-first indicator simulation, and confirmed HTF offset. The defects and gaps below were fixed. **Neither r1 nor r2 has been compiled in TradingView.**

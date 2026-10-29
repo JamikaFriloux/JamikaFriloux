@@ -164,7 +164,7 @@ if barstate.isconfirmed
 string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : side != 0 and not pending ? "HOLD" : "WAIT"
 string posState = side == 0 ? (not na(lastClosed) and bar_index - lastClosed <= cooldown ? "COOLDOWN" : "FLAT") : pending ? "PENDING" : remaining < initialQty ? "PARTIAL" : "OPEN"
 string detail = eventText != "" ? eventText : closing ? "Exit requested (" + closingWhy + ") at next open" : pending ? "Intent queued: modeled fill at next open" : side != 0 ? lockedName + " " + tradeID : execBlock != "" ? execBlock : reason
-string executionLabel = "SIMULATION (no fills, no costs) | stop-first ambiguous bars: " + str.tostring(ambiguityCount)
+string executionLabel = "SIMULATION, no costs; ambiguous bars " + str.tostring(ambiguityCount)
 string resultLabel = "Simulated gross R"
 alertcondition(entered, "ENTER intent", "MEKA 4.0 confirmed entry intent (not a fill)")
 alertcondition(filledNow, "Simulated fill", "MEKA 4.0 simulated next-open fill (assumed, not a broker fill)")

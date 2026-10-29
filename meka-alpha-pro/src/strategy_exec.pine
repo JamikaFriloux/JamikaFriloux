@@ -176,5 +176,5 @@ if not barstate.isconfirmed
 string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : strategy.position_size != 0 ? "HOLD" : "WAIT"
 string posState = side == 0 ? (not na(lastClosed) and bar_index - lastClosed <= cooldown ? "COOLDOWN" : "FLAT") : pending ? "PENDING" : remaining < initialQty ? "PARTIAL" : "OPEN"
 string detail = eventText != "" ? eventText : closing ? "Exit requested (" + closingWhy + "); brackets stay active" : pending ? "Market intent queued for next tick" : side != 0 ? lockedName + " " + tradeID : execBlock != "" ? execBlock : reason
-string executionLabel = "TV emulator | costs, slippage, margin, Bar Magnifier = Properties" + (isFuture ? "" : " | NON-FUTURE: check commission units")
+string executionLabel = "TV emulator; costs/margin in Properties" + (isFuture ? "" : "; check commission units")
 string resultLabel = "Emulator net R"

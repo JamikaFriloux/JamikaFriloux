@@ -9,7 +9,7 @@ indicator("MEKA ALPHA PRO 4.0-r2 Research Indicator", shorttitle="MEKA 4.0 IND",
 // Everything between the BEGIN/END markers is byte-identical in the indicator and the strategy
 // (enforced by tools/build.py). Raw signals therefore cannot differ between the two scripts.
 // Native chart direction only: 6J LONG = long JPY / short USD, the opposite of a USDJPY LONG.
-const string VERSION = "4.0-r2"
+const string VERSION = "4.0-r2.1"
 gSetup = "Setup"
 gMarket = "Market / sizing"
 gRisk = "Risk / targets"
@@ -100,10 +100,16 @@ volumeRequired = input.bool(false, "Require volume >= SMA20 volume (missing volu
 
 showLevels = input.bool(true, "Show planned / active levels", group=gDisp)
 showDash = input.bool(true, "Show dashboard", group=gDisp)
+dashFull = input.bool(false, "Full dashboard (14 rows; off = compact)", group=gDisp)
+dashPosIn = input.string("Top right", "Dashboard position", options=["Top right", "Top left", "Bottom right", "Bottom left"], group=gDisp)
+dashSizeIn = input.string("Small", "Dashboard text size", options=["Tiny", "Small", "Normal"], group=gDisp)
 
 // ---- Market profile -------------------------------------------------------------------------
 string root = syminfo.root
-string autoProfile = root == "GC" or root == "MGC" or syminfo.basecurrency == "XAU" ? "Gold" : root == "NQ" or root == "MNQ" ? "Nasdaq" : root == "ES" or root == "MES" ? "S&P" : root == "6E" or root == "M6E" or (syminfo.basecurrency == "EUR" and syminfo.currency == "USD") ? "EURUSD" : root == "6J" or (syminfo.basecurrency == "USD" and syminfo.currency == "JPY") ? "JPY" : "Unknown"
+// Futures roots, then common CFD / spot tickers (e.g. TVC:GOLD, OANDA:XAUUSD), then currencies.
+f_isOne(string list, string x) => str.contains("," + list + ",", "," + x + ",")
+string tk = syminfo.ticker
+string autoProfile = root == "GC" or root == "MGC" or syminfo.basecurrency == "XAU" or f_isOne("GOLD,XAUUSD,GOLDUSD,XAUUSD.,GOLDSPOT", tk) ? "Gold" : root == "NQ" or root == "MNQ" or f_isOne("NAS100,NAS100USD,US100,USTEC,NDX100,US100.cash", tk) ? "Nasdaq" : root == "ES" or root == "MES" or f_isOne("SPX500,SPX500USD,US500,US500USD,US500.cash", tk) ? "S&P" : root == "6E" or root == "M6E" or (syminfo.basecurrency == "EUR" and syminfo.currency == "USD") or tk == "EURUSD" ? "EURUSD" : root == "6J" or (syminfo.basecurrency == "USD" and syminfo.currency == "JPY") or tk == "USDJPY" ? "JPY" : "Unknown"
 string profile = profileInput == "Auto" ? autoProfile : profileInput
 bool isFuture = syminfo.type == "futures"
 float qtyStep = isFuture ? 1.0 : qtyStepInput
@@ -528,7 +534,7 @@ if barstate.isconfirmed
 string status = exited ? "EXIT" : tpEvent ? "TP" : entered ? "ENTER" : side != 0 and not pending ? "HOLD" : "WAIT"
 string posState = side == 0 ? (not na(lastClosed) and bar_index - lastClosed <= cooldown ? "COOLDOWN" : "FLAT") : pending ? "PENDING" : remaining < initialQty ? "PARTIAL" : "OPEN"
 string detail = eventText != "" ? eventText : closing ? "Exit requested (" + closingWhy + ") at next open" : pending ? "Intent queued: modeled fill at next open" : side != 0 ? lockedName + " " + tradeID : execBlock != "" ? execBlock : reason
-string executionLabel = "SIMULATION (no fills, no costs) | stop-first ambiguous bars: " + str.tostring(ambiguityCount)
+string executionLabel = "SIMULATION, no costs; ambiguous bars " + str.tostring(ambiguityCount)
 string resultLabel = "Simulated gross R"
 alertcondition(entered, "ENTER intent", "MEKA 4.0 confirmed entry intent (not a fill)")
 alertcondition(filledNow, "Simulated fill", "MEKA 4.0 simulated next-open fill (assumed, not a broker fill)")
@@ -557,40 +563,38 @@ plot(signal, "Raw eligible candidate direction", display=display.data_window)
 plot(candidate, "Raw candidate before gates", display=display.data_window)
 plot(setupState, "ICC setup state (0 idle, 1 indicated, 2 corrected)", display=display.data_window)
 
-var table dash = showDash ? table.new(position.top_right, 2, 14, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 60)) : na
+dashPos = dashPosIn == "Top left" ? position.top_left : dashPosIn == "Bottom right" ? position.bottom_right : dashPosIn == "Bottom left" ? position.bottom_left : position.top_right
+dashSize = dashSizeIn == "Tiny" ? size.tiny : dashSizeIn == "Normal" ? size.normal : size.small
+var table dash = showDash ? table.new(dashPos, 2, 14, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 60)) : na
+f_row(int r, string k, string v, color vc) =>
+    table.cell(dash, 0, r, k, text_color=color.silver, text_size=dashSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, v, text_color=vc, text_size=dashSize, text_halign=text.align_left)
+    r + 1
 if barstate.islast and showDash
+    table.clear(dash, 0, 0, 1, 13)
     color stateColor = status == "EXIT" ? color.orange : status == "TP" ? color.teal : status == "ENTER" ? color.blue : status == "HOLD" ? color.green : color.gray
     string dirText = side == 1 ? "LONG" : side == -1 ? "SHORT" : "FLAT"
     string jpyText = profile == "JPY" and side != 0 ? (jpyPerUsdQuote ? " = long " + (side == 1 ? "JPY (USDJPY-equiv SHORT)" : "USD (USDJPY-equiv LONG)") : " = long " + (side == 1 ? "USD vs JPY" : "JPY vs USD")) : ""
     string fillText = not activeView ? "-" : str.tostring(refEntry, format.mintick) + " / " + (pending ? "pending" : str.tostring(fillEntry, format.mintick)) + (na(fillRiskRatio) ? "" : " | fill risk " + str.tostring(fillRiskRatio, "#.##") + "x plan")
     string tpText = not activeView ? "-" : (part1 > 0 ? str.tostring(target1, format.mintick) + (done1 ? " done" : "") : "skip") + " / " + (useTP3 and part2 == 0 ? "skip" : str.tostring(target2, format.mintick)) + (useTP3 ? " / " + str.tostring(target3, format.mintick) : "")
+    string stopText = activeView ? str.tostring(initialStop, format.mintick) + " / " + str.tostring(curStop, format.mintick) : "-"
     int newsCount = (news1On ? 1 : 0) + (news2On ? 1 : 0) + (news3On ? 1 : 0)
-    table.cell(dash, 0, 0, "MEKA " + VERSION + " RESEARCH - UNCALIBRATED", text_color=color.white, text_size=size.small)
-    table.cell(dash, 1, 0, status, text_color=color.white, bgcolor=stateColor, text_size=size.normal)
-    table.cell(dash, 0, 1, profile + " / " + mode + " / " + engine, text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 1, dirText + jpyText, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 2, sessionText == "" ? "No entry window" : sessionText, text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 2, detail, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 3, "Setup state", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 3, setupText, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 4, "Reference / fill", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 4, fillText, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 5, "Stop initial / now", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 5, activeView ? str.tostring(initialStop, format.mintick) + " / " + str.tostring(curStop, format.mintick) : "-", text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 6, "TP1 / TP2" + (useTP3 ? " / TP3" : ""), text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 6, tpText, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 7, "Units initial / remaining", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 7, (activeView ? str.tostring(initialQty) + " / " + str.tostring(remaining) + " " : "") + posState, text_color=color.white, text_size=size.small)
-    table.cell(dash, 0, 8, "Trading day (" + resultLabel + ")", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 8, str.tostring(dayR, "#.##") + "R | entries " + str.tostring(dayEntries) + " | loss streak " + str.tostring(lossStreak) + (execBlock != "" ? " | BLOCK: " + execBlock : ""), text_color=execBlock != "" ? color.orange : color.white, text_size=size.small)
-    table.cell(dash, 0, 9, "Execution", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 9, executionLabel, text_color=color.yellow, text_size=size.small)
-    table.cell(dash, 0, 10, "News / blocks", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 10, (newsBlocked ? "BLOCKED now" : "clear") + " | " + str.tostring(newsCount) + " manual event(s)" + (recurOn ? " + daily exclusion" : "") + " | NO calendar feed", text_color=newsBlocked ? color.orange : color.yellow, text_size=size.small)
-    table.cell(dash, 0, 11, "Tick / USD per unit / step", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 11, str.tostring(syminfo.mintick) + " / " + (na(unitUSD) ? "UNKNOWN" : str.tostring(unitUSD, "#.######")) + " (" + unitSource + ") / " + str.tostring(qtyStep), text_color=marketOK ? color.white : color.orange, text_size=size.small)
-    table.cell(dash, 0, 12, "Volume", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 12, volumeText, text_color=volumeRequired and volumeMissing ? color.orange : color.white, text_size=size.small)
-    table.cell(dash, 0, 13, "Last events", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 13, array.size(eventLog) == 0 ? "-" : array.join(eventLog, "\n"), text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(dash, 0, 0, "MEKA " + VERSION + " (uncalibrated)", text_color=color.white, text_size=dashSize)
+    table.cell(dash, 1, 0, status, text_color=color.white, bgcolor=stateColor, text_size=dashSize)
+    int r = 1
+    r := f_row(r, profile + " / " + mode, dirText + jpyText, color.white)
+    r := f_row(r, sessionText == "" ? "No entry window" : sessionText, detail, marketOK ? color.white : color.orange)
+    r := f_row(r, "Setup", setupText, color.white)
+    if dashFull or activeView
+        r := f_row(r, "Reference / fill", fillText, color.white)
+        r := f_row(r, "Stop initial / now", stopText, color.white)
+        r := f_row(r, "TP1 / TP2" + (useTP3 ? " / TP3" : ""), tpText, color.white)
+    r := f_row(r, "Units", (activeView ? str.tostring(initialQty) + " / " + str.tostring(remaining) + " " : "") + posState, color.white)
+    r := f_row(r, "Day (" + resultLabel + ")", str.tostring(dayR, "#.##") + "R | entries " + str.tostring(dayEntries) + " | streak " + str.tostring(lossStreak) + (execBlock != "" ? " | BLOCK: " + execBlock : ""), execBlock != "" ? color.orange : color.white)
+    if dashFull
+        r := f_row(r, "Execution", executionLabel, color.yellow)
+        r := f_row(r, "News / blocks", (newsBlocked ? "BLOCKED now" : "clear") + " | " + str.tostring(newsCount) + " manual" + (recurOn ? " + daily" : "") + " | no calendar feed", newsBlocked ? color.orange : color.yellow)
+        r := f_row(r, "Tick / USD per unit / step", str.tostring(syminfo.mintick) + " / " + (na(unitUSD) ? "UNKNOWN" : str.tostring(unitUSD, "#.######")) + " (" + unitSource + ") / " + str.tostring(qtyStep), marketOK ? color.white : color.orange)
+        r := f_row(r, "Volume", volumeText, volumeRequired and volumeMissing ? color.orange : color.white)
+        r := f_row(r, "Last events", array.size(eventLog) == 0 ? "-" : array.join(eventLog, "\n"), color.white)
 // SHARED DISPLAY END

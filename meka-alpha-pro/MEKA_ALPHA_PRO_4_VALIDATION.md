@@ -1,6 +1,6 @@
 # MEKA ALPHA PRO 4.0-r2 — validation ledger
 
-Date: October 29, 2026. **Not compiled in TradingView. Not replayed. Not backtested. Not forward-tested.** No return, win rate, profit factor or drawdown figure exists for any version of this script.
+Date: October 29, 2026. **Strategy compile observed by the user; indicator not yet. Not replayed. Not backtested. Not forward-tested.** No return, win rate, profit factor or drawdown figure exists for any version of this script.
 
 Five kinds of evidence are kept separate here:
 
@@ -8,9 +8,21 @@ Five kinds of evidence are kept separate here:
 |---|---|---|
 | L1 Static inspection | Reading code; text and structure checks | **Yes** |
 | L2 Reference model | Rules ported to Python and exercised on synthetic candles | **Yes** (port, not Pine) |
-| L3 TradingView compilation | Pine Editor compiles the file | **No** |
+| L3 TradingView compilation | Pine Editor compiles the file | **Strategy: yes, observed by the user (r2, Oct 29, 2026). Indicator: not yet reported.** |
 | L4 Replay / backtest | Behaviour on real feed data, emulator ledger | **No** |
 | L5 Forward test | Paper trading on live bars | **No** |
+
+## Observed in TradingView (user report, October 29, 2026)
+
+The user added the r2 **strategy** to a `TVC:GOLD` 1-minute chart, test range October 4–29, 2026, $10K capital, Paper Trading panel open. Observations from their screenshot:
+
+- The script compiled and ran. The dashboard rendered with status `WAIT`, and the List of Trades was empty.
+- The dashboard showed `Unknown / DAY TRADE / ICC` and `Unknown market: choose family`. **Cause: a detection gap.** `TVC:GOLD` is not a GC/MGC future and does not report base currency `XAU`, so auto-detection returned Unknown and every entry was blocked. The script did what it was designed to do for an unrecognised symbol; the recognition itself was the gap. **Fixed in r2.1:** common CFD and spot tickers (`GOLD`, `XAUUSD`, `NAS100`, `US100`, `US500`, `SPX500`, `EURUSD`, `USDJPY`, …) are now recognised.
+- Tick 0.001, USD per unit 1 (pointvalue, USD quote), step 1 were displayed correctly.
+- At the time shown (12:03 New York, 16:03 UTC) `No entry window` is correct, because the default New York and London windows end at 12:00 local.
+- The dashboard was too large for the chart (14 rows; the execution row overflowed). r2.1 adds a compact default, position and text-size inputs.
+
+Still unverified in TradingView: indicator compile, any filled trade, any of matrix rows 3–25.
 
 ## What was actually done
 

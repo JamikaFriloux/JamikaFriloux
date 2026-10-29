@@ -2,7 +2,7 @@
 // Everything between the BEGIN/END markers is byte-identical in the indicator and the strategy
 // (enforced by tools/build.py). Raw signals therefore cannot differ between the two scripts.
 // Native chart direction only: 6J LONG = long JPY / short USD, the opposite of a USDJPY LONG.
-const string VERSION = "4.0-r2"
+const string VERSION = "4.0-r2.1"
 gSetup = "Setup"
 gMarket = "Market / sizing"
 gRisk = "Risk / targets"
@@ -93,10 +93,16 @@ volumeRequired = input.bool(false, "Require volume >= SMA20 volume (missing volu
 
 showLevels = input.bool(true, "Show planned / active levels", group=gDisp)
 showDash = input.bool(true, "Show dashboard", group=gDisp)
+dashFull = input.bool(false, "Full dashboard (14 rows; off = compact)", group=gDisp)
+dashPosIn = input.string("Top right", "Dashboard position", options=["Top right", "Top left", "Bottom right", "Bottom left"], group=gDisp)
+dashSizeIn = input.string("Small", "Dashboard text size", options=["Tiny", "Small", "Normal"], group=gDisp)
 
 // ---- Market profile -------------------------------------------------------------------------
 string root = syminfo.root
-string autoProfile = root == "GC" or root == "MGC" or syminfo.basecurrency == "XAU" ? "Gold" : root == "NQ" or root == "MNQ" ? "Nasdaq" : root == "ES" or root == "MES" ? "S&P" : root == "6E" or root == "M6E" or (syminfo.basecurrency == "EUR" and syminfo.currency == "USD") ? "EURUSD" : root == "6J" or (syminfo.basecurrency == "USD" and syminfo.currency == "JPY") ? "JPY" : "Unknown"
+// Futures roots, then common CFD / spot tickers (e.g. TVC:GOLD, OANDA:XAUUSD), then currencies.
+f_isOne(string list, string x) => str.contains("," + list + ",", "," + x + ",")
+string tk = syminfo.ticker
+string autoProfile = root == "GC" or root == "MGC" or syminfo.basecurrency == "XAU" or f_isOne("GOLD,XAUUSD,GOLDUSD,XAUUSD.,GOLDSPOT", tk) ? "Gold" : root == "NQ" or root == "MNQ" or f_isOne("NAS100,NAS100USD,US100,USTEC,NDX100,US100.cash", tk) ? "Nasdaq" : root == "ES" or root == "MES" or f_isOne("SPX500,SPX500USD,US500,US500USD,US500.cash", tk) ? "S&P" : root == "6E" or root == "M6E" or (syminfo.basecurrency == "EUR" and syminfo.currency == "USD") or tk == "EURUSD" ? "EURUSD" : root == "6J" or (syminfo.basecurrency == "USD" and syminfo.currency == "JPY") or tk == "USDJPY" ? "JPY" : "Unknown"
 string profile = profileInput == "Auto" ? autoProfile : profileInput
 bool isFuture = syminfo.type == "futures"
 float qtyStep = isFuture ? 1.0 : qtyStepInput

@@ -31,9 +31,9 @@ The two `.pine` files are complete and copy-paste ready. Each is standalone and 
 
 | Family | Auto-detected by | Sizing source (when override = 0) | Notes |
 |---|---|---|---|
-| Gold | root `GC`/`MGC`, or base `XAU` | USD quote → `syminfo.pointvalue` | Full vs micro differ 10× in point value and fees; broker XAUUSD unit = 1 oz or 100 oz depending on feed. |
-| Nasdaq | root `NQ`/`MNQ` | pointvalue | Whole contracts. Same signal ≠ same dollar risk. |
-| S&P | root `ES`/`MES` | pointvalue | Whole contracts; small R targets suffer cost drag. |
+| Gold | root `GC`/`MGC`, base `XAU`, or ticker `GOLD`/`XAUUSD`/`GOLDUSD` (e.g. `TVC:GOLD`, `OANDA:XAUUSD`) | USD quote → `syminfo.pointvalue` | Full vs micro differ 10× in point value and fees; broker XAUUSD unit = 1 oz or 100 oz depending on feed. |
+| Nasdaq | root `NQ`/`MNQ`, or ticker `NAS100`/`US100`/`USTEC` | pointvalue | Whole contracts. Same signal ≠ same dollar risk. |
+| S&P | root `ES`/`MES`, or ticker `SPX500`/`US500` | pointvalue | Whole contracts; small R targets suffer cost drag. |
 | EURUSD | root `6E`/`M6E`, or EUR/USD currencies | pointvalue | Spot "unit" means 1 EUR; set *quantity step* to your lot step (e.g. 1000). |
 | JPY | root `6J`, or USD/JPY currencies | USDJPY: `pointvalue / close`; 6J (USD-quoted): pointvalue | See orientation below. |
 | anything else | — | **blocked** | Choose a family *and* check the unit value. |
@@ -115,7 +115,7 @@ Calibrate per **feed × family × session × mode**, chronologically (see Valida
 
 ## Dashboard
 
-Main cell: **WAIT / ENTER / HOLD / TP / EXIT**. Each event status lasts exactly its event bar. Priority on a bar with several events: EXIT > TP > ENTER > HOLD > WAIT. A queued intent shows WAIT with the secondary text "Intent queued", never HOLD. Other rows: family/mode/framework; side (+ USDJPY-equivalent for JPY); active windows + detail or the one blocking reason; ICC setup state and last end reason; reference vs fill and fill-risk ratio; initial/current stop; targets (`done`/`skip`); initial/remaining units + FLAT/PENDING/OPEN/PARTIAL/COOLDOWN; trading-day R, entries, streak and active block; execution basis (simulation with the ambiguous-bar count, or emulator); news/block coverage; tick, USD per unit and its source, quantity step; volume status; last four events (all events of a bar are kept together).
+Compact by default; enable *Full dashboard* for all 14 rows; position and text size are inputs. Main cell: **WAIT / ENTER / HOLD / TP / EXIT**. Each event status lasts exactly its event bar. Priority on a bar with several events: EXIT > TP > ENTER > HOLD > WAIT. A queued intent shows WAIT with the secondary text "Intent queued", never HOLD. Other rows: family/mode/framework; side (+ USDJPY-equivalent for JPY); active windows + detail or the one blocking reason; ICC setup state and last end reason; reference vs fill and fill-risk ratio; initial/current stop; targets (`done`/`skip`); initial/remaining units + FLAT/PENDING/OPEN/PARTIAL/COOLDOWN; trading-day R, entries, streak and active block; execution basis (simulation with the ambiguous-bar count, or emulator); news/block coverage; tick, USD per unit and its source, quantity step; volume status; last four events (all events of a bar are kept together).
 
 ## Alerts
 
