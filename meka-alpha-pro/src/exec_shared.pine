@@ -21,18 +21,20 @@ f_cost(float q, bool marketLike) =>
     commUnit * q + (spreadPx / 2 + (marketLike ? slipTicks * syminfo.mintick : 0.0)) * q * unitUSD
 
 // ---- Performance ledger: one record per COMPLETE position (partial targets are not trades) ------
-// Groups: 0 all, 1 long, 2 short, 3 Asia, 4 London, 5 New York, 6 trending, 7 ranging,
-//         8 high volatility, 9 normal volatility, 10 in-sample, 11 out-of-sample.
-var array<float> stN = array.new<float>(12, 0.0)
-var array<float> stW = array.new<float>(12, 0.0)
-var array<float> stSW = array.new<float>(12, 0.0)
-var array<float> stSL = array.new<float>(12, 0.0)
-var array<float> stGW = array.new<float>(12, 0.0)
-var array<float> stGL = array.new<float>(12, 0.0)
-var array<float> stCum = array.new<float>(12, 0.0)
-var array<float> stPeak = array.new<float>(12, 0.0)
-var array<float> stDD = array.new<float>(12, 0.0)
-var array<float> stNet = array.new<float>(12, 0.0)
+// Groups: 0 all, 1 long, 2 short, 3 Asia, 4 London, 5 New York, 6-8 long by session,
+// 9-11 short by session, 12 trending, 13 ranging, 14 high volatility, 15 normal volatility,
+// 16 development, 17 validation, 18 holdout.
+const int NG = 19
+var array<float> stN = array.new<float>(NG, 0.0)
+var array<float> stW = array.new<float>(NG, 0.0)
+var array<float> stSW = array.new<float>(NG, 0.0)
+var array<float> stSL = array.new<float>(NG, 0.0)
+var array<float> stGW = array.new<float>(NG, 0.0)
+var array<float> stGL = array.new<float>(NG, 0.0)
+var array<float> stCum = array.new<float>(NG, 0.0)
+var array<float> stPeak = array.new<float>(NG, 0.0)
+var array<float> stDD = array.new<float>(NG, 0.0)
+var array<float> stNet = array.new<float>(NG, 0.0)
 var array<int> tpTouch = array.new<int>(3, 0)
 var array<int> tpFill = array.new<int>(3, 0)
 var int ambiguousBars = 0
@@ -55,14 +57,16 @@ f_rec(int g, float r, float cash) =>
     array.set(stNet, g, array.get(stNet, g) + cash)
     true
 
-f_record(float r, float cash, int dir, int sess, bool trend, bool hv, bool oos) =>
+// period: 0 development, 1 validation, 2 holdout (by entry time).
+f_record(float r, float cash, int dir, int sess, bool trend, bool hv, int period) =>
     f_rec(0, r, cash)
     f_rec(dir == 1 ? 1 : 2, r, cash)
     if sess > 0
         f_rec(2 + sess, r, cash)
-    f_rec(trend ? 6 : 7, r, cash)
-    f_rec(hv ? 8 : 9, r, cash)
-    f_rec(oos ? 11 : 10, r, cash)
+        f_rec((dir == 1 ? 5 : 8) + sess, r, cash)
+    f_rec(trend ? 12 : 13, r, cash)
+    f_rec(hv ? 14 : 15, r, cash)
+    f_rec(16 + period, r, cash)
     true
 
 f_bump(array<int> a, int i) =>

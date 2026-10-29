@@ -3,7 +3,7 @@
 // (enforced by tools/build.py), so both scripts always produce the same raw signals.
 // All decisions are taken on CLOSED bars only. Higher-timeframe data is the previous completed
 // higher-timeframe bar ([1] offset + lookahead_on), never the forming one.
-const string VERSION = "4.0"
+const string VERSION = "4.0.1"
 
 gQuick = "1 · Quick setup"
 gRisk = "2 · Risk & targets"
@@ -46,7 +46,8 @@ gapMaxRisk = input.float(1.5, "Exit if actual fill risk exceeds planned risk by 
 
 entryType = input.string("Market at next open", "Entry order", options=["Market at next open", "Limit at breakout retest"], group=gExec)
 limitBars = input.int(3, "Limit order valid for (bars)", minval=1, maxval=20, group=gExec)
-fillTicks = input.int(1, "Limit fill requires trading through by (ticks)", minval=0, maxval=10, group=gExec, tooltip="Keep equal to the strategy property 'Verify price for limit orders' (declared as 1).")
+fillTicks = input.int(1, "Limit orders fill only when price trades through by (ticks)", minval=0, maxval=10, group=gExec, tooltip="Applies to limit entries AND profit targets. Keep equal to the strategy property 'Verify price for limit orders' (declared as 1). A target that is only touched is not filled.")
+sameBarRule = input.string("Stop first (conservative)", "Indicator: stop and target in the same candle", options=["Stop first (conservative)", "Match TradingView emulator"], group=gExec, tooltip="OHLC cannot show which came first. Conservative assumes the stop. 'Match TradingView emulator' uses the emulator's rule (price visits the extreme nearer the open first) so the indicator can be checked against the strategy. The strategy always uses the emulator.")
 usePresetCost = input.bool(true, "Use preset cost model", group=gExec, tooltip="Illustrative costs per market. Replace with your broker's real numbers before trusting any statistic.")
 commIn = input.float(0, "Commission per unit per side (USD)", minval=0, group=gExec)
 spreadIn = input.float(0, "Typical spread (price units)", minval=0, group=gExec)
@@ -83,7 +84,8 @@ dayTZ = "America/New_York"
 dayReset = 1700
 testStart = input.time(timestamp("01 Jan 2020 00:00 +0000"), "Trade from", group=gNews)
 testEnd = input.time(timestamp("01 Jan 2035 00:00 +0000"), "Trade until", group=gNews)
-oosStart = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Out-of-sample starts", group=gNews, tooltip="Statistics are split into in-sample (before) and out-of-sample (from this date). Choose it BEFORE looking at results.")
+oosStart = input.time(timestamp("01 Jan 2026 00:00 +0000"), "Validation period starts", group=gNews, tooltip="Statistics split into Development (before), Validation (from here) and Holdout. Fix both dates BEFORE looking at any result.")
+holdStart = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Holdout period starts", group=gNews, tooltip="The holdout is genuinely out-of-sample only if no setting was changed after you first looked at it. Record the settings fingerprint shown in the performance table.")
 
 cScalpTF1 = input.timeframe("15", "Scalp confirmation TF 1", group=gCustom)
 cScalpTF2 = input.timeframe("60", "Scalp confirmation TF 2", group=gCustom)
@@ -117,8 +119,9 @@ allowChoch = input.bool(true, "Allow change-of-character breaks as indication", 
 needSweep = input.bool(false, "Require a liquidity sweep during the correction", group=gCustom)
 bosTicks = input.int(1, "Break must close beyond the level by (ticks)", minval=0, group=gCustom)
 
-showStats = input.bool(true, "Show performance table", group=gVis)
-showSessLv = input.bool(true, "Detailed view: session highs/lows and opening ranges", group=gVis)
+showStats = input.bool(false, "Show performance table", group=gVis)
+showSessLv = input.bool(false, "Detailed view: previous session highs/lows and opening range", group=gVis)
+maxMarks = input.int(12, "Detailed view: keep the last N structure / sweep marks", minval=2, maxval=60, group=gVis)
 dashPosIn = input.string("Top right", "Dashboard position", options=["Top right", "Top left", "Bottom right", "Bottom left"], group=gVis)
 dashSizeIn = input.string("Normal", "Dashboard text", options=["Small", "Normal", "Large"], group=gVis)
 statsPosIn = input.string("Bottom left", "Performance table position", options=["Bottom left", "Bottom right", "Top left", "Top right"], group=gVis)
@@ -231,8 +234,8 @@ if barstate.isfirst
         runtime.error("MEKA: use a minute chart below the confirmation timeframes (Scalp 1-5m, Day 5-15m), and TF 2 above TF 1.")
     if not chart.is_standard
         runtime.error("MEKA: use standard candles (not Heikin Ashi, Renko or range bars).")
-    if r2 <= r1 or (use3 and r3 <= r2) or maxStop < minStop or testEnd <= testStart or fibDeep <= fibShallow or alloc3a + alloc3b >= 100
-        runtime.error("MEKA: check settings - TP1 < TP2 < TP3, min stop < max stop, retracement start < end, TP1% + TP2% < 100, and the date range.")
+    if r2 <= r1 or (use3 and r3 <= r2) or maxStop < minStop or testEnd <= testStart or fibDeep <= fibShallow or alloc3a + alloc3b >= 100 or holdStart < oosStart
+        runtime.error("MEKA: check settings - TP1 < TP2 < TP3, min stop < max stop, retracement start < end, TP1% + TP2% < 100, date range, and holdout after validation start.")
     if not f_validSess(asiaW) or not f_validSess(londonW) or not f_validSess(nyW) or not f_validSess(asiaFull) or not f_validSess(londonFull) or not f_validSess(nyF) or not f_validSess(forceFlat)
         runtime.error("MEKA: sessions must be same-day windows written HHMM-HHMM with start before end.")
 
@@ -527,6 +530,9 @@ f_targets(int s, float ref, float risk) =>
 
 // ---- Plain-English explanation of what is missing --------------------------------------------------
 string noTradeText = not marketOK ? (fam == "Unknown" ? "Market not recognised. Choose it under Market in the settings." : "Enter the USD value per point for this symbol in the settings.") : not inDates ? "Outside the selected trading dates." : blockEntries ? "New entries are paused in the settings." : newsBlocked ? "News blackout. No new entries until it ends." : inForceFlat ? "End-of-day flat period." : not inWindow ? "Outside your trading sessions." : not beforeCutoff ? "Too close to the session end for a new entry." : not dataOK ? "This feed has no usable volume, so the volume / VWAP filter cannot confirm entries." : ""
+// Settings fingerprint: changes whenever a rule-relevant setting changes (record it with results).
+float fpRaw = disp * 7 + minADX * 11 + minAtrPct * 1300 + stopPad * 17 + minStop * 19 + maxStop * 23 + maxExt * 29 + strength * 31 + expiry * 37 + holdBars * 41 + cooldown * 43 + r1 * 47 + r2 * 53 + r3 * 59 + (use3 ? 61 : 0) + (vwapReq ? 67 : 0) + (volReq ? 71 : 0) + (beOn ? 73 : 0) + (trailMode == "ATR" ? 79 : trailMode == "Swing structure" ? 83 : 0) + (exitOnChoch ? 89 : 0) + (exitOnBias ? 97 : 0) + (useLimit ? 101 : 0) + (stopMethod == "ATR" ? 103 : stopMethod == "Wider of both" ? 107 : 0) + fibShallow * 109 + fibDeep * 113 + retestPad * 127 + (needSweep ? 131 : 0) + (allowChoch ? 137 : 0) + atrStopMult * 139 + alloc2 * 149 + alloc3a * 151 + alloc3b * 157 + commUnit * 163 + spreadPx * 167 + slipTicks * 173 + riskPct * 179 + gapMaxRisk * 181 + timeframe.in_seconds(tf1) * 0.01 + timeframe.in_seconds(tf2) * 0.003 + (framework == "Trend pullback (baseline)" ? 191 : framework == "Breakout (baseline)" ? 193 : 0) + (scalp ? 197 : 0)
+string fingerprint = str.tostring(math.round(fpRaw * 1000) % 1000003)
 string filterText = "VWAP side " + (vwapReq ? "on" : "off") + " · volume " + (volReq ? "on" : "off") + (feedVolume ? "" : " (this feed has no volume)")
 string sideWord = htfBias == 1 ? "bullish" : "bearish"
 string waitText = htfBias == 0 ? "Higher timeframes are not aligned (" + biasDetail + "). Waiting for agreement." : not atrOK ? "Market is too quiet. Volatility is below the minimum for this market." : adx < minADX ? "Trend strength is too weak (ADX " + str.tostring(math.round(adx)) + ", needs " + str.tostring(minADX) + ")." : not extOK ? "Price is stretched far from the 20 EMA. Waiting for it to come back." : framework == "Trend pullback (baseline)" ? "Waiting for a pullback to the 20 EMA and a " + sideWord + " close back through it." : framework == "Breakout (baseline)" ? (na(sMain) ? "Waiting for a session to open." : not sMain.orDone ? "Opening range is still forming." : "Waiting for a close " + (htfBias == 1 ? "above " + f_px(sMain.orHi) : "below " + f_px(sMain.orLo)) + " (opening range).") : htfBias == 1 ? (na(swingHigh) ? "Bias is bullish. Waiting for a swing high to form." : "Bias is bullish. Waiting for a strong close above the swing high at " + f_px(swingHigh) + ".") : (na(swingLow) ? "Bias is bearish. Waiting for a swing low to form." : "Bias is bearish. Waiting for a strong close below the swing low at " + f_px(swingLow) + ".")

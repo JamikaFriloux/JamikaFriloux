@@ -175,7 +175,7 @@ class Execution(unittest.TestCase):
         _, sim, _ = run([Bar(99, 100.5, 99, 100), Bar(100, 102.5, 97.5, 101)], Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
         self.assertEqual(sim.ambiguous, 1)
         self.assertNotIn("TP1", [e[1] for e in sim.events])
-        self.assertTrue(sim.touched[0])                       # touched, but not credited
+        self.assertFalse(sim.touched[0])                      # order unknown: not even a certain touch
 
     def test_tp1_then_breakeven_not_retroactive(self):
         bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.5, 99.0, 101.5), Bar(101.5, 101.8, 99.5, 100)]
@@ -264,6 +264,60 @@ class Execution(unittest.TestCase):
         self.assertAlmostEqual(floor_tick(0.3, 0.1), 0.3)
 
 
+class ExecutionCorrections(unittest.TestCase):
+    """Rules introduced by the 4.0.1 execution audit."""
+
+    def test_exact_touch_is_not_a_fill(self):
+        bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.0, 99.5, 101.5), Bar(101.5, 102.1, 101, 101.8)]
+        _, sim, _ = run(bars, Cfg(be_on=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertNotIn("TP1", [e[1] for e in sim.events])  # needs 102.25 (1 tick through)
+        self.assertTrue(sim.touched[0])
+        self.assertEqual(sim.stop, 98.0)                       # a touch never moves the stop
+
+    def test_intrabar_limit_fill_touch_never_credited_or_used(self):
+        # Limit 100 fills inside candle 1; that candle's 102.5 high may have come BEFORE the fill.
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(101, 102.5, 99.7, 100.4), Bar(100.4, 101.0, 99.6, 100.0)]
+        _, sim, _ = run(bars, Cfg(limit=True, be_on=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "FILL", 2.0, 100.0), sim.events)
+        self.assertNotIn("TP1", [e[1] for e in sim.events])
+        self.assertFalse(sim.touched[0])
+        self.assertEqual(sim.stop, 98.0)                       # break-even NOT triggered
+        self.assertNotIn("STOP", [e[1] for e in sim.events])   # 99.6 low is above the real stop
+
+    def test_breakeven_needs_tp1_fill_and_single_unit_needs_certain_touch(self):
+        bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.5, 99.5, 101.5), Bar(101.5, 101.8, 99.9, 100.2)]
+        _, sim, _ = run(bars, Cfg(be_on=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((2, "STOP", 1.0, 100.0), sim.events)     # TP1 filled -> BE from candle 2
+        bars = [Bar(99, 100.5, 99, 100), Bar(100, 102.1, 99.5, 101.5), Bar(101.5, 101.8, 99.9, 100.2)]
+        _, sim, _ = run(bars, Cfg(be_on=True, **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 1.0))
+        self.assertIn((2, "STOP", 1.0, 100.0), sim.events)     # 1 unit: certain TP1 touch -> BE
+
+    def test_emulator_order_targets_first_when_high_nearer_open(self):
+        bar = Bar(100.2, 102.5, 97.5, 98.0)                   # high nearer the open: O -> H -> L
+        _, sim, _ = run([Bar(99, 100.5, 99, 100), bar], Cfg(same_bar="emulator", **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "TP1", 1.0, 102.0), sim.events)
+        self.assertIn((1, "STOP", 1.0, 98.0), sim.events)
+        self.assertAlmostEqual(sim.results[0]["r"], ((102.0 - 100.2) + (98.0 - 100.2)) / 4.0)  # fill at the 100.2 open
+        _, sim, _ = run([Bar(99, 100.5, 99, 100), bar], Cfg(**NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertEqual([e[1] for e in sim.events if e[0] == 1], ["FILL", "STOP", "CLOSED_R"])  # conservative
+
+    def test_emulator_order_stop_first_when_low_nearer_open(self):
+        bar = Bar(99.0, 102.5, 97.5, 101.0)                   # low nearer the open: O -> L -> H
+        _, sim, _ = run([Bar(99, 100.5, 99, 100), bar], Cfg(same_bar="emulator", **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertNotIn("TP1", [e[1] for e in sim.events])
+        self.assertIn((1, "STOP", 2.0, 98.0), sim.events)
+
+    def test_emulator_intrabar_limit_fill_paths(self):
+        # O -> L (fill at 100) -> H: targets after the fill are credited up to the high.
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(100.3, 102.6, 99.7, 102.4)]
+        _, sim, _ = run(bars, Cfg(limit=True, same_bar="emulator", **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertIn((1, "TP1", 1.0, 102.0), sim.events)
+        # O -> H -> L (fill) -> C: the high came before the fill; only the close counts afterwards.
+        bars = [Bar(101, 101.5, 100.5, 101), Bar(101.8, 102.6, 99.7, 100.5)]
+        _, sim, _ = run(bars, Cfg(limit=True, same_bar="emulator", **NOEXIT), signals=sig(0, 1, 100.0, 98.0, 2.0))
+        self.assertNotIn("TP1", [e[1] for e in sim.events])
+
+
 def random_bars(rng, n):
     bars, c = [], 100.0
     for i in range(n):
@@ -287,7 +341,8 @@ class Properties(unittest.TestCase):
                       hold_bars=rng.choice([5, 20, 60]), risk_cash=rng.choice([3.0, 50.0, 400.0]), limit=rng.random() < 0.4,
                       corr_type=rng.choice(["Retracement or retest", "Retracement 38-79%", "Broken-level retest"]),
                       stop_method=rng.choice(["Structure", "ATR", "Wider of both"]), exit_on_choch=rng.random() < 0.5,
-                      comm=rng.choice([0.0, 1.0]), spread=rng.choice([0.0, 0.25]), slip_ticks=rng.choice([0, 1]))
+                      comm=rng.choice([0.0, 1.0]), spread=rng.choice([0.0, 0.25]), slip_ticks=rng.choice([0, 1]),
+                      same_bar=rng.choice(["conservative", "emulator"]))
             bars = random_bars(rng, 600)
             eng, sim, out = run(bars, cfg)
             stage, broken = {}, {"BOS_UP": set(), "CHOCH_UP": set(), "BOS_DN": set(), "CHOCH_DN": set()}
@@ -448,7 +503,8 @@ class StaticPine(unittest.TestCase):
         self.assertTrue(self.strat.startswith("//@version=6\nstrategy("))
         for flag in ("calc_on_every_tick=false", "calc_on_order_fills=false", "process_orders_on_close=false", "pyramiding=0"):
             self.assertIn(flag, self.strat)
-        self.assertNotIn("strategy.", code_only(self.ind))
+        no_strings = re.sub(r'"(?:[^"\\]|\\.)*"', '""', code_only(self.ind))
+        self.assertNotRegex(no_strings, r"\bstrategy\.\w+")
         self.assertNotIn("alertcondition", self.strat)
 
     def test_htf_is_offset_with_lookahead(self):

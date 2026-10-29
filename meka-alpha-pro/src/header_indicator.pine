@@ -1,5 +1,5 @@
 //@version=6
-indicator("MEKA ALPHA PRO 4.0", shorttitle="MEKA 4.0", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+indicator("MEKA ALPHA PRO 4.0.1", shorttitle="MEKA 4.0.1", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
 // MEKA ALPHA PRO 4.0 - private trading assistant (indicator). Signals use closed bars only.
 // The position shown is a SIMULATION with assumed fills and modeled costs - not a broker record.
 // No win rate or profitability is claimed; measure it with the companion strategy.

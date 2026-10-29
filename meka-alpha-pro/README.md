@@ -1,4 +1,4 @@
-# MEKA ALPHA PRO 4.0
+# MEKA ALPHA PRO 4.0.1
 
 Private TradingView trading assistant (Pine v6 indicator) plus a companion backtesting strategy. It uses a trend-following ICC (indication → correction → continuation) method and gives plain-English instructions: WAIT, WATCH, ENTER, HOLD, TAKE PROFIT, EXIT, NO TRADE. It covers Gold, Nasdaq-100, S&P 500, EUR/USD and USD/JPY, in Scalp and Day Trade modes.
 
@@ -9,6 +9,7 @@ Private TradingView trading assistant (Pine v6 indicator) plus a companion backt
 | Paste into TradingView | `MEKA_ALPHA_PRO_4_INDICATOR.pine`, `MEKA_ALPHA_PRO_4_STRATEGY.pine` |
 | Install, settings, logic, limitations, checklist | `MEKA_ALPHA_PRO_4_GUIDE.md` |
 | What was tested | `MEKA_ALPHA_PRO_4_VALIDATION.md` |
+| How to test it (execution check, ICC vs baselines, results log) | `MEKA_ALPHA_PRO_4_TESTING_PLAN.md` |
 | v3 audit | `MEKA_ALPHA_PRO_v3_AUDIT.md` (source: `MEKA_ALPHA_PRO_v3_SOURCE.pine`) |
 | Changes | `CHANGELOG.md` |
 

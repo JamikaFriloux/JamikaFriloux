@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.0.1 — October 29, 2026 (execution accuracy + chart experience)
+
+Kept: ICC hybrid, market presets, session intelligence, Scalp / Day modes, two-target system. **No trading parameter was changed** in response to the user's 10-trade Gold sample.
+
+### Execution audit: findings and corrections
+
+| # | Problem in 4.0 | Why it mattered | Correction |
+|---|---|---|---|
+| E1 | Break-even and trailing started when TP1 was **touched**, in **both** scripts. The touch could be on the candle where a limit entry filled *inside* the candle, so the touch may have happened **before** the entry existed. | A stop could move to break-even off a price the position never saw. That changes later exits and results. | They now start only after the **TP1 tranche is filled** (indicator: simulated fill; strategy: emulator fill read from the trade list). A position too small to have a TP1 tranche uses a TP1 touch, but only one that *certainly* happened while it was open: the position existed from the candle's open and survived the candle. |
+| E2 | The strategy declares that limit orders must **trade through by 1 tick** (`backtest_fill_limits_assumption=1`), which applies to profit-target limits as well as entries. The indicator credited targets on an exact touch. | The indicator booked target fills that the strategy never received, so it looked better than the strategy. | Indicator targets now fill only when the reachable price trades through by *fillTicks* (default 1), or when the candle opens beyond the target. Exact touches show as **touched, not filled**. |
+| E3 | On a candle that hit both the stop and a target, the indicator always assumed the stop came first. TradingView's emulator assumes the extreme nearer the open is visited first. | The two scripts disagreed on those candles, with no way to check parity. | New input *Indicator: stop and target in the same candle*. **Stop first (conservative)** stays the default. **Match TradingView emulator** reproduces the emulator path, so the indicator can be checked trade by trade against the strategy. |
+| E4 | On a candle where a limit entry filled inside the candle, the indicator ignored targets correctly, but recorded touches from the whole candle. The strategy counted the same uncertain touches. | Inflated "touched" statistics; it fed E1. | Touches count only when the position certainly existed at that moment. In emulator mode an intrabar fill credits only what the emulator path visits after the fill. |
+| E5 | TP alerts reported the target price, not the actual fill price (a gap open beyond the target fills at the open). | Alert prices could be wrong on gap fills. | Alerts and messages use the actual fill price in both scripts. |
+
+Checked and found consistent (no change needed): next-open market fills; gap fills through stops (worse open) and targets (better open); stop orders trigger at a touch; limit-entry trade-through and expiry; one cancel path for expired limits and rejected market orders; exits requested at a close fill at the next open with brackets still live; cost model identical in both scripts; same-candle re-entry blocked.
+
+**Known, documented remaining difference:** for a limit entry filled inside a candle, the emulator can fill a target later in that candle in cases the conservative indicator mode defers. Use emulator mode when checking parity.
+
+### Chart experience
+
+- Performance table **OFF by default**. Session levels and opening ranges are off by default too.
+- **Hierarchy:**
+  - Context (EMAs, VWAP, session levels, zones, structure) is faint and thin, so candles stay readable.
+  - The **entry line (bold) and stop line (thicker, red)** are prominent, with shaded risk (red) and reward (green) areas.
+  - Targets are dashed green with solid price tags; a filled target turns dotted, with ✓.
+  - The actual fill replaces the reference price once known.
+  - When the stop moves, the old segment fades and a new one starts.
+- **Detailed view:** BOS / CHoCH drawn on the candle that closed through the level, small labels, capped to the last N marks (default 12). Sweeps are small lowercase marks. Only the last 3 ICC zones are kept. Finished trades fade; Clean view removes them.
+- **Dashboard** order: status, then **NEXT** (the instruction, largest text), then **MISSING / NOTE / WHY** (the explanation), then the trade levels. Background (bias, setup, session, filters, mode) comes last, smaller and muted, in Detailed view.
+
+### Validation tooling
+
+- Performance table: three periods (**Development / Validation / Holdout**) with two dates; long and short split by session; a 95% Wilson range on every win rate; a **settings fingerprint** so you can show the holdout was evaluated with frozen settings.
+- New `MEKA_ALPHA_PRO_4_TESTING_PLAN.md`: execution check first, then ICC vs both baselines per market / mode / timeframe / session / direction, with honest labels and a results log.
+- Reference model updated to the corrected rules; **42 tests** (6 new execution-correction tests).
+
 ## 4.0 — October 29, 2026 (new development requirements)
 
 Rebuilt on the 4.0-r2.1 code following the user's new 4.0 specification, which takes priority over earlier design decisions.

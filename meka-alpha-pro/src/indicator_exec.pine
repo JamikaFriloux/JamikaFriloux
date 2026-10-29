@@ -3,8 +3,13 @@
 //  - Limit entries fill only if a later bar trades through the limit by `fillTicks`; a gap
 //    through the limit fills at that bar's open. An intrabar limit fill cannot know whether the
 //    stop or a target came first, so on that bar only the stop is checked (targets wait).
+//  - Profit targets are limit orders: they fill only when price trades THROUGH them by `fillTicks`
+//    (or the candle opens beyond them). A mere touch is reported as "touched, not filled".
 //  - From the fill onward each bar is judged from its open. If one bar touches both the stop and
-//    a target, the stop is assumed first (counted as "ambiguous"). Gaps fill at the open.
+//    a target, the stop is assumed first (counted as "ambiguous") unless "Match TradingView
+//    emulator" is selected. Gaps fill at the open.
+//  - Break-even / trailing start only after TP1 is FILLED (1-unit positions: after TP1 is certainly
+//    reached while open). Touches inside an intrabar-fill candle never count.
 //  - Break-even / trailing updates and close-based exits act from the next bar.
 //  - Results include the modeled costs (commission, half spread, slippage) from group 4.
 var int side = 0
@@ -44,7 +49,7 @@ var float plannedCash = na
 var int tradeSess = 0
 var bool tradeTrend = false
 var bool tradeHV = false
-var bool tradeOOS = false
+var int tradePeriod = 0
 var string lastExitText = ""
 var string execBlock = ""
 bool entered = false
@@ -62,7 +67,18 @@ string tpText = ""
 const string basisWord = "simulated"
 f_fillCash(float px, float q) => (px - fillEntry) * side * q * unitUSD
 
+// Fill price of a profit-target limit, or na. A target fills only when the reachable favourable
+// price trades THROUGH it by `fillTicks` (same rule as the strategy's limit verification), or when
+// the candle opens beyond it while the position already exists (gap: fills at the open).
+f_tgtFill(int s, float t, float reach, bool openOK) =>
+    float tick = syminfo.mintick
+    na(reach) ? na : openOK and (s == 1 ? open >= t : open <= t) ? open : (s == 1 ? reach >= t + fillTicks * tick : reach <= t - fillTicks * tick) ? t : na
+f_reached(int s, float t, float reach) => not na(reach) and (s == 1 ? reach >= t : reach <= t)
+
 int evSide = side
+float tpPx1 = na
+float tpPx2 = na
+float tpPx3 = na
 if barstate.isconfirmed
     // 1) Pending entry -> fill, or cancel when the limit expires unfilled.
     bool fillAtOpen = false
@@ -85,23 +101,36 @@ if barstate.isconfirmed
             pending := false
             side := 0
             lastClosed := bar_index
-    // 2) Manage a position that exists at (or from inside) this bar.
+    // 2) Manage the position.
     if side != 0 and not pending
-        bool intrabarFill = evFill and not fillAtOpen
-        bool stopHit = side == 1 ? low <= curStop : high >= curStop
-        bool hit1 = part1 > 0 and not done1 and (side == 1 ? high >= target1 : low <= target1)
-        bool hit2 = part2 > 0 and not done2 and (side == 1 ? high >= target2 : low <= target2)
-        bool hit3 = part3 > 0 and not done3 and (side == 1 ? high >= target3 : low <= target3)
-        bool lvl1 = side == 1 ? high >= target1 : low <= target1
-        bool lvl2 = side == 1 ? high >= target2 : low <= target2
-        bool lvl3 = use3 and (side == 1 ? high >= target3 : low <= target3)
-        if lvl1 and not touched1
+        // Did the position exist from this candle's open? Not when a limit filled inside it: then
+        // nothing seen before the fill may be credited - the order of events is unknown.
+        bool fromOpen = not (evFill and not fillAtOpen)
+        bool emu = sameBarRule == "Match TradingView emulator"
+        // TradingView emulator path: the extreme nearer the open is visited first.
+        bool upFirst = math.abs(high - open) < math.abs(open - low)
+        bool favFirst = side == 1 ? upFirst : not upFirst
+        // Furthest favourable price that comes AFTER the entry:
+        //  - position open from the open: the whole candle;
+        //  - intrabar limit fill, conservative: nothing (targets wait for the next candle);
+        //  - intrabar limit fill, emulator path: only the close if the favourable extreme came first.
+        float favReach = fromOpen ? (side == 1 ? high : low) : emu ? (favFirst ? close : (side == 1 ? high : low)) : na
+        bool stopTouched = side == 1 ? low <= curStop : high >= curStop
+        bool stopAtOpen = fromOpen and (side == 1 ? open <= curStop : open >= curStop)
+        // Emulator rule with the position open from the open: if the favourable extreme is nearer
+        // the open, targets are processed before the stop. Otherwise (and always in conservative
+        // mode) a touched stop wins.
+        bool targetsFirst = emu and fromOpen and favFirst
+        bool anyTarget = (part1 > 0 and not done1 and f_reached(side, target1, favReach)) or (part2 > 0 and not done2 and f_reached(side, target2, favReach)) or (part3 > 0 and not done3 and f_reached(side, target3, favReach))
+        // Touch statistics: only touches that certainly happened while the position was open.
+        bool certain = fromOpen and (not stopTouched or targetsFirst)
+        if certain and f_reached(side, target1, favReach) and not touched1
             touched1 := true
             f_bump(tpTouch, 0)
-        if lvl2 and not touched2
+        if certain and f_reached(side, target2, favReach) and not touched2
             touched2 := true
             f_bump(tpTouch, 1)
-        if lvl3 and not touched3
+        if certain and use3 and f_reached(side, target3, favReach) and not touched3
             touched3 := true
             f_bump(tpTouch, 2)
         if closing and not evFill
@@ -110,49 +139,60 @@ if barstate.isconfirmed
             lastExitText := closingWhy + " Closed at " + f_px(open) + "."
             remaining := 0.0
             exited := true
-        else if stopHit
-            float px = side == 1 ? math.min(open, curStop) : math.max(open, curStop)
-            if (hit1 or hit2 or hit3) and not intrabarFill
+        else if stopAtOpen or (stopTouched and not targetsFirst)
+            float px = stopAtOpen ? open : curStop
+            if anyTarget and not stopAtOpen
                 ambiguousBars += 1
             grossCash += f_fillCash(px, remaining)
             costCash += f_cost(remaining, true)
-            lastExitText := "Stop hit at " + f_px(px) + (hit1 or hit2 or hit3 ? " (a target was touched on the same bar; the stop is assumed first)." : ".")
+            lastExitText := "Stop hit at " + f_px(px) + (anyTarget and not stopAtOpen ? " (a target was also touched in this candle; the stop is assumed first)." : ".")
             remaining := 0.0
             exited := true
             evStopHit := true
-        else if not intrabarFill
-            if hit1
-                float p1 = side == 1 ? math.max(open, target1) : math.min(open, target1)
-                grossCash += f_fillCash(p1, part1)
+        else
+            tpPx1 := part1 > 0 and not done1 ? f_tgtFill(side, target1, favReach, fromOpen) : na
+            tpPx2 := part2 > 0 and not done2 ? f_tgtFill(side, target2, favReach, fromOpen) : na
+            tpPx3 := part3 > 0 and not done3 ? f_tgtFill(side, target3, favReach, fromOpen) : na
+            if not na(tpPx1)
+                grossCash += f_fillCash(tpPx1, part1)
                 costCash += f_cost(part1, false)
                 remaining -= part1
                 done1 := true
                 evTP1 := true
                 f_bump(tpFill, 0)
-            if hit2
-                float p2 = side == 1 ? math.max(open, target2) : math.min(open, target2)
-                grossCash += f_fillCash(p2, part2)
+            if not na(tpPx2)
+                grossCash += f_fillCash(tpPx2, part2)
                 costCash += f_cost(part2, false)
                 remaining -= part2
                 done2 := true
                 evTP2 := true
                 f_bump(tpFill, 1)
-            if hit3
-                float p3 = side == 1 ? math.max(open, target3) : math.min(open, target3)
-                grossCash += f_fillCash(p3, part3)
+            if not na(tpPx3)
+                grossCash += f_fillCash(tpPx3, part3)
                 costCash += f_cost(part3, false)
                 remaining -= part3
                 done3 := true
                 evTP3 := true
                 f_bump(tpFill, 2)
             tpEvent := evTP1 or evTP2 or evTP3
+            if remaining > qtyStep * 1e-6 and stopTouched
+                // Emulator path: targets first, then the stop takes what is left.
+                ambiguousBars += 1
+                grossCash += f_fillCash(curStop, remaining)
+                costCash += f_cost(remaining, true)
+                lastExitText := "Stop hit at " + f_px(curStop) + " after the target fill(s) in the same candle (emulator order)."
+                remaining := 0.0
+                evStopHit := true
             if remaining <= qtyStep * 1e-6
                 remaining := 0.0
                 exited := true
-                lastExitText := "All targets filled."
+                if not evStopHit
+                    lastExitText := "All targets filled."
         if not exited
-            // Close-based management; effective from the next bar.
-            trigSeen := trigSeen or touched1
+            // Close-based management; effective from the next candle. Break-even / trailing start
+            // only after TP1 was actually FILLED - or, for a position too small to have a TP1
+            // tranche, after TP1 was certainly reached while the position was open.
+            trigSeen := trigSeen or done1 or (part1 <= 0 and touched1)
             if beOn and trigSeen
                 curStop := side == 1 ? math.max(curStop, f_floorTick(fillEntry)) : math.min(curStop, f_ceilTick(fillEntry))
             if trailMode == "ATR" and trigSeen
@@ -167,7 +207,7 @@ if barstate.isconfirmed
         if exited
             float netCash = grossCash - costCash
             float tradeR = netCash / plannedCash
-            f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradeOOS)
+            f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradePeriod)
             dayR += tradeR
             lossStreak := tradeR < 0 ? lossStreak + 1 : 0
             lastExitText := lastExitText + " Result " + (tradeR >= 0 ? "+" : "") + str.tostring(tradeR, "#.##") + "R after modeled costs."
@@ -179,11 +219,11 @@ if barstate.isconfirmed
     if evFill
         alert(f_json("ENTRY_FILLED", evSide, "simulated_fill", tradeID, base + f_sideWord(evSide) + " filled at " + f_px(fillEntry) + " (simulated).", fillEntry, initialStop, target1, target2, target3, initialQty, plannedCash), alert.freq_once_per_bar_close)
     if evTP1
-        alert(f_json("TP1_REACHED", evSide, "simulated_fill", tradeID, base + "TP1 reached at " + f_px(target1) + ". Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP1_REACHED", evSide, "simulated_fill", tradeID, base + "TP1 filled at " + f_px(tpPx1) + " (simulated). Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP2
-        alert(f_json("TP2_REACHED", evSide, "simulated_fill", tradeID, base + "TP2 reached at " + f_px(target2) + ". Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP2_REACHED", evSide, "simulated_fill", tradeID, base + "TP2 filled at " + f_px(tpPx2) + " (simulated). Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP3
-        alert(f_json("TP3_REACHED", evSide, "simulated_fill", tradeID, base + "TP3 reached at " + f_px(target3) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP3_REACHED", evSide, "simulated_fill", tradeID, base + "TP3 filled at " + f_px(tpPx3) + " (simulated).", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evStopHit
         alert(f_json("STOP_HIT", evSide, "simulated_fill", tradeID, base + lastExitText, fillEntry, curStop, target1, target2, target3, 0, na), alert.freq_once_per_bar_close)
     if earlyNow
@@ -234,7 +274,7 @@ if barstate.isconfirmed
         tradeSess := sessCode
         tradeTrend := trending
         tradeHV := hiVol
-        tradeOOS := time >= oosStart
+        tradePeriod := time >= holdStart ? 2 : time >= oosStart ? 1 : 0
         tradeID := syminfo.ticker + "-" + timeframe.period + "-" + str.tostring(time_close)
         dayEntries += 1
         entered := true

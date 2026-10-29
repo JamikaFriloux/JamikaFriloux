@@ -1,8 +1,8 @@
-# MEKA ALPHA PRO 4.0 — guide
+# MEKA ALPHA PRO 4.0.1 — guide
 
 A private trading assistant for TradingView. It reads price structure, finds a defined setup, and tells you what to do in plain English: **WAIT, WATCH LONG / SHORT, ENTER LONG / SHORT, HOLD, TAKE PROFIT, EXIT, NO TRADE**. Every entry comes with an entry price, a stop and profit targets. A companion strategy measures the actual results.
 
-> **Honest status:** the code is complete, but **the author has not compiled 4.0 in TradingView** (a previous build of the strategy did compile on your chart). It has been grammar-parsed and its rules exercised in a Python model; see `MEKA_ALPHA_PRO_4_VALIDATION.md`. **No win rate, profit factor or drawdown exists yet.** You will measure those yourself with the strategy. Preset values are starting points, not validated settings.
+> **Honest status:** the code is complete, but **the author has not compiled 4.0.1 in TradingView** (a previous build of the strategy did compile on your chart). It has been grammar-parsed and its rules exercised in a Python model; see `MEKA_ALPHA_PRO_4_VALIDATION.md`. **No win rate, profit factor or drawdown exists yet.** You will measure those yourself with the strategy. Preset values are starting points, not validated settings.
 
 ---
 
@@ -90,21 +90,25 @@ ICC = **Indication → Correction → Continuation**. It's a transparent, rule-b
 
 **Targets.** TP1 / TP2 (/ TP3) at R multiples of the planned risk (R = entry reference − initial stop). The split is configurable: 50/50 by default, 50/30/20 with TP3. Sizes are whole units and always add up to the full position; leftover units go to the last target. A 1-unit position goes entirely to TP2.
 
+**Target fills.** Profit targets are limit orders. They fill only when price trades **through** them by 1 tick (setting *Limit orders fill only when price trades through by*), or when a candle opens beyond them. This is the same rule as the strategy's declared *Verify price for limit orders = 1*.
+
 **Touched vs reduced.** The dashboard shows each target as *open*, *touched, not filled*, or *filled* / *reached (simulated)*. A target is "touched" when price reached it; it is "filled" only when the position was actually reduced. That happens when the strategy's emulator fills the order, or when the indicator credits it under its rules below.
 
 **Stops and management.**
 - The **initial stop** protects the whole position from the first tick. In the strategy it is sent together with the entry order.
-- **Break-even** (optional): once a closed candle has seen TP1, the stop moves to the fill price from the next candle onward. It never acts on earlier prices. After costs a break-even exit can still lose a little.
+- **Break-even** (optional): once the **TP1 tranche has been filled** (a single-unit position, which has no TP1 tranche, uses a TP1 touch that certainly happened while it was open), the stop moves to the fill price from the next candle onward. It never acts on earlier prices. After costs a break-even exit can still lose a little.
 - **Trailing** (optional, after TP1): *ATR* (close − N × ATR) or *Swing structure* (latest confirmed swing ± buffer). It only ever tightens and is updated at candle closes.
 - **Early invalidation exits** (decided at a close, executed at the next open): structure breaks against the trade (on by default), higher-timeframe bias flips (optional), maximum holding time, session end or flat window, end of test dates. One extra exit: if the entry gapped so far that the real risk exceeds 1.5× the planned risk, the trade is closed.
 
 **What the indicator assumes (it cannot see inside a candle).**
-- If a candle touches both the stop and a target, the **stop is assumed first**. This is conservative and counted as a *stop-first bar* in the performance table.
-- A limit entry filled *inside* a candle: on that candle only the stop is checked; targets wait for the next candle.
+- If a candle touches both the stop and a target, the **stop is assumed first** by default. This is conservative and counted in the performance table footer. Setting *Indicator: stop and target in the same candle* to **Match TradingView emulator** uses the emulator's rule instead: price visits the extreme nearer the open first. Use it to check the indicator against the strategy trade by trade.
+- A limit entry filled *inside* a candle: on that candle only the stop is checked; targets wait for the next candle, and nothing seen in that candle counts as a touch or moves a stop. In emulator mode, only prices the emulator's path visits after the fill can fill a target.
 - Gaps fill at the open: worse for stops, better for targets.
 - The strategy uses TradingView's broker emulator instead, which has its own intrabar assumptions (and Bar Magnifier if enabled). Expect small differences between the two scripts on such candles. The **signals themselves are identical**, because both scripts contain the byte-identical signal engine.
 
 ## 5. Dashboard and chart
+
+**Dashboard order:** the status, then **NEXT** (the instruction, largest text), then **MISSING / NOTE / WHY** (the explanation), then the trade levels with each target's state. Background details come last and smaller.
 
 **Dashboard rows (Detailed view):** status · next step · why / what's missing · instrument · mode · filters · session · market bias · setup · trade · entry · stop · TP1 / TP2 / TP3 with their state · risk and size. **Clean view:** status, next step, what's missing, and the trade levels when a trade is active.
 
@@ -117,7 +121,7 @@ Examples of what it says:
 - *EXIT* — "Close the long at the next open. Market structure broke against the trade."
 - *NO TRADE* — "Outside your trading sessions." / "Daily loss limit reached. No more entries today."
 
-**Chart:**
+**Chart.** Context is faint so the candles stay readable. The active trade is prominent: a bold entry line, a thick red stop, shaded red risk and green reward areas, and solid price tags for entry, stop and targets (a filled target gets ✓).
 - *Clean:* BUY/SELL labels, entry (dashed), stop (red) and target (green dotted) lines with price tags, plus TP and EXIT/STOP markers.
 - *Detailed* adds:
   - BOS / CHoCH lines and labels
@@ -129,6 +133,9 @@ Examples of what it says:
 
 ## 6. Measuring performance (the strategy)
 
+The performance table is **off by default**: *8 · Display → Show performance table*. Splits use two dates (group 6): **Development** before *Validation period starts*, **Validation**, and **Holdout** from *Holdout period starts*. Each win rate shows its 95% range. The footer prints a **settings fingerprint**; record it before you first look at the holdout. Full procedure: `MEKA_ALPHA_PRO_4_TESTING_PLAN.md`.
+
+
 The strategy draws a **performance table** with these columns:
 - trades
 - win rate
@@ -138,7 +145,7 @@ The strategy draws a **performance table** with these columns:
 - maximum drawdown (R)
 - net USD after modeled costs
 
-It shows them for all trades, long, short, Asia, London, New York, trending (ADX ≥ 25 at entry), ranging, high-volatility (ATR > 1.25 × its 100-bar average), normal-volatility, **in-sample** and **out-of-sample** (split at your *Out-of-sample starts* date).
+It shows them for all trades, long, short, Asia, London, New York, long and short within each session, trending (ADX ≥ 25 at entry), ranging, high-volatility (ATR > 1.25 × its 100-bar average), normal-volatility, and the **Development**, **Validation** and **Holdout** periods.
 
 - A **trade** is a complete position. Partial targets are not counted as separate wins.
 - A **win** is net R > 0 after costs, so a break-even exit that loses the commission counts as a loss.

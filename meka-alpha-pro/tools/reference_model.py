@@ -81,6 +81,7 @@ class Cfg:
     limit: bool = False
     limit_bars: int = 3
     fill_ticks: int = 1
+    same_bar: str = "conservative"   # or "emulator"
     comm: float = 0.0
     spread: float = 0.0
     slip_ticks: int = 0
@@ -317,39 +318,71 @@ class Sim:
                 out.append(("CANCEL", 0, None))
                 self.pending, self.side, self.last_closed = False, 0, i
         if self.side != 0 and not self.pending:
-            s = self.side
-            intrabar = fill_now and not fill_at_open
-            stop_hit = b.l <= self.stop if s == 1 else b.h >= self.stop
-            hits = [self.p[k] > 0 and not self.done[k] and (b.h >= self.t[k] if s == 1 else b.l <= self.t[k]) for k in range(3)]
+            s, tk = self.side, cfg.tick
+            from_open = not (fill_now and not fill_at_open)
+            emu = cfg.same_bar == "emulator"
+            up_first = abs(b.h - b.o) < abs(b.o - b.l)
+            fav_first = up_first if s == 1 else not up_first
+            if from_open:
+                reach = b.h if s == 1 else b.l
+            elif emu:
+                reach = b.c if fav_first else (b.h if s == 1 else b.l)
+            else:
+                reach = None
+            stop_touched = b.l <= self.stop if s == 1 else b.h >= self.stop
+            stop_at_open = from_open and (b.o <= self.stop if s == 1 else b.o >= self.stop)
+            targets_first = emu and from_open and fav_first
+
+            def reached(t):
+                return reach is not None and (reach >= t if s == 1 else reach <= t)
+
+            def tgt_fill(t):
+                if reach is None:
+                    return None
+                if from_open and (b.o >= t if s == 1 else b.o <= t):
+                    return b.o
+                if (reach >= t + cfg.fill_ticks * tk) if s == 1 else (reach <= t - cfg.fill_ticks * tk):
+                    return t
+                return None
+
+            live = [self.p[k] > 0 and not self.done[k] for k in range(3)]
+            any_target = any(live[k] and reached(self.t[k]) for k in range(3))
+            certain = from_open and (not stop_touched or targets_first)
             for k in range(3):
-                if (k < 2 or cfg.use3) and (b.h >= self.t[k] if s == 1 else b.l <= self.t[k]):
+                if certain and (k < 2 or cfg.use3) and reached(self.t[k]):
                     self.touched[k] = True
             if self.closing and not fill_now:
                 self.gross += self._cash(b.o, self.remaining)
                 self.cost += self._cost(self.remaining, True)
                 out.append(("EXIT_" + self.closing, self.remaining, b.o))
                 self.remaining, exited = 0.0, True
-            elif stop_hit:
-                px = min(b.o, self.stop) if s == 1 else max(b.o, self.stop)
-                if any(hits) and not intrabar:
+            elif stop_at_open or (stop_touched and not targets_first):
+                px = b.o if stop_at_open else self.stop
+                if any_target and not stop_at_open:
                     self.ambiguous += 1
                 self.gross += self._cash(px, self.remaining)
                 self.cost += self._cost(self.remaining, True)
                 out.append(("STOP", self.remaining, px))
                 self.remaining, exited = 0.0, True
-            elif not intrabar:
+            else:
                 for k in range(3):
-                    if hits[k]:
-                        px = max(b.o, self.t[k]) if s == 1 else min(b.o, self.t[k])
+                    px = tgt_fill(self.t[k]) if live[k] else None
+                    if px is not None:
                         self.gross += self._cash(px, self.p[k])
                         self.cost += self._cost(self.p[k], False)
                         self.remaining -= self.p[k]
                         self.done[k] = True
                         out.append(("TP%d" % (k + 1), self.p[k], px))
+                if self.remaining > cfg.qty_step * 1e-6 and stop_touched:
+                    self.ambiguous += 1
+                    self.gross += self._cash(self.stop, self.remaining)
+                    self.cost += self._cost(self.remaining, True)
+                    out.append(("STOP", self.remaining, self.stop))
+                    self.remaining = 0.0
                 if self.remaining <= cfg.qty_step * 1e-6:
                     self.remaining, exited = 0.0, True
             if not exited:
-                self.trig = self.trig or self.touched[0]
+                self.trig = self.trig or self.done[0] or (self.p[0] <= 0 and self.touched[0])
                 if cfg.be_on and self.trig:
                     self.stop = max(self.stop, floor_tick(self.fill, cfg.tick)) if s == 1 else min(self.stop, ceil_tick(self.fill, cfg.tick))
                 if cfg.trail_atr > 0 and self.trig:

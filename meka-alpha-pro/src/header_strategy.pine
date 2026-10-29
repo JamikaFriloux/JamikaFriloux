@@ -1,5 +1,5 @@
 //@version=6
-strategy("MEKA ALPHA PRO 4.0 Strategy", shorttitle="MEKA 4.0 STRAT", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200, pyramiding=0, initial_capital=10000, currency=currency.USD, default_qty_type=strategy.fixed, commission_type=strategy.commission.cash_per_contract, commission_value=0, slippage=0, margin_long=5, margin_short=5, backtest_fill_limits_assumption=1, calc_on_every_tick=false, calc_on_order_fills=false, process_orders_on_close=false, use_bar_magnifier=false)
+strategy("MEKA ALPHA PRO 4.0.1 Strategy", shorttitle="MEKA 4.0.1 STRAT", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200, pyramiding=0, initial_capital=10000, currency=currency.USD, default_qty_type=strategy.fixed, commission_type=strategy.commission.cash_per_contract, commission_value=0, slippage=0, margin_long=5, margin_short=5, backtest_fill_limits_assumption=1, calc_on_every_tick=false, calc_on_order_fills=false, process_orders_on_close=false, use_bar_magnifier=false)
 // MEKA ALPHA PRO 4.0 - companion backtesting strategy. Same signal engine as the indicator.
 // Costs: the in-script performance table subtracts the modeled cost model (inputs, group 4).
 // Properties commission and slippage are 0 so costs are not counted twice. Margin 5% is a

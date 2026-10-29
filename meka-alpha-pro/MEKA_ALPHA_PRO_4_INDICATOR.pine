@@ -1,5 +1,5 @@
 //@version=6
-indicator("MEKA ALPHA PRO 4.0", shorttitle="MEKA 4.0", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+indicator("MEKA ALPHA PRO 4.0.1", shorttitle="MEKA 4.0.1", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
 // MEKA ALPHA PRO 4.0 - private trading assistant (indicator). Signals use closed bars only.
 // The position shown is a SIMULATION with assumed fills and modeled costs - not a broker record.
 // No win rate or profitability is claimed; measure it with the companion strategy.
@@ -10,7 +10,7 @@ indicator("MEKA ALPHA PRO 4.0", shorttitle="MEKA 4.0", overlay=true, max_bars_ba
 // (enforced by tools/build.py), so both scripts always produce the same raw signals.
 // All decisions are taken on CLOSED bars only. Higher-timeframe data is the previous completed
 // higher-timeframe bar ([1] offset + lookahead_on), never the forming one.
-const string VERSION = "4.0"
+const string VERSION = "4.0.1"
 
 gQuick = "1 · Quick setup"
 gRisk = "2 · Risk & targets"
@@ -53,7 +53,8 @@ gapMaxRisk = input.float(1.5, "Exit if actual fill risk exceeds planned risk by 
 
 entryType = input.string("Market at next open", "Entry order", options=["Market at next open", "Limit at breakout retest"], group=gExec)
 limitBars = input.int(3, "Limit order valid for (bars)", minval=1, maxval=20, group=gExec)
-fillTicks = input.int(1, "Limit fill requires trading through by (ticks)", minval=0, maxval=10, group=gExec, tooltip="Keep equal to the strategy property 'Verify price for limit orders' (declared as 1).")
+fillTicks = input.int(1, "Limit orders fill only when price trades through by (ticks)", minval=0, maxval=10, group=gExec, tooltip="Applies to limit entries AND profit targets. Keep equal to the strategy property 'Verify price for limit orders' (declared as 1). A target that is only touched is not filled.")
+sameBarRule = input.string("Stop first (conservative)", "Indicator: stop and target in the same candle", options=["Stop first (conservative)", "Match TradingView emulator"], group=gExec, tooltip="OHLC cannot show which came first. Conservative assumes the stop. 'Match TradingView emulator' uses the emulator's rule (price visits the extreme nearer the open first) so the indicator can be checked against the strategy. The strategy always uses the emulator.")
 usePresetCost = input.bool(true, "Use preset cost model", group=gExec, tooltip="Illustrative costs per market. Replace with your broker's real numbers before trusting any statistic.")
 commIn = input.float(0, "Commission per unit per side (USD)", minval=0, group=gExec)
 spreadIn = input.float(0, "Typical spread (price units)", minval=0, group=gExec)
@@ -90,7 +91,8 @@ dayTZ = "America/New_York"
 dayReset = 1700
 testStart = input.time(timestamp("01 Jan 2020 00:00 +0000"), "Trade from", group=gNews)
 testEnd = input.time(timestamp("01 Jan 2035 00:00 +0000"), "Trade until", group=gNews)
-oosStart = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Out-of-sample starts", group=gNews, tooltip="Statistics are split into in-sample (before) and out-of-sample (from this date). Choose it BEFORE looking at results.")
+oosStart = input.time(timestamp("01 Jan 2026 00:00 +0000"), "Validation period starts", group=gNews, tooltip="Statistics split into Development (before), Validation (from here) and Holdout. Fix both dates BEFORE looking at any result.")
+holdStart = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Holdout period starts", group=gNews, tooltip="The holdout is genuinely out-of-sample only if no setting was changed after you first looked at it. Record the settings fingerprint shown in the performance table.")
 
 cScalpTF1 = input.timeframe("15", "Scalp confirmation TF 1", group=gCustom)
 cScalpTF2 = input.timeframe("60", "Scalp confirmation TF 2", group=gCustom)
@@ -124,8 +126,9 @@ allowChoch = input.bool(true, "Allow change-of-character breaks as indication", 
 needSweep = input.bool(false, "Require a liquidity sweep during the correction", group=gCustom)
 bosTicks = input.int(1, "Break must close beyond the level by (ticks)", minval=0, group=gCustom)
 
-showStats = input.bool(true, "Show performance table", group=gVis)
-showSessLv = input.bool(true, "Detailed view: session highs/lows and opening ranges", group=gVis)
+showStats = input.bool(false, "Show performance table", group=gVis)
+showSessLv = input.bool(false, "Detailed view: previous session highs/lows and opening range", group=gVis)
+maxMarks = input.int(12, "Detailed view: keep the last N structure / sweep marks", minval=2, maxval=60, group=gVis)
 dashPosIn = input.string("Top right", "Dashboard position", options=["Top right", "Top left", "Bottom right", "Bottom left"], group=gVis)
 dashSizeIn = input.string("Normal", "Dashboard text", options=["Small", "Normal", "Large"], group=gVis)
 statsPosIn = input.string("Bottom left", "Performance table position", options=["Bottom left", "Bottom right", "Top left", "Top right"], group=gVis)
@@ -238,8 +241,8 @@ if barstate.isfirst
         runtime.error("MEKA: use a minute chart below the confirmation timeframes (Scalp 1-5m, Day 5-15m), and TF 2 above TF 1.")
     if not chart.is_standard
         runtime.error("MEKA: use standard candles (not Heikin Ashi, Renko or range bars).")
-    if r2 <= r1 or (use3 and r3 <= r2) or maxStop < minStop or testEnd <= testStart or fibDeep <= fibShallow or alloc3a + alloc3b >= 100
-        runtime.error("MEKA: check settings - TP1 < TP2 < TP3, min stop < max stop, retracement start < end, TP1% + TP2% < 100, and the date range.")
+    if r2 <= r1 or (use3 and r3 <= r2) or maxStop < minStop or testEnd <= testStart or fibDeep <= fibShallow or alloc3a + alloc3b >= 100 or holdStart < oosStart
+        runtime.error("MEKA: check settings - TP1 < TP2 < TP3, min stop < max stop, retracement start < end, TP1% + TP2% < 100, date range, and holdout after validation start.")
     if not f_validSess(asiaW) or not f_validSess(londonW) or not f_validSess(nyW) or not f_validSess(asiaFull) or not f_validSess(londonFull) or not f_validSess(nyF) or not f_validSess(forceFlat)
         runtime.error("MEKA: sessions must be same-day windows written HHMM-HHMM with start before end.")
 
@@ -534,6 +537,9 @@ f_targets(int s, float ref, float risk) =>
 
 // ---- Plain-English explanation of what is missing --------------------------------------------------
 string noTradeText = not marketOK ? (fam == "Unknown" ? "Market not recognised. Choose it under Market in the settings." : "Enter the USD value per point for this symbol in the settings.") : not inDates ? "Outside the selected trading dates." : blockEntries ? "New entries are paused in the settings." : newsBlocked ? "News blackout. No new entries until it ends." : inForceFlat ? "End-of-day flat period." : not inWindow ? "Outside your trading sessions." : not beforeCutoff ? "Too close to the session end for a new entry." : not dataOK ? "This feed has no usable volume, so the volume / VWAP filter cannot confirm entries." : ""
+// Settings fingerprint: changes whenever a rule-relevant setting changes (record it with results).
+float fpRaw = disp * 7 + minADX * 11 + minAtrPct * 1300 + stopPad * 17 + minStop * 19 + maxStop * 23 + maxExt * 29 + strength * 31 + expiry * 37 + holdBars * 41 + cooldown * 43 + r1 * 47 + r2 * 53 + r3 * 59 + (use3 ? 61 : 0) + (vwapReq ? 67 : 0) + (volReq ? 71 : 0) + (beOn ? 73 : 0) + (trailMode == "ATR" ? 79 : trailMode == "Swing structure" ? 83 : 0) + (exitOnChoch ? 89 : 0) + (exitOnBias ? 97 : 0) + (useLimit ? 101 : 0) + (stopMethod == "ATR" ? 103 : stopMethod == "Wider of both" ? 107 : 0) + fibShallow * 109 + fibDeep * 113 + retestPad * 127 + (needSweep ? 131 : 0) + (allowChoch ? 137 : 0) + atrStopMult * 139 + alloc2 * 149 + alloc3a * 151 + alloc3b * 157 + commUnit * 163 + spreadPx * 167 + slipTicks * 173 + riskPct * 179 + gapMaxRisk * 181 + timeframe.in_seconds(tf1) * 0.01 + timeframe.in_seconds(tf2) * 0.003 + (framework == "Trend pullback (baseline)" ? 191 : framework == "Breakout (baseline)" ? 193 : 0) + (scalp ? 197 : 0)
+string fingerprint = str.tostring(math.round(fpRaw * 1000) % 1000003)
 string filterText = "VWAP side " + (vwapReq ? "on" : "off") + " · volume " + (volReq ? "on" : "off") + (feedVolume ? "" : " (this feed has no volume)")
 string sideWord = htfBias == 1 ? "bullish" : "bearish"
 string waitText = htfBias == 0 ? "Higher timeframes are not aligned (" + biasDetail + "). Waiting for agreement." : not atrOK ? "Market is too quiet. Volatility is below the minimum for this market." : adx < minADX ? "Trend strength is too weak (ADX " + str.tostring(math.round(adx)) + ", needs " + str.tostring(minADX) + ")." : not extOK ? "Price is stretched far from the 20 EMA. Waiting for it to come back." : framework == "Trend pullback (baseline)" ? "Waiting for a pullback to the 20 EMA and a " + sideWord + " close back through it." : framework == "Breakout (baseline)" ? (na(sMain) ? "Waiting for a session to open." : not sMain.orDone ? "Opening range is still forming." : "Waiting for a close " + (htfBias == 1 ? "above " + f_px(sMain.orHi) : "below " + f_px(sMain.orLo)) + " (opening range).") : htfBias == 1 ? (na(swingHigh) ? "Bias is bullish. Waiting for a swing high to form." : "Bias is bullish. Waiting for a strong close above the swing high at " + f_px(swingHigh) + ".") : (na(swingLow) ? "Bias is bearish. Waiting for a swing low to form." : "Bias is bearish. Waiting for a strong close below the swing low at " + f_px(swingLow) + ".")
@@ -564,18 +570,20 @@ f_cost(float q, bool marketLike) =>
     commUnit * q + (spreadPx / 2 + (marketLike ? slipTicks * syminfo.mintick : 0.0)) * q * unitUSD
 
 // ---- Performance ledger: one record per COMPLETE position (partial targets are not trades) ------
-// Groups: 0 all, 1 long, 2 short, 3 Asia, 4 London, 5 New York, 6 trending, 7 ranging,
-//         8 high volatility, 9 normal volatility, 10 in-sample, 11 out-of-sample.
-var array<float> stN = array.new<float>(12, 0.0)
-var array<float> stW = array.new<float>(12, 0.0)
-var array<float> stSW = array.new<float>(12, 0.0)
-var array<float> stSL = array.new<float>(12, 0.0)
-var array<float> stGW = array.new<float>(12, 0.0)
-var array<float> stGL = array.new<float>(12, 0.0)
-var array<float> stCum = array.new<float>(12, 0.0)
-var array<float> stPeak = array.new<float>(12, 0.0)
-var array<float> stDD = array.new<float>(12, 0.0)
-var array<float> stNet = array.new<float>(12, 0.0)
+// Groups: 0 all, 1 long, 2 short, 3 Asia, 4 London, 5 New York, 6-8 long by session,
+// 9-11 short by session, 12 trending, 13 ranging, 14 high volatility, 15 normal volatility,
+// 16 development, 17 validation, 18 holdout.
+const int NG = 19
+var array<float> stN = array.new<float>(NG, 0.0)
+var array<float> stW = array.new<float>(NG, 0.0)
+var array<float> stSW = array.new<float>(NG, 0.0)
+var array<float> stSL = array.new<float>(NG, 0.0)
+var array<float> stGW = array.new<float>(NG, 0.0)
+var array<float> stGL = array.new<float>(NG, 0.0)
+var array<float> stCum = array.new<float>(NG, 0.0)
+var array<float> stPeak = array.new<float>(NG, 0.0)
+var array<float> stDD = array.new<float>(NG, 0.0)
+var array<float> stNet = array.new<float>(NG, 0.0)
 var array<int> tpTouch = array.new<int>(3, 0)
 var array<int> tpFill = array.new<int>(3, 0)
 var int ambiguousBars = 0
@@ -598,14 +606,16 @@ f_rec(int g, float r, float cash) =>
     array.set(stNet, g, array.get(stNet, g) + cash)
     true
 
-f_record(float r, float cash, int dir, int sess, bool trend, bool hv, bool oos) =>
+// period: 0 development, 1 validation, 2 holdout (by entry time).
+f_record(float r, float cash, int dir, int sess, bool trend, bool hv, int period) =>
     f_rec(0, r, cash)
     f_rec(dir == 1 ? 1 : 2, r, cash)
     if sess > 0
         f_rec(2 + sess, r, cash)
-    f_rec(trend ? 6 : 7, r, cash)
-    f_rec(hv ? 8 : 9, r, cash)
-    f_rec(oos ? 11 : 10, r, cash)
+        f_rec((dir == 1 ? 5 : 8) + sess, r, cash)
+    f_rec(trend ? 12 : 13, r, cash)
+    f_rec(hv ? 14 : 15, r, cash)
+    f_rec(16 + period, r, cash)
     true
 
 f_bump(array<int> a, int i) =>
@@ -624,8 +634,13 @@ f_sideWord(int s) => s == 1 ? "LONG" : "SHORT"
 //  - Limit entries fill only if a later bar trades through the limit by `fillTicks`; a gap
 //    through the limit fills at that bar's open. An intrabar limit fill cannot know whether the
 //    stop or a target came first, so on that bar only the stop is checked (targets wait).
+//  - Profit targets are limit orders: they fill only when price trades THROUGH them by `fillTicks`
+//    (or the candle opens beyond them). A mere touch is reported as "touched, not filled".
 //  - From the fill onward each bar is judged from its open. If one bar touches both the stop and
-//    a target, the stop is assumed first (counted as "ambiguous"). Gaps fill at the open.
+//    a target, the stop is assumed first (counted as "ambiguous") unless "Match TradingView
+//    emulator" is selected. Gaps fill at the open.
+//  - Break-even / trailing start only after TP1 is FILLED (1-unit positions: after TP1 is certainly
+//    reached while open). Touches inside an intrabar-fill candle never count.
 //  - Break-even / trailing updates and close-based exits act from the next bar.
 //  - Results include the modeled costs (commission, half spread, slippage) from group 4.
 var int side = 0
@@ -665,7 +680,7 @@ var float plannedCash = na
 var int tradeSess = 0
 var bool tradeTrend = false
 var bool tradeHV = false
-var bool tradeOOS = false
+var int tradePeriod = 0
 var string lastExitText = ""
 var string execBlock = ""
 bool entered = false
@@ -683,7 +698,18 @@ string tpText = ""
 const string basisWord = "simulated"
 f_fillCash(float px, float q) => (px - fillEntry) * side * q * unitUSD
 
+// Fill price of a profit-target limit, or na. A target fills only when the reachable favourable
+// price trades THROUGH it by `fillTicks` (same rule as the strategy's limit verification), or when
+// the candle opens beyond it while the position already exists (gap: fills at the open).
+f_tgtFill(int s, float t, float reach, bool openOK) =>
+    float tick = syminfo.mintick
+    na(reach) ? na : openOK and (s == 1 ? open >= t : open <= t) ? open : (s == 1 ? reach >= t + fillTicks * tick : reach <= t - fillTicks * tick) ? t : na
+f_reached(int s, float t, float reach) => not na(reach) and (s == 1 ? reach >= t : reach <= t)
+
 int evSide = side
+float tpPx1 = na
+float tpPx2 = na
+float tpPx3 = na
 if barstate.isconfirmed
     // 1) Pending entry -> fill, or cancel when the limit expires unfilled.
     bool fillAtOpen = false
@@ -706,23 +732,36 @@ if barstate.isconfirmed
             pending := false
             side := 0
             lastClosed := bar_index
-    // 2) Manage a position that exists at (or from inside) this bar.
+    // 2) Manage the position.
     if side != 0 and not pending
-        bool intrabarFill = evFill and not fillAtOpen
-        bool stopHit = side == 1 ? low <= curStop : high >= curStop
-        bool hit1 = part1 > 0 and not done1 and (side == 1 ? high >= target1 : low <= target1)
-        bool hit2 = part2 > 0 and not done2 and (side == 1 ? high >= target2 : low <= target2)
-        bool hit3 = part3 > 0 and not done3 and (side == 1 ? high >= target3 : low <= target3)
-        bool lvl1 = side == 1 ? high >= target1 : low <= target1
-        bool lvl2 = side == 1 ? high >= target2 : low <= target2
-        bool lvl3 = use3 and (side == 1 ? high >= target3 : low <= target3)
-        if lvl1 and not touched1
+        // Did the position exist from this candle's open? Not when a limit filled inside it: then
+        // nothing seen before the fill may be credited - the order of events is unknown.
+        bool fromOpen = not (evFill and not fillAtOpen)
+        bool emu = sameBarRule == "Match TradingView emulator"
+        // TradingView emulator path: the extreme nearer the open is visited first.
+        bool upFirst = math.abs(high - open) < math.abs(open - low)
+        bool favFirst = side == 1 ? upFirst : not upFirst
+        // Furthest favourable price that comes AFTER the entry:
+        //  - position open from the open: the whole candle;
+        //  - intrabar limit fill, conservative: nothing (targets wait for the next candle);
+        //  - intrabar limit fill, emulator path: only the close if the favourable extreme came first.
+        float favReach = fromOpen ? (side == 1 ? high : low) : emu ? (favFirst ? close : (side == 1 ? high : low)) : na
+        bool stopTouched = side == 1 ? low <= curStop : high >= curStop
+        bool stopAtOpen = fromOpen and (side == 1 ? open <= curStop : open >= curStop)
+        // Emulator rule with the position open from the open: if the favourable extreme is nearer
+        // the open, targets are processed before the stop. Otherwise (and always in conservative
+        // mode) a touched stop wins.
+        bool targetsFirst = emu and fromOpen and favFirst
+        bool anyTarget = (part1 > 0 and not done1 and f_reached(side, target1, favReach)) or (part2 > 0 and not done2 and f_reached(side, target2, favReach)) or (part3 > 0 and not done3 and f_reached(side, target3, favReach))
+        // Touch statistics: only touches that certainly happened while the position was open.
+        bool certain = fromOpen and (not stopTouched or targetsFirst)
+        if certain and f_reached(side, target1, favReach) and not touched1
             touched1 := true
             f_bump(tpTouch, 0)
-        if lvl2 and not touched2
+        if certain and f_reached(side, target2, favReach) and not touched2
             touched2 := true
             f_bump(tpTouch, 1)
-        if lvl3 and not touched3
+        if certain and use3 and f_reached(side, target3, favReach) and not touched3
             touched3 := true
             f_bump(tpTouch, 2)
         if closing and not evFill
@@ -731,49 +770,60 @@ if barstate.isconfirmed
             lastExitText := closingWhy + " Closed at " + f_px(open) + "."
             remaining := 0.0
             exited := true
-        else if stopHit
-            float px = side == 1 ? math.min(open, curStop) : math.max(open, curStop)
-            if (hit1 or hit2 or hit3) and not intrabarFill
+        else if stopAtOpen or (stopTouched and not targetsFirst)
+            float px = stopAtOpen ? open : curStop
+            if anyTarget and not stopAtOpen
                 ambiguousBars += 1
             grossCash += f_fillCash(px, remaining)
             costCash += f_cost(remaining, true)
-            lastExitText := "Stop hit at " + f_px(px) + (hit1 or hit2 or hit3 ? " (a target was touched on the same bar; the stop is assumed first)." : ".")
+            lastExitText := "Stop hit at " + f_px(px) + (anyTarget and not stopAtOpen ? " (a target was also touched in this candle; the stop is assumed first)." : ".")
             remaining := 0.0
             exited := true
             evStopHit := true
-        else if not intrabarFill
-            if hit1
-                float p1 = side == 1 ? math.max(open, target1) : math.min(open, target1)
-                grossCash += f_fillCash(p1, part1)
+        else
+            tpPx1 := part1 > 0 and not done1 ? f_tgtFill(side, target1, favReach, fromOpen) : na
+            tpPx2 := part2 > 0 and not done2 ? f_tgtFill(side, target2, favReach, fromOpen) : na
+            tpPx3 := part3 > 0 and not done3 ? f_tgtFill(side, target3, favReach, fromOpen) : na
+            if not na(tpPx1)
+                grossCash += f_fillCash(tpPx1, part1)
                 costCash += f_cost(part1, false)
                 remaining -= part1
                 done1 := true
                 evTP1 := true
                 f_bump(tpFill, 0)
-            if hit2
-                float p2 = side == 1 ? math.max(open, target2) : math.min(open, target2)
-                grossCash += f_fillCash(p2, part2)
+            if not na(tpPx2)
+                grossCash += f_fillCash(tpPx2, part2)
                 costCash += f_cost(part2, false)
                 remaining -= part2
                 done2 := true
                 evTP2 := true
                 f_bump(tpFill, 1)
-            if hit3
-                float p3 = side == 1 ? math.max(open, target3) : math.min(open, target3)
-                grossCash += f_fillCash(p3, part3)
+            if not na(tpPx3)
+                grossCash += f_fillCash(tpPx3, part3)
                 costCash += f_cost(part3, false)
                 remaining -= part3
                 done3 := true
                 evTP3 := true
                 f_bump(tpFill, 2)
             tpEvent := evTP1 or evTP2 or evTP3
+            if remaining > qtyStep * 1e-6 and stopTouched
+                // Emulator path: targets first, then the stop takes what is left.
+                ambiguousBars += 1
+                grossCash += f_fillCash(curStop, remaining)
+                costCash += f_cost(remaining, true)
+                lastExitText := "Stop hit at " + f_px(curStop) + " after the target fill(s) in the same candle (emulator order)."
+                remaining := 0.0
+                evStopHit := true
             if remaining <= qtyStep * 1e-6
                 remaining := 0.0
                 exited := true
-                lastExitText := "All targets filled."
+                if not evStopHit
+                    lastExitText := "All targets filled."
         if not exited
-            // Close-based management; effective from the next bar.
-            trigSeen := trigSeen or touched1
+            // Close-based management; effective from the next candle. Break-even / trailing start
+            // only after TP1 was actually FILLED - or, for a position too small to have a TP1
+            // tranche, after TP1 was certainly reached while the position was open.
+            trigSeen := trigSeen or done1 or (part1 <= 0 and touched1)
             if beOn and trigSeen
                 curStop := side == 1 ? math.max(curStop, f_floorTick(fillEntry)) : math.min(curStop, f_ceilTick(fillEntry))
             if trailMode == "ATR" and trigSeen
@@ -788,7 +838,7 @@ if barstate.isconfirmed
         if exited
             float netCash = grossCash - costCash
             float tradeR = netCash / plannedCash
-            f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradeOOS)
+            f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradePeriod)
             dayR += tradeR
             lossStreak := tradeR < 0 ? lossStreak + 1 : 0
             lastExitText := lastExitText + " Result " + (tradeR >= 0 ? "+" : "") + str.tostring(tradeR, "#.##") + "R after modeled costs."
@@ -800,11 +850,11 @@ if barstate.isconfirmed
     if evFill
         alert(f_json("ENTRY_FILLED", evSide, "simulated_fill", tradeID, base + f_sideWord(evSide) + " filled at " + f_px(fillEntry) + " (simulated).", fillEntry, initialStop, target1, target2, target3, initialQty, plannedCash), alert.freq_once_per_bar_close)
     if evTP1
-        alert(f_json("TP1_REACHED", evSide, "simulated_fill", tradeID, base + "TP1 reached at " + f_px(target1) + ". Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP1_REACHED", evSide, "simulated_fill", tradeID, base + "TP1 filled at " + f_px(tpPx1) + " (simulated). Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP2
-        alert(f_json("TP2_REACHED", evSide, "simulated_fill", tradeID, base + "TP2 reached at " + f_px(target2) + ". Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP2_REACHED", evSide, "simulated_fill", tradeID, base + "TP2 filled at " + f_px(tpPx2) + " (simulated). Remaining " + str.tostring(remaining) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP3
-        alert(f_json("TP3_REACHED", evSide, "simulated_fill", tradeID, base + "TP3 reached at " + f_px(target3) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP3_REACHED", evSide, "simulated_fill", tradeID, base + "TP3 filled at " + f_px(tpPx3) + " (simulated).", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evStopHit
         alert(f_json("STOP_HIT", evSide, "simulated_fill", tradeID, base + lastExitText, fillEntry, curStop, target1, target2, target3, 0, na), alert.freq_once_per_bar_close)
     if earlyNow
@@ -855,7 +905,7 @@ if barstate.isconfirmed
         tradeSess := sessCode
         tradeTrend := trending
         tradeHV := hiVol
-        tradeOOS := time >= oosStart
+        tradePeriod := time >= holdStart ? 2 : time >= oosStart ? 1 : 0
         tradeID := syminfo.ticker + "-" + timeframe.period + "-" + str.tostring(time_close)
         dayEntries += 1
         entered := true
@@ -873,20 +923,20 @@ alertcondition(earlyNow, "Early exit", "MEKA: exit at next open")
 alertcondition(cancelNow or (setupCanceled and side == 0), "Setup canceled", "MEKA: pending setup canceled")
 
 // SHARED DISPLAY BEGIN
-// ---- Status: one instruction per bar. Priority: EXIT > TAKE PROFIT > ENTER > HOLD > NO TRADE >
-// WATCH > WAIT. Every event status lasts exactly the bar it happened on.
+// ---- Status: one instruction per candle. Priority: EXIT > TAKE PROFIT > ENTER > HOLD > NO TRADE >
+// WATCH > WAIT. Every event status lasts exactly the candle it happened on.
 string sideName = side == 1 ? "long" : "short"
 string status = exited or earlyNow ? "EXIT" : tpEvent ? "TAKE PROFIT" : side != 0 and pending ? (side == 1 ? "ENTER LONG" : "ENTER SHORT") : side != 0 ? "HOLD" : noTradeText != "" or execBlock != "" ? "NO TRADE" : setupState != 0 ? (setupSide == 1 ? "WATCH LONG" : "WATCH SHORT") : "WAIT"
-string doneWord = basisWord == "simulated" ? "reached (simulated)" : "filled"
-f_tpState(float part, bool done, bool touched) => part <= 0 ? "not used for this size" : done ? doneWord : touched ? "touched, not filled" : "open"
+string doneWord = basisWord == "simulated" ? "filled (simulated)" : "filled"
+f_tpState(float part, bool done, bool touched) => part <= 0 ? "not used at this size" : done ? doneWord : touched ? "touched, not filled" : "open"
 string nextTarget = part1 > 0 and not done1 ? "TP1 " + f_px(target1) : part2 > 0 and not done2 ? "TP2 " + f_px(target2) : part3 > 0 and not done3 ? "TP3 " + f_px(target3) : "-"
 string tpList = (evTP1 ? "TP1 " : "") + (evTP2 ? "TP2 " : "") + (evTP3 ? "TP3 " : "")
-string actionText = exited ? "Position closed. Wait for the next setup." : earlyNow ? "Close the " + sideName + " at the next open." : tpEvent ? "Take profit: " + tpList + doneWord + ". Hold the remaining " + str.tostring(remaining) + " with the stop at " + f_px(curStop) + "." : side != 0 and pending ? (entered ? (isLimit ? "Place a " + (side == 1 ? "buy" : "sell") + " limit at " + f_px(refEntry) + " (valid " + str.tostring(limitBars) + " bars) with stop and targets." : (side == 1 ? "Buy" : "Sell") + " at the next open (about " + f_px(refEntry) + ") with stop and targets.") : (side == 1 ? "Buy" : "Sell") + " limit at " + f_px(refEntry) + " is working (" + str.tostring(math.max(0, limitBars - (bar_index - submittedBar))) + " bars left).") : side != 0 ? (closing ? "Exit requested - closing at the next open." : "Hold the " + sideName + ". Next target " + nextTarget + ".") : status == "NO TRADE" ? "Stand aside." : setupState != 0 ? (setupSide == 1 ? "Get ready to buy." : "Get ready to sell.") : "Do nothing yet."
+string actionText = exited ? "Position closed. Wait for the next setup." : earlyNow ? "Close the " + sideName + " at the next open." : tpEvent ? "Take profit: " + str.trim(tpList) + " " + doneWord + ". Hold the remaining " + str.tostring(remaining) + " with the stop at " + f_px(curStop) + "." : side != 0 and pending ? (entered ? (isLimit ? "Place a " + (side == 1 ? "buy" : "sell") + " limit at " + f_px(refEntry) + " (valid " + str.tostring(limitBars) + " candles) with the stop and targets below." : (side == 1 ? "Buy" : "Sell") + " at the next open (about " + f_px(refEntry) + ") with the stop and targets below.") : (side == 1 ? "Buy" : "Sell") + " limit at " + f_px(refEntry) + " is working (" + str.tostring(math.max(0, limitBars - (bar_index - submittedBar))) + " candles left).") : side != 0 ? (closing ? "Exit requested - closing at the next open." : "Hold the " + sideName + ". Next target " + nextTarget + ".") : status == "NO TRADE" ? "Stand aside." : setupState != 0 ? (setupSide == 1 ? "Get ready to buy." : "Get ready to sell.") : "Do nothing yet."
 string reasonText = exited ? lastExitText : earlyNow ? closingWhy : side != 0 ? (evFill ? (side == 1 ? "Long" : "Short") + " filled at " + f_px(fillEntry) + (fillRiskRatio > 1.05 ? " (gap: risk " + str.tostring(fillRiskRatio, "#.#") + "x planned)" : "") + "." : tradeName + " setup. Stop " + f_px(curStop) + (curStop != initialStop ? " (moved from " + f_px(initialStop) + ")" : "") + ".") : cancelNow ? cancelText : execBlock != "" ? execBlock : noTradeText != "" ? noTradeText : setupState != 0 ? watchText : rejectText != "" ? rejectText : setupCanceled ? setupEndText : waitText
 string setupLine = side != 0 ? tradeName : setupState == 1 ? "ICC: break confirmed, waiting for pullback" : setupState == 2 ? "ICC: pullback done, waiting for trigger" : framework == "ICC hybrid" ? "No active setup" : framework
 string tradeLine = side == 0 ? "Flat" : pending ? "Order working" : (side == 1 ? "Long" : "Short") + " open: " + str.tostring(remaining) + " of " + str.tostring(initialQty) + " units left"
 
-// ---- Palette (dark-chart friendly, restrained) ---------------------------------------------------
+// ---- Palette: restrained, dark-chart friendly. Context is faint; the trade is prominent. --------
 color cBg = color.rgb(13, 17, 28)
 color cHead = color.rgb(22, 29, 46)
 color cTxt = color.rgb(226, 232, 240)
@@ -896,46 +946,67 @@ color cDn = color.rgb(239, 68, 68)
 color cAmber = color.rgb(245, 158, 11)
 color cBlue = color.rgb(96, 165, 250)
 color cGray = color.rgb(100, 116, 139)
-color statusColor = str.contains(status, "LONG") and not str.contains(status, "WATCH") ? cUp : str.contains(status, "SHORT") and not str.contains(status, "WATCH") ? cDn : status == "HOLD" ? cBlue : status == "TAKE PROFIT" ? color.rgb(20, 184, 166) : status == "EXIT" ? cAmber : str.contains(status, "WATCH") ? color.rgb(202, 138, 4) : status == "NO TRADE" ? color.rgb(127, 29, 29) : cGray
+color cTeal = color.rgb(20, 184, 166)
+color statusColor = str.contains(status, "LONG") and not str.contains(status, "WATCH") ? cUp : str.contains(status, "SHORT") and not str.contains(status, "WATCH") ? cDn : status == "HOLD" ? cBlue : status == "TAKE PROFIT" ? cTeal : status == "EXIT" ? cAmber : str.contains(status, "WATCH") ? color.rgb(202, 138, 4) : status == "NO TRADE" ? color.rgb(127, 29, 29) : cGray
 bool detailed = viewMode == "Detailed"
 
-// ---- Indicator lines (Detailed view only) -------------------------------------------------------
-plot(detailed ? emaFast : na, "EMA 20", color=color.new(cBlue, 40))
-plot(detailed ? emaSlow : na, "EMA 50", color=color.new(cAmber, 50))
-plot(detailed and vwapReq ? vwapVal : na, "VWAP", color=color.new(color.white, 60), style=plot.style_circles)
+// ---- Context lines (Detailed only, faint so candles stay readable) -------------------------------
+plot(detailed ? emaFast : na, "EMA 20", color=color.new(cBlue, 70))
+plot(detailed ? emaSlow : na, "EMA 50", color=color.new(cAmber, 75))
+plot(detailed and vwapReq ? vwapVal : na, "VWAP", color=color.new(color.white, 75))
 bool sl = detailed and showSessLv
-plot(sl ? sAsia.lastHi : na, "Prior Asia high", color=color.new(cMute, 55), style=plot.style_stepline)
-plot(sl ? sAsia.lastLo : na, "Prior Asia low", color=color.new(cMute, 55), style=plot.style_stepline)
-plot(sl ? sLondon.lastHi : na, "Prior London high", color=color.new(cBlue, 60), style=plot.style_stepline)
-plot(sl ? sLondon.lastLo : na, "Prior London low", color=color.new(cBlue, 60), style=plot.style_stepline)
-plot(sl ? sNY.lastHi : na, "Prior New York high", color=color.new(cAmber, 60), style=plot.style_stepline)
-plot(sl ? sNY.lastLo : na, "Prior New York low", color=color.new(cAmber, 60), style=plot.style_stepline)
+plot(sl ? sAsia.lastHi : na, "Prior Asia high", color=color.new(cMute, 70), style=plot.style_stepline)
+plot(sl ? sAsia.lastLo : na, "Prior Asia low", color=color.new(cMute, 70), style=plot.style_stepline)
+plot(sl ? sLondon.lastHi : na, "Prior London high", color=color.new(cBlue, 70), style=plot.style_stepline)
+plot(sl ? sLondon.lastLo : na, "Prior London low", color=color.new(cBlue, 70), style=plot.style_stepline)
+plot(sl ? sNY.lastHi : na, "Prior New York high", color=color.new(cAmber, 70), style=plot.style_stepline)
+plot(sl ? sNY.lastLo : na, "Prior New York low", color=color.new(cAmber, 70), style=plot.style_stepline)
 // Data Window outputs for indicator-vs-strategy parity checks.
 plot(signal, "Signal (+1 long, -1 short)", display=display.data_window)
 plot(candidate, "Candidate before filters", display=display.data_window)
 plot(setupState, "ICC stage (0 idle, 1 indicated, 2 corrected)", display=display.data_window)
 
+// ---- Detailed: confirmed structure, sweeps and ICC zones, capped to the most recent ones ------------
+var array<line> markLines = array.new<line>()
+var array<label> markLabels = array.new<label>()
+var array<box> zoneBoxes = array.new<box>()
+f_keepLines(array<line> a, int n) =>
+    while array.size(a) > n
+        line.delete(array.shift(a))
+    true
+f_keepLabels(array<label> a, int n) =>
+    while array.size(a) > n
+        label.delete(array.shift(a))
+    true
+f_keepBoxes(array<box> a, int n) =>
+    while array.size(a) > n
+        box.delete(array.shift(a))
+    true
 if barstate.isconfirmed and detailed
-    // Structure breaks: line from the swing that was broken to the bar that broke it.
+    // A break is drawn on the candle that CLOSED through the level, from the swing it broke.
     if breakUp
-        line.new(breakUpOrigin, breakUpLevel, bar_index, breakUpLevel, color=color.new(cUp, 30), style=line.style_dotted)
-        label.new(math.round((breakUpOrigin + bar_index) / 2), breakUpLevel, chochUp ? "CHoCH" : "BOS", style=label.style_none, textcolor=cUp, size=size.small)
+        array.push(markLines, line.new(breakUpOrigin, breakUpLevel, bar_index, breakUpLevel, color=color.new(cUp, 45), style=line.style_dotted, width=1))
+        array.push(markLabels, label.new(bar_index, breakUpLevel, chochUp ? "CHoCH" : "BOS", style=label.style_label_lower_left, color=color.new(cBg, 100), textcolor=color.new(cUp, 15), size=size.tiny))
     if breakDn
-        line.new(breakDnOrigin, breakDnLevel, bar_index, breakDnLevel, color=color.new(cDn, 30), style=line.style_dotted)
-        label.new(math.round((breakDnOrigin + bar_index) / 2), breakDnLevel, chochDn ? "CHoCH" : "BOS", style=label.style_none, textcolor=cDn, size=size.small)
+        array.push(markLines, line.new(breakDnOrigin, breakDnLevel, bar_index, breakDnLevel, color=color.new(cDn, 45), style=line.style_dotted, width=1))
+        array.push(markLabels, label.new(bar_index, breakDnLevel, chochDn ? "CHoCH" : "BOS", style=label.style_label_upper_left, color=color.new(cBg, 100), textcolor=color.new(cDn, 15), size=size.tiny))
     if sweepLow
-        label.new(bar_index, low, "Sweep", style=label.style_label_up, color=color.new(cBg, 100), textcolor=color.new(cUp, 10), size=size.tiny)
+        array.push(markLabels, label.new(bar_index, low, "sweep", style=label.style_label_up, color=color.new(cBg, 100), textcolor=color.new(cUp, 30), size=size.tiny))
     if sweepHigh
-        label.new(bar_index, high, "Sweep", style=label.style_label_down, color=color.new(cBg, 100), textcolor=color.new(cDn, 10), size=size.tiny)
+        array.push(markLabels, label.new(bar_index, high, "sweep", style=label.style_label_down, color=color.new(cBg, 100), textcolor=color.new(cDn, 30), size=size.tiny))
+    f_keepLines(markLines, maxMarks)
+    f_keepLabels(markLabels, maxMarks * 2)
 
-// ICC pullback zone (Detailed): drawn from the indication bar while the setup is alive.
+// ICC pullback zone: drawn from the indication candle while the setup is alive; last 3 kept.
 var box zoneBox = na
 float dLeg = math.abs(impExt - impOrigin)
 float dTop = setupSide == 1 ? (useFib ? impExt - fibShallow * dLeg : brokenLevel + retestPad * indATR) : (useFib ? impExt + fibDeep * dLeg : brokenLevel + retestPad * indATR)
 float dBot = setupSide == 1 ? (useFib ? impExt - fibDeep * dLeg : brokenLevel - retestPad * indATR) : (useFib ? impExt + fibShallow * dLeg : brokenLevel - retestPad * indATR)
 if barstate.isconfirmed and detailed
     if setupFormed
-        zoneBox := box.new(indBar, dTop, bar_index + 1, dBot, border_color=color.new(setupSide == 1 ? cUp : cDn, 60), bgcolor=color.new(setupSide == 1 ? cUp : cDn, 88), text="ICC pullback zone", text_color=color.new(cTxt, 40), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
+        zoneBox := box.new(indBar, dTop, bar_index + 1, dBot, border_color=color.new(setupSide == 1 ? cUp : cDn, 75), bgcolor=color.new(setupSide == 1 ? cUp : cDn, 93), text="ICC zone", text_color=color.new(cMute, 20), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
+        array.push(zoneBoxes, zoneBox)
+        f_keepBoxes(zoneBoxes, 3)
     else if setupState != 0 and not na(zoneBox)
         box.set_right(zoneBox, bar_index + 1)
         if setupState == 1
@@ -945,11 +1016,11 @@ if barstate.isconfirmed and detailed
         box.set_right(zoneBox, bar_index)
         zoneBox := na
 
-// Opening range of the active session (Detailed).
+// Opening range of the active session (Detailed + session levels on).
 var box orBox = na
 if barstate.isconfirmed and sl and not na(sMain)
     if sMain.startBar == bar_index or na(orBox)
-        orBox := box.new(sMain.startBar, sMain.orHi, bar_index, sMain.orLo, border_color=color.new(cMute, 50), bgcolor=color.new(cMute, 92), text="Opening range", text_color=color.new(cMute, 30), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
+        orBox := box.new(sMain.startBar, sMain.orHi, bar_index, sMain.orLo, border_color=color.new(cMute, 70), bgcolor=color.new(cMute, 95), text="opening range", text_color=color.new(cMute, 40), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top)
     else
         box.set_top(orBox, sMain.orHi)
         box.set_bottom(orBox, sMain.orLo)
@@ -957,84 +1028,119 @@ if barstate.isconfirmed and sl and not na(sMain)
 if barstate.isconfirmed and na(sMain)
     orBox := na
 
-// ---- Trade markers and level lines (both views) --------------------------------------------------
+// ---- Trade markers (both views) -------------------------------------------------------------------
 if entered
     label.new(bar_index, side == 1 ? low : high, side == 1 ? "BUY" : "SELL", style=side == 1 ? label.style_label_up : label.style_label_down, color=side == 1 ? cUp : cDn, textcolor=color.white, size=size.normal)
-if evFill and isLimit and detailed
-    label.new(bar_index, fillEntry, "Filled", style=label.style_label_left, color=color.new(cBg, 100), textcolor=cTxt, size=size.tiny)
+if evFill and isLimit
+    label.new(bar_index, fillEntry, "filled", style=label.style_label_left, color=color.new(cBg, 100), textcolor=cTxt, size=size.tiny)
 if tpEvent and not exited
-    label.new(bar_index, evSide == 1 ? high : low, str.trim(tpList), style=evSide == 1 ? label.style_label_down : label.style_label_up, color=color.rgb(20, 184, 166), textcolor=color.white, size=size.small)
+    label.new(bar_index, evSide == 1 ? high : low, str.trim(tpList), style=evSide == 1 ? label.style_label_down : label.style_label_up, color=cTeal, textcolor=color.white, size=size.small)
 if exited or earlyNow
-    label.new(bar_index, evSide == 1 ? high : low, evStopHit ? "STOP" : tpEvent ? "TP / EXIT" : "EXIT", style=evSide == 1 ? label.style_label_down : label.style_label_up, color=evStopHit ? cDn : cAmber, textcolor=color.white, size=size.small)
+    label.new(bar_index, evSide == 1 ? high : low, evStopHit ? "STOP" : earlyNow ? "EXIT" : "DONE", style=evSide == 1 ? label.style_label_down : label.style_label_up, color=evStopHit ? cDn : cAmber, textcolor=color.white, size=size.small)
 
+// ---- Active trade levels: risk / reward shading, bold entry and stop, readable target tags --------
 var line lnE = na
 var line lnS = na
 var line ln1 = na
 var line ln2 = na
 var line ln3 = na
+var box bxRisk = na
+var box bxReward = na
 var label lbE = na
 var label lbS = na
 var label lb1 = na
 var label lb2 = na
 var label lb3 = na
 var float drawnStop = na
-f_kill(line l) =>
-    if not na(l)
-        line.delete(l)
-    true
-f_killL(label l) =>
-    if not na(l)
-        label.delete(l)
-    true
-f_tag(label l, float y, string txt, color c) =>
+var array<line> oldLines = array.new<line>()
+var array<box> oldBoxes = array.new<box>()
+f_tag(label l, float y, string txt, color bg) =>
     label lab = l
     if na(y)
-        f_killL(lab)
+        if not na(lab)
+            label.delete(lab)
         lab := na
     else if na(lab)
-        lab := label.new(bar_index + 3, y, txt, style=label.style_label_left, color=color.new(cBg, 20), textcolor=c, size=size.small)
+        lab := label.new(bar_index + 2, y, txt, style=label.style_label_left, color=bg, textcolor=color.white, size=size.normal)
     else
-        label.set_xy(lab, bar_index + 3, y)
+        label.set_xy(lab, bar_index + 2, y)
         label.set_text(lab, txt)
+        label.set_color(lab, bg)
     lab
+float finalTarget = use3 and part3 > 0 ? target3 : target2
 if barstate.isconfirmed
     if entered
-        if not detailed
-            f_kill(lnE)
-            f_kill(lnS)
-            f_kill(ln1)
-            f_kill(ln2)
-            f_kill(ln3)
-        lnE := line.new(bar_index, refEntry, bar_index + 1, refEntry, color=color.new(cTxt, 30), style=line.style_dashed, width=1)
-        lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=2)
-        ln1 := part1 > 0 ? line.new(bar_index, target1, bar_index + 1, target1, color=color.new(cUp, 10), style=line.style_dotted, width=2) : na
-        ln2 := line.new(bar_index, target2, bar_index + 1, target2, color=color.new(cUp, 10), style=line.style_dotted, width=2)
-        ln3 := use3 and part3 > 0 ? line.new(bar_index, target3, bar_index + 1, target3, color=color.new(cUp, 10), style=line.style_dotted, width=2) : na
+        bxRisk := box.new(bar_index, math.max(refEntry, curStop), bar_index + 1, math.min(refEntry, curStop), border_color=color.new(cDn, 100), bgcolor=color.new(cDn, 90))
+        bxReward := box.new(bar_index, math.max(refEntry, finalTarget), bar_index + 1, math.min(refEntry, finalTarget), border_color=color.new(cUp, 100), bgcolor=color.new(cUp, 92))
+        lnE := line.new(bar_index, refEntry, bar_index + 1, refEntry, color=color.new(cTxt, 10), width=2)
+        lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=3)
+        ln1 := part1 > 0 ? line.new(bar_index, target1, bar_index + 1, target1, color=cUp, style=line.style_dashed, width=2) : na
+        ln2 := line.new(bar_index, target2, bar_index + 1, target2, color=cUp, style=line.style_dashed, width=2)
+        ln3 := use3 and part3 > 0 ? line.new(bar_index, target3, bar_index + 1, target3, color=cUp, style=line.style_dashed, width=2) : na
         drawnStop := curStop
     else if side != 0
+        if not pending and not na(fillEntry) and not na(lnE) and line.get_y1(lnE) != fillEntry
+            // Show the actual (simulated / emulator) fill once it is known.
+            line.set_y1(lnE, fillEntry)
+            line.set_y2(lnE, fillEntry)
+            box.set_top(bxRisk, math.max(fillEntry, curStop))
+            box.set_bottom(bxRisk, math.min(fillEntry, curStop))
+            box.set_top(bxReward, math.max(fillEntry, finalTarget))
+            box.set_bottom(bxReward, math.min(fillEntry, finalTarget))
         if curStop != drawnStop
+            // Stop moved (break-even / trail): end the old segment, start a new one.
             line.set_x2(lnS, bar_index)
-            if not detailed
-                f_kill(lnS)
-            lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=2)
+            line.set_color(lnS, color.new(cDn, 60))
+            array.push(oldLines, lnS)
+            lnS := line.new(bar_index, curStop, bar_index + 1, curStop, color=cDn, width=3)
+            float eLvl = na(fillEntry) ? refEntry : fillEntry
+            box.set_top(bxRisk, math.max(eLvl, curStop))
+            box.set_bottom(bxRisk, math.min(eLvl, curStop))
             drawnStop := curStop
         for l in array.from(lnE, lnS, ln1, ln2, ln3)
             if not na(l)
                 line.set_x2(l, bar_index + 1)
+        box.set_right(bxRisk, bar_index + 1)
+        box.set_right(bxReward, bar_index + 1)
+        if done1 and not na(ln1)
+            line.set_style(ln1, line.style_dotted)
+            line.set_color(ln1, color.new(cUp, 55))
+        if done2 and not na(ln2)
+            line.set_style(ln2, line.style_dotted)
+            line.set_color(ln2, color.new(cUp, 55))
     else if exited or cancelNow
         for l in array.from(lnE, lnS, ln1, ln2, ln3)
             if not na(l)
                 line.set_x2(l, bar_index)
-                if not detailed
-                    line.delete(l)
+                line.set_color(l, color.new(line.get_color(l), 60))
+        box.set_right(bxRisk, bar_index)
+        box.set_right(bxReward, bar_index)
+        box.set_bgcolor(bxRisk, color.new(cDn, 95))
+        box.set_bgcolor(bxReward, color.new(cUp, 96))
+        // Detailed keeps the last few finished trades (faded); Clean removes them completely.
+        for l in array.from(lnE, lnS, ln1, ln2, ln3)
+            if not na(l)
+                array.push(oldLines, l)
+        for b in array.from(bxRisk, bxReward)
+            if not na(b)
+                array.push(oldBoxes, b)
+        f_keepLines(oldLines, detailed ? 25 : 0)
+        f_keepBoxes(oldBoxes, detailed ? 10 : 0)
+        lnE := na
+        lnS := na
+        ln1 := na
+        ln2 := na
+        ln3 := na
+        bxRisk := na
+        bxReward := na
 bool showTags = side != 0
-lbE := f_tag(lbE, showTags ? refEntry : na, (pending ? "Entry (order) " : "Entry ") + f_px(pending ? refEntry : fillEntry), cTxt)
-lbS := f_tag(lbS, showTags ? curStop : na, "Stop " + f_px(curStop), cDn)
-lb1 := f_tag(lb1, showTags and part1 > 0 and not done1 ? target1 : na, "TP1 " + f_px(target1), cUp)
-lb2 := f_tag(lb2, showTags and part2 > 0 and not done2 ? target2 : na, "TP2 " + f_px(target2), cUp)
-lb3 := f_tag(lb3, showTags and use3 and part3 > 0 and not done3 ? target3 : na, "TP3 " + f_px(target3), cUp)
+lbE := f_tag(lbE, showTags ? (pending ? refEntry : fillEntry) : na, (pending ? "ENTRY ORDER  " : "ENTRY  ") + f_px(pending ? refEntry : fillEntry), cGray)
+lbS := f_tag(lbS, showTags ? curStop : na, "STOP  " + f_px(curStop), cDn)
+lb1 := f_tag(lb1, showTags and part1 > 0 ? target1 : na, "TP1  " + f_px(target1) + (done1 ? "  ✓" : ""), done1 ? color.new(cUp, 50) : color.rgb(21, 128, 61))
+lb2 := f_tag(lb2, showTags and part2 > 0 ? target2 : na, "TP2  " + f_px(target2) + (done2 ? "  ✓" : ""), done2 ? color.new(cUp, 50) : color.rgb(21, 128, 61))
+lb3 := f_tag(lb3, showTags and use3 and part3 > 0 ? target3 : na, "TP3  " + f_px(target3) + (done3 ? "  ✓" : ""), done3 ? color.new(cUp, 50) : color.rgb(21, 128, 61))
 
-// ---- Premium dashboard ---------------------------------------------------------------------------
+// ---- Dashboard: the instruction first, its explanation second, technical details last -------------
 f_wrap(string txt, int w) =>
     string out = ""
     int len = 0
@@ -1048,59 +1154,68 @@ f_wrap(string txt, int w) =>
             len += (len > 0 ? 1 : 0) + n
     out
 dashPos = dashPosIn == "Top left" ? position.top_left : dashPosIn == "Bottom right" ? position.bottom_right : dashPosIn == "Bottom left" ? position.bottom_left : position.top_right
-tSize = dashSizeIn == "Small" ? size.small : dashSizeIn == "Large" ? size.large : size.normal
+tMain = dashSizeIn == "Small" ? size.small : dashSizeIn == "Large" ? size.large : size.normal
 tBig = dashSizeIn == "Small" ? size.normal : dashSizeIn == "Large" ? size.huge : size.large
-var table dash = table.new(dashPos, 2, 17, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cHead, border_width=1)
-f_row(int r, string k, string v, color vc) =>
-    table.cell(dash, 0, r, k, text_color=cMute, text_size=tSize, text_halign=text.align_left, bgcolor=cBg)
-    table.cell(dash, 1, r, v, text_color=vc, text_size=tSize, text_halign=text.align_left, bgcolor=cBg)
+tSub = dashSizeIn == "Large" ? size.normal : size.small
+var table dash = table.new(dashPos, 2, 20, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cBg, border_width=2)
+f_row(int r, string k, string v, color vc, string sz) =>
+    table.cell(dash, 0, r, k, text_color=cMute, text_size=sz, text_halign=text.align_left, bgcolor=cBg)
+    table.cell(dash, 1, r, v, text_color=vc, text_size=sz, text_halign=text.align_left, bgcolor=cBg)
     r + 1
 if barstate.islast
-    table.clear(dash, 0, 0, 1, 16)
-    string modeLine = mode + " · confirms on " + f_tfName(tf1) + (useTF2 ? " + " + f_tfName(tf2) : "")
-    table.cell(dash, 0, 0, "MEKA ALPHA PRO\n" + fam + " · " + mode, text_color=cTxt, text_size=tSize, text_halign=text.align_left, bgcolor=cHead)
-    table.cell(dash, 1, 0, status, text_color=color.white, text_size=tBig, bgcolor=statusColor)
+    table.clear(dash, 0, 0, 1, 19)
+    // 1) What to do.
+    table.cell(dash, 0, 0, status, text_color=color.white, text_size=tBig, bgcolor=statusColor)
+    table.cell(dash, 1, 0, fam + " · " + mode + " · " + timeframe.period + "m", text_color=cMute, text_size=tSub, text_halign=text.align_right, bgcolor=cHead)
     int r = 1
-    r := f_row(r, "Next step", f_wrap(actionText, 42), cTxt)
-    r := f_row(r, status == "EXIT" ? "Why" : side != 0 ? "Details" : "Missing", f_wrap(reasonText, 42), status == "NO TRADE" ? color.rgb(252, 165, 165) : cTxt)
-    if detailed
-        r := f_row(r, "Instrument", syminfo.ticker + " · " + fam + " · " + timeframe.period + "m chart", cTxt)
-        r := f_row(r, "Mode", modeLine, cTxt)
-        r := f_row(r, "Filters", filterText, cMute)
-        r := f_row(r, "Session", sessName + (not na(sMain) ? (sMain.orDone ? " · opening range set" : " · opening range forming") : ""), sessCode > 0 ? cTxt : cMute)
-        r := f_row(r, "Market bias", biasText + " (" + biasDetail + ")", htfBias == 1 ? cUp : htfBias == -1 ? cDn : cMute)
-        r := f_row(r, "Setup", setupLine, cTxt)
-        r := f_row(r, "Trade", tradeLine, side != 0 ? cBlue : cMute)
+    r := f_row(r, "NEXT", f_wrap(actionText, 44), color.white, tMain)
+    r := f_row(r, status == "EXIT" ? "WHY" : side != 0 ? "NOTE" : "MISSING", f_wrap(reasonText, 48), status == "NO TRADE" ? color.rgb(252, 165, 165) : cTxt, tSub)
+    // 2) The trade.
     if side != 0
-        r := f_row(r, pending ? "Entry (order)" : "Entry", f_px(pending ? refEntry : fillEntry), cTxt)
-        r := f_row(r, "Stop", f_px(curStop) + (curStop != initialStop ? "  (moved)" : ""), cDn)
-        r := f_row(r, "TP1", part1 > 0 ? f_px(target1) + "  · " + f_tpState(part1, done1, touched1) : "skipped (size too small)", cUp)
-        r := f_row(r, "TP2", f_px(target2) + "  · " + f_tpState(part2, done2, touched2), cUp)
+        r := f_row(r, pending ? "Entry order" : "Entry", f_px(pending ? refEntry : fillEntry), cTxt, tMain)
+        r := f_row(r, "Stop", f_px(curStop) + (curStop != initialStop ? "  (moved from " + f_px(initialStop) + ")" : ""), cDn, tMain)
+        r := f_row(r, "TP1", part1 > 0 ? f_px(target1) + "  ·  " + f_tpState(part1, done1, touched1) : "not used at this size", cUp, tMain)
+        r := f_row(r, "TP2", f_px(target2) + "  ·  " + f_tpState(part2, done2, touched2), cUp, tMain)
         if use3
-            r := f_row(r, "TP3", f_px(target3) + "  · " + f_tpState(part3, done3, touched3), cUp)
-        r := f_row(r, "Risk / size", "$" + str.tostring(plannedCash, "#,###.##") + " · " + str.tostring(initialQty) + " units · " + str.tostring(remaining) + " open", cTxt)
+            r := f_row(r, "TP3", f_px(target3) + "  ·  " + f_tpState(part3, done3, touched3), cUp, tMain)
+        r := f_row(r, "Risk · size", "$" + str.tostring(plannedCash, "#,###.##") + "  ·  " + str.tostring(initialQty) + " units  ·  " + str.tostring(remaining) + " open", cTxt, tSub)
     else
-        r := f_row(r, "Risk per trade", "$" + str.tostring(account * riskPct / 100, "#,###.##") + " (" + str.tostring(riskPct) + "% of $" + str.tostring(account, "#,###") + ")", cMute)
+        r := f_row(r, "Risk per trade", "$" + str.tostring(account * riskPct / 100, "#,###.##") + " (" + str.tostring(riskPct) + "% of $" + str.tostring(account, "#,###") + ")", cMute, tSub)
+    // 3) Background (Detailed view).
+    if detailed
+        r := f_row(r, "Bias", biasText + " (" + biasDetail + ")", htfBias == 1 ? cUp : htfBias == -1 ? cDn : cMute, tSub)
+        r := f_row(r, "Setup", setupLine, cMute, tSub)
+        r := f_row(r, "Session", sessName + (not na(sMain) ? (sMain.orDone ? " · opening range set" : " · opening range forming") : ""), cMute, tSub)
+        r := f_row(r, "Trade", tradeLine, cMute, tSub)
+        r := f_row(r, "Filters", filterText, cMute, tSub)
+        r := f_row(r, "Mode", mode + " · confirms on " + f_tfName(tf1) + (useTF2 ? " + " + f_tfName(tf2) : "") + " · " + framework, cMute, tSub)
 
-// ---- Performance table (complete positions, after modeled costs) --------------------------------
+// ---- Performance table (OFF by default; complete positions, after modeled costs) ------------------
 statsPos = statsPosIn == "Bottom right" ? position.bottom_right : statsPosIn == "Top left" ? position.top_left : statsPosIn == "Top right" ? position.top_right : position.bottom_left
-var table perf = table.new(statsPos, 9, 15, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cHead, border_width=1)
-var array<string> grpNames = array.from("All trades", "Long", "Short", "Asia", "London", "New York", "Trending (ADX 25+)", "Ranging", "High volatility", "Normal volatility", "In-sample", "Out-of-sample")
+var table perf = table.new(statsPos, 9, NG + 3, bgcolor=cBg, frame_color=cHead, frame_width=1, border_color=cHead, border_width=1)
+var array<string> grpNames = array.from("All trades", "Long", "Short", "Asia", "London", "New York", "Long · Asia", "Long · London", "Long · New York", "Short · Asia", "Short · London", "Short · New York", "Trending (ADX 25+)", "Ranging", "High volatility", "Normal volatility", "Development (in-sample)", "Validation", "Holdout")
+// 95% Wilson interval for the win rate: with few trades the true rate is very uncertain.
+f_wilson(float w, float n) =>
+    float z = 1.96
+    float p = w / n
+    float c = (p + z * z / (2 * n)) / (1 + z * z / n)
+    float h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    str.tostring(math.max(0, c - h) * 100, "#") + "-" + str.tostring(math.min(1, c + h) * 100, "#") + "%"
 if barstate.islast and showStats
-    table.clear(perf, 0, 0, 8, 14)
+    table.clear(perf, 0, 0, 8, NG + 2)
     table.cell(perf, 0, 0, "Measured performance (" + basisWord + ", after modeled costs)", text_color=cTxt, text_size=size.small, text_halign=text.align_left, bgcolor=cHead)
     table.cell(perf, 1, 0, fam + " · " + mode + " · " + framework + " · " + timeframe.period + "m", text_color=cMute, text_size=size.small, text_halign=text.align_left, bgcolor=cHead)
-    array<string> heads = array.from("Group", "Trades", "Win rate", "Avg win", "Avg loss", "Profit factor", "Expectancy", "Max drawdown", "Net USD")
+    array<string> heads = array.from("Group", "Trades", "Win rate (95% range)", "Avg win", "Avg loss", "Profit factor", "Expectancy", "Max drawdown", "Net USD")
     for c = 0 to 8
         table.cell(perf, c, 1, array.get(heads, c), text_color=cMute, text_size=size.small, bgcolor=cBg)
-    for g = 0 to 11
+    for g = 0 to NG - 1
         float n = array.get(stN, g)
         float w = array.get(stW, g)
         float gl = array.get(stGL, g)
         string pf = n == 0 ? "-" : gl == 0 ? (array.get(stGW, g) > 0 ? "no losses" : "-") : str.tostring(array.get(stGW, g) / gl, "#.##")
-        table.cell(perf, 0, g + 2, array.get(grpNames, g), text_color=cTxt, text_size=size.small, text_halign=text.align_left, bgcolor=cBg)
+        table.cell(perf, 0, g + 2, array.get(grpNames, g), text_color=g >= 16 ? cBlue : cTxt, text_size=size.small, text_halign=text.align_left, bgcolor=cBg)
         table.cell(perf, 1, g + 2, str.tostring(n, "#"), text_color=n < 30 ? cAmber : cTxt, text_size=size.small, bgcolor=cBg)
-        table.cell(perf, 2, g + 2, n == 0 ? "-" : str.tostring(w / n * 100, "#.#") + "%", text_color=cTxt, text_size=size.small, bgcolor=cBg)
+        table.cell(perf, 2, g + 2, n == 0 ? "-" : str.tostring(w / n * 100, "#") + "% (" + f_wilson(w, n) + ")", text_color=cTxt, text_size=size.small, bgcolor=cBg)
         table.cell(perf, 3, g + 2, w == 0 ? "-" : "+" + str.tostring(array.get(stSW, g) / w, "#.##") + "R", text_color=cUp, text_size=size.small, bgcolor=cBg)
         table.cell(perf, 4, g + 2, n - w == 0 ? "-" : "-" + str.tostring(array.get(stSL, g) / (n - w), "#.##") + "R", text_color=cDn, text_size=size.small, bgcolor=cBg)
         table.cell(perf, 5, g + 2, pf, text_color=cTxt, text_size=size.small, bgcolor=cBg)
@@ -1108,5 +1223,5 @@ if barstate.islast and showStats
         table.cell(perf, 6, g + 2, na(ex) ? "-" : (ex >= 0 ? "+" : "") + str.tostring(ex, "#.##") + "R", text_color=na(ex) ? cMute : ex >= 0 ? cUp : cDn, text_size=size.small, bgcolor=cBg)
         table.cell(perf, 7, g + 2, n == 0 ? "-" : str.tostring(array.get(stDD, g), "#.##") + "R", text_color=cTxt, text_size=size.small, bgcolor=cBg)
         table.cell(perf, 8, g + 2, n == 0 ? "-" : str.tostring(array.get(stNet, g), "#,###.##"), text_color=array.get(stNet, g) >= 0 ? cUp : cDn, text_size=size.small, bgcolor=cBg)
-    table.cell(perf, 0, 14, "Targets touched / " + doneWord + ": TP1 " + str.tostring(array.get(tpTouch, 0)) + "/" + str.tostring(array.get(tpFill, 0)) + " · TP2 " + str.tostring(array.get(tpTouch, 1)) + "/" + str.tostring(array.get(tpFill, 1)) + (use3 ? " · TP3 " + str.tostring(array.get(tpTouch, 2)) + "/" + str.tostring(array.get(tpFill, 2)) : "") + (basisWord == "simulated" ? " · stop-first bars " + str.tostring(ambiguousBars) : "") + " · amber = under 30 trades", text_color=cMute, text_size=size.tiny, text_halign=text.align_left, bgcolor=cBg)
+    table.cell(perf, 0, NG + 2, "Settings fingerprint " + fingerprint + " · targets touched/" + doneWord + ": TP1 " + str.tostring(array.get(tpTouch, 0)) + "/" + str.tostring(array.get(tpFill, 0)) + " · TP2 " + str.tostring(array.get(tpTouch, 1)) + "/" + str.tostring(array.get(tpFill, 1)) + (use3 ? " · TP3 " + str.tostring(array.get(tpTouch, 2)) + "/" + str.tostring(array.get(tpFill, 2)) : "") + (basisWord == "simulated" ? " · same-candle stop/target " + str.tostring(ambiguousBars) : "") + " · amber = under 30 trades · Holdout counts as untouched only if settings were frozen before it was viewed", text_color=cMute, text_size=size.tiny, text_halign=text.align_left, bgcolor=cBg)
 // SHARED DISPLAY END

@@ -30,6 +30,7 @@ var bool touched1 = false
 var bool touched2 = false
 var bool touched3 = false
 var bool trigSeen = false
+var bool filled1 = false
 var int submittedBar = na
 var int filledBar = na
 var int lastClosed = na
@@ -46,7 +47,7 @@ var float plannedCash = na
 var int tradeSess = 0
 var bool tradeTrend = false
 var bool tradeHV = false
-var bool tradeOOS = false
+var int tradePeriod = 0
 var string lastExitText = ""
 var string execBlock = ""
 bool entered = false
@@ -71,6 +72,9 @@ f_sendExits() =>
     true
 
 int evSide = side
+float tpPx1 = na
+float tpPx2 = na
+float tpPx3 = na
 if barstate.isconfirmed
     int nowClosed = strategy.closedtrades
     // 1) Execution evidence since the last calculation.
@@ -94,12 +98,16 @@ if barstate.isconfirmed
                 done3 := true
             if xc == "TP1"
                 evTP1 := true
+                filled1 := true
+                tpPx1 := xp
                 f_bump(tpFill, 0)
             else if xc == "TP2"
                 evTP2 := true
+                tpPx2 := xp
                 f_bump(tpFill, 1)
             else if xc == "TP3"
                 evTP3 := true
+                tpPx3 := xp
                 f_bump(tpFill, 2)
             else if xc == "STOP"
                 evStopHit := true
@@ -124,15 +132,19 @@ if barstate.isconfirmed
         pending := false
         side := 0
         lastClosed := bar_index
-    // 3) Which target levels were touched while the position existed (touch is not a fill).
+    // 3) Target touches that certainly happened while the position was open: the position existed
+    // from the candle's open (not a limit filled inside it) and is still open at the close.
+    // A filled tranche always counts as touched. Touches never move stops; only fills do.
     if side != 0 and not pending
-        if (side == 1 ? high >= target1 : low <= target1) and not touched1
+        bool fromOpenS = not (evFill and isLimit and math.abs(fillEntry - open) > syminfo.mintick / 2)
+        bool openNow = strategy.position_size != 0
+        if not touched1 and (done1 and evTP1 or fromOpenS and openNow and (side == 1 ? high >= target1 : low <= target1))
             touched1 := true
             f_bump(tpTouch, 0)
-        if (side == 1 ? high >= target2 : low <= target2) and not touched2
+        if not touched2 and (done2 and evTP2 or fromOpenS and openNow and (side == 1 ? high >= target2 : low <= target2))
             touched2 := true
             f_bump(tpTouch, 1)
-        if use3 and (side == 1 ? high >= target3 : low <= target3) and not touched3
+        if use3 and not touched3 and (done3 and evTP3 or fromOpenS and openNow and (side == 1 ? high >= target3 : low <= target3))
             touched3 := true
             f_bump(tpTouch, 2)
     // 4) Flat again -> the position is complete.
@@ -141,7 +153,7 @@ if barstate.isconfirmed
         strategy.cancel_all()
         float netCash = emuNet - costCash
         float tradeR = netCash / plannedCash
-        f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradeOOS)
+        f_record(tradeR, netCash, side, tradeSess, tradeTrend, tradeHV, tradePeriod)
         dayR += tradeR
         lossStreak := tradeR < 0 ? lossStreak + 1 : 0
         lastExitText := (lastExitText == "" ? "All targets filled." : lastExitText) + " Result " + (tradeR >= 0 ? "+" : "") + str.tostring(tradeR, "#.##") + "R after modeled costs."
@@ -151,7 +163,9 @@ if barstate.isconfirmed
     // 5) Manage the open position: close-based stop updates (tighten only) and exit decisions.
     if side != 0 and not pending and strategy.position_size != 0
         remaining := math.abs(strategy.position_size)
-        trigSeen := trigSeen or touched1
+        // Break-even / trailing start only after the TP1 tranche was FILLED (emulator evidence);
+        // a 1-unit position has no TP1 tranche, so it uses a certain TP1 touch instead.
+        trigSeen := trigSeen or filled1 or (part1 <= 0 and touched1)
         if beOn and trigSeen
             curStop := side == 1 ? math.max(curStop, f_floorTick(fillEntry)) : math.min(curStop, f_ceilTick(fillEntry))
         if trailMode == "ATR" and trigSeen
@@ -170,11 +184,11 @@ if barstate.isconfirmed
     if evFill
         alert(f_json("ENTRY_FILLED", evSide, "emulator_fill", tradeID, base + f_sideWord(evSide) + " filled at " + f_px(fillEntry) + ".", fillEntry, initialStop, target1, target2, target3, initialQty, plannedCash), alert.freq_once_per_bar_close)
     if evTP1
-        alert(f_json("TP1_REACHED", evSide, "emulator_fill", tradeID, base + "TP1 filled at " + f_px(target1) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP1_REACHED", evSide, "emulator_fill", tradeID, base + "TP1 filled at " + f_px(tpPx1) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP2
-        alert(f_json("TP2_REACHED", evSide, "emulator_fill", tradeID, base + "TP2 filled at " + f_px(target2) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP2_REACHED", evSide, "emulator_fill", tradeID, base + "TP2 filled at " + f_px(tpPx2) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evTP3
-        alert(f_json("TP3_REACHED", evSide, "emulator_fill", tradeID, base + "TP3 filled at " + f_px(target3) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
+        alert(f_json("TP3_REACHED", evSide, "emulator_fill", tradeID, base + "TP3 filled at " + f_px(tpPx3) + ".", fillEntry, curStop, target1, target2, target3, remaining, na), alert.freq_once_per_bar_close)
     if evStopHit
         alert(f_json("STOP_HIT", evSide, "emulator_fill", tradeID, base + lastExitText, fillEntry, curStop, target1, target2, target3, 0, na), alert.freq_once_per_bar_close)
     if earlyNow
@@ -214,6 +228,7 @@ if barstate.isconfirmed
         touched2 := false
         touched3 := false
         trigSeen := false
+        filled1 := false
         pending := true
         closing := false
         closingWhy := ""
@@ -228,7 +243,7 @@ if barstate.isconfirmed
         tradeSess := sessCode
         tradeTrend := trending
         tradeHV := hiVol
-        tradeOOS := time >= oosStart
+        tradePeriod := time >= holdStart ? 2 : time >= oosStart ? 1 : 0
         tradeID := syminfo.ticker + "-" + timeframe.period + "-" + str.tostring(time_close)
         dayEntries += 1
         strategy.entry("ENTRY", side == 1 ? strategy.long : strategy.short, qty=initialQty, limit=isLimit ? refEntry : na, comment=tradeName, alert_message=tradeID)
