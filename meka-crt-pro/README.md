@@ -10,6 +10,8 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 | `docs/CRT_RULES.md` | The exact, objective setup rules. |
 | `docs/SETTINGS.md` | Starting settings for Gold (XAUUSD / GC / MGC) and NQ / MNQ. |
 | `docs/TESTING.md` | Verification checklist, backtest protocol, known limitations. |
+| `docs/STATE_MACHINE_AUDIT.md` | Why setups kept invalidating, what was fixed, measured before/after on real gold data. |
+| `tools/replay/` | Python bar-for-bar replay of the engine + no-future-information test. |
 
 ## Installation
 
@@ -34,7 +36,7 @@ python3 tools/build_strategy.py
 
 **Dashboard** rows: Market · 4H CRT · 1H CRT · 15M · 5M · Liquidity · Session · **Status** · **Next** (the exact missing confirmation) · Entry / SL / TP1 / TP2 / Risk while a trade is live.
 
-Status values: `WATCHING RANGE`, `SWEEP IN PROGRESS`, `SETUP FORMING · WATCH LONG/SHORT`, `15M CONFIRMED · WATCH …`, `BUY/SELL CONFIRMED`, `TRADE ACTIVE`, `TP1 HIT · RUNNER ACTIVE`, `TP2 HIT`, `STOP HIT`, `BE STOP`, `EARLY EXIT`, `SETUP INVALIDATED`, `IDLE · NO VALID RANGE`.
+Status values: `WATCHING RANGE`, `SWEEP IN PROGRESS`, `SWEEP CONFIRMED & RECLAIMED · WATCH LONG/SHORT`, `15M CONFIRMED · WATCH …`, `BUY/SELL CONFIRMED`, `TRADE ACTIVE`, `TP1 HIT · RUNNER ACTIVE`, `TP2 HIT`, `STOP HIT`, `BE STOP`, `EARLY EXIT`, and the no-trade endings `SETUP INVALIDATED` (structural), `SETUP CANCELLED · CONFLICT`, `MISSED ENTRY`, `SETUP EXPIRED`, `EXPIRED · SESSION CLOSED`, `SETUP REPLACED`, plus `IDLE · NO VALID RANGE`. The "Last setup" row always shows the latest ending in plain English. Turn on **Diagnostic log** for the last 20.
 
 ## Honesty notes
 

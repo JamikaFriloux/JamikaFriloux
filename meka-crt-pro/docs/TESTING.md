@@ -23,6 +23,29 @@ Use **Bar Replay** on a few days of XAUUSD/GC and NQ.
 - [ ] Reload the chart after a live session. Signals on historical bars are **identical** to what printed live, which shows nothing repaints.
 - [ ] Changing the chart timeframe to 1H shows "CHECK TIMEFRAMES" instead of signals.
 
+## B2. Logic replay (outside TradingView)
+
+`tools/replay/meka_replay.py` is a bar-for-bar Python port of the engine. Use it to measure setup outcomes on any 5M CSV (`Date;Open;High;Low;Close;Volume`, server time = NY+7). `tools/replay/repaint_test.py` checks that truncating history never changes earlier signals.
+
+```bash
+python3 tools/replay/meka_replay.py XAU_5m.csv --start 2024-02-01 --end 2025-02-01 --version both
+```
+
+```bash
+python3 tools/replay/repaint_test.py XAU_5m.csv 2024-02-01 2025-02-01 v2
+```
+
+The results for gold are in `docs/STATE_MACHINE_AUDIT.md`. If you change the Pine rules, change the port too, or its numbers stop describing the indicator.
+
+## B3. Diagnostic mode (inside TradingView)
+
+Turn on **Display → Diagnostic log**. Then step through Bar Replay and check, for each row:
+- [ ] SKIPPED rows name the exact block (4H bias / 50% already reached / no room).
+- [ ] STRUCTURAL rows happen on a bar whose wick touches the dotted **INVALID** line.
+- [ ] MISSED rows happen on a bar touching the dotted **LOCKED 50%** line.
+- [ ] Setups survive the first bar of a new hour / 4H candle. The dashboard's "Locked" row notes "reference candle has rolled".
+- [ ] "SWEEP IN PROGRESS" turns into "SWEEP CONFIRMED & RECLAIMED" only on the first 5M bar after a 15M candle closes back inside.
+
 ## C. Backtesting protocol (strategy)
 
 1. **Split the data before you look at results.** Use `Trade from / Trade until` to choose an in-sample period, for example the oldest 60%. Do all tuning there. Keep the most recent 20–40% **untouched** and run it **once** at the end.

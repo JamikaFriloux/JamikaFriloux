@@ -20,6 +20,7 @@ These are the rules the code runs. Each one acts only on **closed bars**. The de
 3. If it is valid, it **replaces** the active range. CRT HIGH = high, CRT LOW = low, CRT 50% = (high + low) / 2.
 4. If it fails, the previous valid range stays active for up to `rangeMaxAge` [2] more reference candles, then **expires**. The dashboard says "No valid range".
 5. Levels only change when a new **valid** reference candle exists.
+5a. **External boundary rule** (`extLook` [2]): the CRT LOW counts as sell-side liquidity only if it is lower than the lows of the previous N reference candles, and the HIGH only if it is higher than their highs. An internal boundary is still drawn (tagged "internal") but its sweep does not start a setup.
 6. If a level was breached but not yet resolved when its range was replaced, it stays tracked ("retired") until it resolves. A sweep that straddles the hour boundary is not lost.
 
 **Premium / discount:** price ≥ 50% is premium and price < 50% is discount.
@@ -29,9 +30,9 @@ These are the rules the code runs. Each one acts only on **closed bars**. The de
 | State | Condition |
 |---|---|
 | **Untouched** | Not yet traded through. |
-| **Breached (unconfirmed)** | A closed bar trades ≥ `sweepTicks` [1] tick beyond the level. The sweep extreme starts tracking. |
-| **Swept (reclaimed)** | Within `reclaimBars` [6] bars (counting the breach bar), a bar **closes back inside** the level. A wick-and-close on the same bar is an immediate sweep. |
-| **Broken (breakout)** | `acceptBars` [3] consecutive closes beyond the level, or the reclaim window runs out. That level can no longer produce a sweep setup. |
+| **SWEEP IN PROGRESS (breached)** | A closed chart bar trades ≥ `sweepTicks` [1] tick beyond the level. The sweep extreme starts tracking. A chart close back inside shows as "reclaim pending" only. |
+| **SWEEP CONFIRMED & RECLAIMED** | A **completed reclaim-TF candle** that closed after the breach began closes back inside the level, within `reclaimWin15` [2] candles. Reclaim TF [15M close]; alternatives: the reference-TF close (classic CRT: 1H/4H candle 2 closes back inside), or the chart close (the v1 behaviour, with `reclaimBars` [6] / `acceptBars` [3]). |
+| **Broken (breakout)** | The reclaim window ends with closes beyond the level. That level can no longer produce a sweep setup. |
 
 Each level produces **at most one** classification, so the same pool is never labelled twice. Nearby levels from different sources are merged. For example, a PDL within tolerance of the Asia low becomes `PDL + ASIA L`.
 
@@ -49,13 +50,17 @@ A setup is **not created** when:
 * the reclaim candle has already reached the range 50%.
 * a trade is already active, or a same-direction setup is already pending. An **opposite** sweep replaces a pending setup.
 
+Before a reclaimed sweep becomes a setup it is **SKIPPED** (logged, with the reason) if: it is against the 4H bias; price already reached the 50% before the reclaim was confirmed; or `roomCheck` [on] finds no target ≥ minRR even from a retest of the swept level.
+
+**Locked at the reclaim, never re-read:** direction, swept level, sweep extreme, planned stop (extreme ∓ buffer), range H / L / 50%, reference-candle time, breach time. A new 4H/1H candle never ends or changes a setup.
+
 ## 4. State machine
 
 ```
-IDLE → CRT RANGE ACTIVE → LIQUIDITY BREACHED → RECLAIMED (SETUP FORMING)
+IDLE → CRT RANGE ACTIVE → SWEEP IN PROGRESS → SWEEP CONFIRMED & RECLAIMED
      → 15M CONFIRMED → 5M ENTRY CONFIRMED (SIGNAL) → FILLED / TRADE ACTIVE
      → TP1 HIT → TP2 HIT | STOP HIT | BE STOP | EARLY EXIT  → COMPLETE
-pending states → SETUP INVALIDATED (reason shown)
+pending states → STRUCTURAL · CONFLICT · MISSED · EXPIRED · SESSION · REPLACED (plain-English reason)
 ```
 
 ### 15M confirmation (state RECLAIMED → 15M CONFIRMED)
@@ -68,7 +73,7 @@ Only 15M candles that **closed after the breach began** count.
 * Expiry: no confirmation within `confExpiry` [48] chart bars invalidates the setup.
 
 ### 5M entry (state 15M CONFIRMED → SIGNAL)
-On a completed chart candle, at or after 15M confirmation:
+On a completed chart candle, at or after 15M confirmation. **Timestamp-paired** [on]: a 5M structure break that happened after the breach and ≤ `pairBars` [12] bars before the 15M confirmation also completes the 5M side. The signal is still issued only at the close of the bar where both are known, at that bar's price, with every filter below re-checked.
 * **5M structure break**: a close beyond the most recent unbroken 5M swing (`pivL5`/`pivR5` [3/2]).
 * **Retest of 15M break**: the candle wicks to within `retestTol` [0.15 ATR] of the 15M break level and closes back on the correct side in the setup direction.
 * **Momentum candle**: a directional candle closing beyond the prior candle's extreme.
@@ -83,10 +88,15 @@ A trigger is **accepted** only if all of these hold:
 
 If a trigger is rejected, the reason appears on the dashboard and the setup keeps waiting until `entryExpiry` [24] bars.
 
-### Pending invalidation (checked every bar)
-* Price trades through the sweep extreme (a wick by default, or a close if you switch it).
-* Price reaches the CRT 50% before an entry. The move happened without us, so there is no chasing.
-* Expiry, or replacement by an opposite sweep.
+### How a pending setup can end (checked every bar, in this order)
+| Category | Condition |
+|---|---|
+| STRUCTURAL | Price reaches the **planned stop** (sweep extreme ∓ buffer). This is the same level the trade would use, so the trade would have lost. |
+| CONFLICT | Before 15M confirmation, the 15M prints an opposite-direction structure break after the reclaim [on]. |
+| MISSED | Price reaches the locked CRT 50% before an entry. The reason says whether this happened before or after 15M. |
+| EXPIRED | No 15M confirmation within `confExpiry` [48] bars, or no valid 5M entry within `entryExpiry` [24] bars (the last rejection reason is shown). |
+| SESSION | Expired, and the valid triggers occurred only outside the entry windows. |
+| REPLACED | An opposite qualifying sweep took over. |
 
 ## 5. Stops and targets
 
