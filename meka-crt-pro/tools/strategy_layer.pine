@@ -1,49 +1,124 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STRATEGY EXECUTION LAYER — driven 1:1 by the indicator engine's events above.
+//  One model is traded per run, so Model A and Model C are tested independently.
 //  Entry: market order on the signal bar close → filled by TradingView at the
 //  NEXT bar's open (same assumption as the indicator's simulated fill).
 //  Exits: native stop / limit orders at the engine's SL / TP1 / TP2.
 // ═══════════════════════════════════════════════════════════════════════════════
 string G_ST = "⑬ Strategy (backtest only)"
-string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity"], group = G_ST)
-float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the 50% TP1 partial is possible.")
+string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range"], group = G_ST)
+string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity", "Risk cash per trade"], group = G_ST)
+float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the TP1 partial is possible.")
 float  riskPct  = input.float(0.5, "Risk % of equity per trade", minval = 0.01, maxval = 10, step = 0.05, group = G_ST)
+float  riskCash = input.float(500, "Risk cash per trade", minval = 1, group = G_ST, tooltip = "Quantity = risk cash ÷ (stop distance in points × syminfo.pointvalue), rounded DOWN to the quantity step. Never inferred from P&L.")
 float  qtyStep  = input.float(1, "Quantity step (1 = whole contracts)", minval = 0.000001, group = G_ST, tooltip = "Futures: 1. Spot / CFD gold: broker lot step in units (e.g. 1 oz). FX: 1000 units, etc.")
 float  maxQty   = input.float(50, "Maximum quantity", minval = 0.000001, group = G_ST)
 int    fromDate = input.time(timestamp("2022-01-01T00:00:00"), "Trade from", group = G_ST)
 int    toDate   = input.time(timestamp("2099-12-31T00:00:00"), "Trade until", group = G_ST, tooltip = "Use this to hold back an UNTOUCHED out-of-sample period while tuning.")
+bool   showStats = input.bool(true, "Show results table (by direction / session)", group = G_ST)
 
 f_floorStep(float q, float st) => math.floor(q / st + 1e-9) * st
 
+bool useC   = stModel == "Model C — 15M double-range"
+Setup T     = useC ? TC : S
+bool sigL   = useC ? evCBuy : evBuy
+bool sigS   = useC ? evCSell : evSell
+bool mTP1   = useC ? evCTP1 : evTP1
+bool mEarly = useC ? evCEarly : evEarly
+bool mDone  = useC ? evCDone : evDone
+string mTag = useC ? "C" : "A"
 bool inDates = time >= fromDate and time <= toDate
+
+var array<float> stRisk = array.new<float>()   // planned risk (account currency) per position, in entry order
 
 if barstate.isconfirmed
     // New signal → entry + bracket
-    if (evBuy or evSell) and inDates and strategy.position_size == 0
-        float riskPts = math.abs(S.entryRef - S.stop)
-        float rawQty  = sizeMode == "Fixed quantity" ? fixedQty : (strategy.equity * riskPct / 100) / (riskPts * syminfo.pointvalue)
+    if (sigL or sigS) and inDates and strategy.position_size == 0
+        float riskPts = math.abs(T.entryRef - T.stop)
+        float perUnit = riskPts * syminfo.pointvalue
+        float rawQty  = sizeMode == "Fixed quantity" ? fixedQty : sizeMode == "Risk % of equity" ? (strategy.equity * riskPct / 100) / perUnit : riskCash / perUnit
         float q  = math.min(f_floorStep(rawQty, qtyStep), maxQty)
         float q1 = f_floorStep(q * tp1Pct / 100, qtyStep)
         if q > 0
-            string eid = evBuy ? "MEKA L" : "MEKA S"
-            strategy.entry(eid, evBuy ? strategy.long : strategy.short, qty = q, comment = evBuy ? "BUY" : "SELL")
+            string eid = mTag + (sigL ? " L" : " S")
+            strategy.entry(eid, sigL ? strategy.long : strategy.short, qty = q, comment = mTag + (sigL ? " BUY" : " SELL"))
+            stRisk.push(perUnit * q)
             if q1 > 0 and q1 < q
-                strategy.exit(eid + " TP1", eid, qty = q1, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
-                strategy.exit(eid + " TP2", eid, qty = q - q1, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+                strategy.exit(eid + " TP1", eid, qty = q1, stop = T.stop, limit = T.tp1, comment_profit = "TP1", comment_loss = "SL")
+                strategy.exit(eid + " TP2", eid, qty = q - q1, stop = T.stop, limit = T.tp2, comment_profit = "TP2", comment_loss = "SL")
             else if q1 >= q
-                strategy.exit(eid + " TP1", eid, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
+                strategy.exit(eid + " TP1", eid, stop = T.stop, limit = T.tp1, comment_profit = "TP1", comment_loss = "SL")
             else
-                strategy.exit(eid + " TP2", eid, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+                strategy.exit(eid + " TP2", eid, stop = T.stop, limit = T.tp2, comment_profit = "TP2", comment_loss = "SL")
 
     // Breakeven after TP1 (only if enabled in the engine inputs)
-    if evTP1 and useBE and strategy.position_size != 0
-        string bid = strategy.position_size > 0 ? "MEKA L" : "MEKA S"
-        strategy.exit(bid + " TP2", bid, qty = math.abs(strategy.position_size), stop = strategy.position_avg_price, limit = S.tp2, comment_profit = "TP2", comment_loss = "BE")
+    if mTP1 and useBE and strategy.position_size != 0
+        string bid = mTag + (strategy.position_size > 0 ? " L" : " S")
+        strategy.exit(bid + " TP2", bid, qty = math.abs(strategy.position_size), stop = strategy.position_avg_price, limit = T.tp2, comment_profit = "TP2", comment_loss = "BE")
 
     // Time-based early exit at this bar's close
-    if evEarly and strategy.position_size != 0
+    if mEarly and strategy.position_size != 0
         strategy.close_all(comment = "EARLY EXIT", immediately = true)
 
     // Keep broker emulator and engine in lock-step (see docs: intrabar ordering)
-    if evDone and not evEarly and strategy.position_size != 0
+    if mDone and not mEarly and strategy.position_size != 0
         strategy.close_all(comment = "SYNC", immediately = true)
+
+// ───────────────────────────── RESULTS TABLE (measured by TradingView, nothing assumed) ─────────────────────────────
+// Partial exits create several closed-trade records per position; they are grouped by entry time.
+f_sessIdx(int t) =>
+    f_inSessT(t, nySess, nyTZ) ? 4 : f_inSessT(t, lonSess, lonTZ) ? 5 : f_inSessT(t, asiaSess, asiaTZ) ? 6 : 7
+
+var table stT = table.new(position.bottom_right, 9, 10, bgcolor = color.new(#0B0F17, 10), frame_color = color.new(C_GOLD, 50), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
+if barstate.islastconfirmedhistory and showStats or barstate.islast and showStats
+    // groups: 0 ALL · 1 LONG · 2 SHORT · 3 (unused) · 4 New York · 5 London · 6 Asia · 7 Other
+    array<float> gN  = array.new<float>(8, 0.0)
+    array<float> gW  = array.new<float>(8, 0.0)
+    array<float> gGP = array.new<float>(8, 0.0)
+    array<float> gGL = array.new<float>(8, 0.0)
+    array<float> gR  = array.new<float>(8, 0.0)
+    array<float> gRn = array.new<float>(8, 0.0)
+    int nCT = strategy.closedtrades
+    int pos = -1
+    int lastET = na
+    float pnl = 0.0
+    int pDir = 0
+    int pET = na
+    for i = 0 to nCT
+        bool flush = i == nCT or (i < nCT and strategy.closedtrades.entry_time(i) != lastET)
+        if flush and pos >= 0
+            float rr = pos < stRisk.size() ? pnl / stRisk.get(pos) : na
+            for g in array.from(0, pDir == 1 ? 1 : 2, f_sessIdx(pET))
+                gN.set(g, gN.get(g) + 1)
+                gW.set(g, gW.get(g) + (pnl > 0 ? 1 : 0))
+                gGP.set(g, gGP.get(g) + math.max(pnl, 0))
+                gGL.set(g, gGL.get(g) + math.min(pnl, 0))
+                if not na(rr)
+                    gR.set(g, gR.get(g) + rr)
+                    gRn.set(g, gRn.get(g) + 1)
+        if i < nCT
+            int et = strategy.closedtrades.entry_time(i)
+            if et != lastET
+                pos += 1
+                lastET := et
+                pnl := 0.0
+                pET := et
+                pDir := strategy.closedtrades.size(i) > 0 ? 1 : -1
+            pnl += strategy.closedtrades.profit(i)
+    table.clear(stT, 0, 0, 8, 9)
+    array<string> hdr = array.from("Model " + mTag + " · " + syminfo.ticker, "Trades", "Win %", "PF", "Net", "Avg win", "Avg loss", "Expect.", "Avg R")
+    for [c, h] in hdr
+        table.cell(stT, c, 0, h, text_color = C_GOLD, text_size = size.tiny)
+    array<string> names = array.from("ALL", "LONG", "SHORT", "", "New York", "London", "Asia", "Other")
+    int rw = 1
+    for g = 0 to 7
+        if g != 3 and gN.get(g) > 0
+            float n = gN.get(g)
+            float w = gW.get(g)
+            float gp = gGP.get(g)
+            float gl = gGL.get(g)
+            array<string> vals = array.from(names.get(g), str.tostring(n, "#"), str.tostring(100 * w / n, "#.0"), gl < 0 ? str.tostring(gp / -gl, "#.00") : "—", str.tostring(gp + gl, "#,##0"), w > 0 ? str.tostring(gp / w, "#,##0") : "—", n - w > 0 ? str.tostring(gl / (n - w), "#,##0") : "—", str.tostring((gp + gl) / n, "#,##0.0"), gRn.get(g) > 0 ? str.tostring(gR.get(g) / gRn.get(g), "#.00") : "—")
+            for [c, v] in vals
+                table.cell(stT, c, rw, v, text_color = g == 0 ? color.white : color.new(color.white, 25), text_size = size.tiny)
+            rw += 1
+    table.cell(stT, 0, rw, "Max DD " + str.tostring(strategy.max_drawdown, "#,##0") + " " + syminfo.currency + " · tick " + str.tostring(syminfo.mintick) + " · " + str.tostring(syminfo.pointvalue) + "/pt · commission & slippage = Properties tab", text_color = C_MUTED, text_size = size.tiny)

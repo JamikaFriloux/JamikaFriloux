@@ -32,6 +32,8 @@ strategy("MEKA CRT PRO — Strategy", shorttitle = "MEKA CRT PRO S", overlay = t
 //                internal liquidity / R); TP2 = opposite CRT boundary (or
 //                external liquidity / R). Stop is assumed first when a bar
 //                touches both stop and target.
+//  The rules above are MODEL A. MODEL C (15M double-range confirmation) is an
+//  independent state machine further down — rules in docs/MODEL_C.md.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ───────────────────────────── INPUTS ─────────────────────────────
@@ -157,6 +159,41 @@ color  cEntry = input.color(#2F80ED, "Entry", inline = "c4", group = G_COL)
 color  cTP    = input.color(#00E676, "Targets", inline = "c4", group = G_COL)
 color  cSL    = input.color(#FF5252, "Stop", inline = "c4", group = G_COL)
 
+string G_MC = "⑭ Model C — 15M double-range confirmation"
+bool   cOn        = input.bool(true, "Enable Model C", group = G_MC)
+string cRefMode   = input.string("Session-opening pair", "Reference pair selection", options = ["Session-opening pair", "First pair after 15M structure event", "Rolling consecutive pair"], group = G_MC, tooltip = "Session-opening pair: the first two completed 15M candles of each enabled session open. Structure event: the two 15M candles that follow a confirmed 15M MSS/BOS. Rolling: consecutive pairs that never overlap a previously used pair or its ending candle.")
+bool   cOpenAsia  = input.bool(false, "Asia open (Asia TZ)", inline = "co1", group = G_MC)
+string cOpenAsiaT = input.string("0900", "", inline = "co1", group = G_MC)
+bool   cOpenLon   = input.bool(true, "London open (London TZ)", inline = "co2", group = G_MC)
+string cOpenLonT  = input.string("0800", "", inline = "co2", group = G_MC)
+bool   cOpenNy    = input.bool(true, "New York open (NY TZ)", inline = "co3", group = G_MC)
+string cOpenNyT   = input.string("0930", "", inline = "co3", group = G_MC)
+int    cBufTk     = input.int(0, "Breakout buffer beyond the boundary (ticks)", minval = 0, group = G_MC)
+string cSweepRule = input.string("Strict: any trade beyond", "Disqualifying opposite-boundary sweep", options = ["Strict: any trade beyond", "Sweep: trade beyond + 15M close back inside", "Off"], group = G_MC, tooltip = "For a SHORT: Strict = any 15M high above the upper boundary after the pair disqualifies the short side. Sweep = a high above the upper boundary followed (same or later 15M candle) by a 15M close back at/below it. Mirror rules for a LONG.")
+int    cSweepWin  = input.int(0, "Sweep observation window (15M candles, 0 = whole setup life)", minval = 0, maxval = 48, group = G_MC)
+int    cExpiry    = input.int(8, "Expire after N 15M candles without a breakout", minval = 1, maxval = 96, group = G_MC)
+string cBiasMode  = input.string("4H + 1H", "Directional bias filter", options = ["Off", "4H only", "1H only", "4H + 1H"], group = G_MC)
+string cConflict  = input.string("Block trade", "When 4H and 1H disagree", options = ["Block trade", "Follow 4H", "Follow 1H"], group = G_MC)
+int    cEmaLen    = input.int(50, "Bias = last completed close vs EMA(N) of that TF", minval = 2, group = G_MC)
+bool   cStructF   = input.bool(false, "Require 15M market structure in trade direction", group = G_MC)
+bool   cSesAsia   = input.bool(true, "Confirm in Asia session", inline = "cs", group = G_MC)
+bool   cSesLon    = input.bool(true, "London", inline = "cs", group = G_MC)
+bool   cSesNy     = input.bool(true, "New York", inline = "cs", group = G_MC)
+bool   cSesAny    = input.bool(false, "Any time (no session filter — raw-model test)", group = G_MC)
+float  cDispMin   = input.float(0.0, "Min breakout body (× 15M ATR14, 0 = off)", minval = 0.0, step = 0.1, group = G_MC)
+float  cVolMult   = input.float(0.0, "Min breakout volume (× 20-candle avg, 0 = off)", minval = 0.0, step = 0.1, group = G_MC)
+string cStopMode  = input.string("Opposite boundary", "Stop", options = ["Opposite boundary", "Recent confirmed 15M swing", "ATR"], group = G_MC)
+float  cStopATR   = input.float(1.5, "ATR stop (× 15M ATR14)", minval = 0.2, step = 0.1, group = G_MC)
+int    cStopTk    = input.int(2, "Stop buffer (ticks)", minval = 0, group = G_MC)
+float  cMaxRiskATR = input.float(3.0, "Max stop distance (× 15M ATR14)", minval = 0.5, step = 0.25, group = G_MC)
+float  cTp1R      = input.float(1.0, "TP1 (R)", minval = 0.2, step = 0.1, group = G_MC)
+float  cTp2R      = input.float(2.0, "TP2 (R)", minval = 0.5, step = 0.1, group = G_MC)
+bool   cLiqTP     = input.bool(false, "TP2 = nearest untouched liquidity pool (needs ≥ min R:R)", group = G_MC)
+float  cMinRR     = input.float(1.5, "Minimum R:R to TP2", minval = 0.5, step = 0.1, group = G_MC)
+float  cRiskCash  = input.float(500, "Risk budget per trade (sizing shown on dashboard)", minval = 1, group = G_MC)
+bool   cShowBnd   = input.bool(true, "Show combined upper / lower boundaries", group = G_MC)
+color  cCol       = input.color(#B388FF, "Model C colour", group = G_MC)
+
 color C_CLEAR = color.new(color.black, 100)
 color C_GOLD  = #E6B422
 color C_MUTED = #8B95A5
@@ -215,6 +252,7 @@ int    rcPool    = reclaimMode == "Chart candle close (v1 behaviour)" ? 0 : 1
 int    rcCRT1    = reclaimMode == "Reference-TF candle close (classic CRT)" ? 2 : rcPool
 int    rcCRT4    = reclaimMode == "Reference-TF candle close (classic CRT)" ? 3 : rcPool
 int    extK      = math.max(extLook, 1)
+int    c15Ms     = timeframe.in_seconds(tfConf) * 1000
 int    labOff    = 3 * timeframe.in_seconds() * 1000
 int    dayMs     = 86400000
 int    keepResolved = 144
@@ -322,6 +360,33 @@ type Setup
     array<line>  lines
     array<label> labels
     array<box>   boxes
+
+// Model C reference pair. Boundaries are frozen at lock and never move.
+// state: 0 waiting · 1 first candle captured · 2 reference locked / watching
+//        7 confirmed (trade issued) · 9 invalidated · 10 expired · 11 missed entry
+type CRef
+    int    state = 0
+    string src = ""
+    float  h1
+    float  l1
+    float  h2
+    float  l2
+    float  up
+    float  lo
+    int    t1
+    int    t2
+    int    nSeen = 0
+    bool   upHit = false
+    bool   dnHit = false
+    bool   bearDQ = false
+    bool   bullDQ = false
+    string bearWhy = ""
+    string bullWhy = ""
+    string endWhy = ""
+    int    endT
+    array<line> lns
+    label  lbU
+    label  lbL
 
 // ───────────────────────────── LIQUIDITY HELPERS ─────────────────────────────
 f_tag(Liq l) =>
@@ -588,14 +653,15 @@ f_sweepLabel(array<label> q, Liq l, bool star) =>
 
 f_alert(string ev, int d, float lvl, float en, float sl, float t1, float t2, string note) =>
     string ds = d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE"
+    string mdl = str.startswith(ev, "C_") ? "C" : "A"
     string msg = ""
     if alJSON
-        msg := "{\"source\":\"MEKA CRT PRO\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"timeframe\":\"" + timeframe.period + "\",\"event\":\"" + ev + "\",\"direction\":\"" + ds + "\",\"close\":" + str.tostring(close, format.mintick) + ",\"level\":" + (na(lvl) ? "null" : str.tostring(lvl, format.mintick)) + ",\"entry\":" + (na(en) ? "null" : str.tostring(en, format.mintick)) + ",\"sl\":" + (na(sl) ? "null" : str.tostring(sl, format.mintick)) + ",\"tp1\":" + (na(t1) ? "null" : str.tostring(t1, format.mintick)) + ",\"tp2\":" + (na(t2) ? "null" : str.tostring(t2, format.mintick)) + ",\"note\":\"" + note + "\",\"bar_time\":" + str.tostring(time) + "}"
+        msg := "{\"source\":\"MEKA CRT PRO\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"timeframe\":\"" + timeframe.period + "\",\"model\":\"" + mdl + "\",\"event\":\"" + ev + "\",\"direction\":\"" + ds + "\",\"close\":" + str.tostring(close, format.mintick) + ",\"level\":" + (na(lvl) ? "null" : str.tostring(lvl, format.mintick)) + ",\"entry\":" + (na(en) ? "null" : str.tostring(en, format.mintick)) + ",\"sl\":" + (na(sl) ? "null" : str.tostring(sl, format.mintick)) + ",\"tp1\":" + (na(t1) ? "null" : str.tostring(t1, format.mintick)) + ",\"tp2\":" + (na(t2) ? "null" : str.tostring(t2, format.mintick)) + ",\"note\":\"" + note + "\",\"bar_time\":" + str.tostring(time) + "}"
     else
-        msg := "MEKA CRT PRO | " + syminfo.ticker + " " + timeframe.period + " | " + ev + " " + ds + " | close " + f_p(close) + (na(lvl) ? "" : " | level " + f_p(lvl)) + (na(en) ? "" : " | entry " + f_p(en)) + (na(sl) ? "" : " | SL " + f_p(sl)) + (na(t1) ? "" : " | TP1 " + f_p(t1)) + (na(t2) ? "" : " | TP2 " + f_p(t2)) + (note == "" ? "" : " | " + note)
+        msg := "MEKA CRT PRO [" + mdl + "] | " + syminfo.ticker + " " + timeframe.period + " | " + ev + " " + ds + " | close " + f_p(close) + (na(lvl) ? "" : " | level " + f_p(lvl)) + (na(en) ? "" : " | entry " + f_p(en)) + (na(sl) ? "" : " | SL " + f_p(sl)) + (na(t1) ? "" : " | TP1 " + f_p(t1)) + (na(t2) ? "" : " | TP2 " + f_p(t2)) + (note == "" ? "" : " | " + note)
     alert(msg, alert.freq_once_per_bar_close)
 
-f_tradeDraw(Setup s) =>
+f_tradeDraw(Setup s, string tag) =>
     int x1 = bar_index
     int x2 = bar_index + 6
     line lE = line.new(x1, s.entryRef, x2, s.entryRef, color = cEntry, width = 2)
@@ -603,10 +669,10 @@ f_tradeDraw(Setup s) =>
     line lA = line.new(x1, s.tp1, x2, s.tp1, color = cTP, width = 1, style = line.style_dashed)
     line lB = line.new(x1, s.tp2, x2, s.tp2, color = cTP, width = 2)
     s.lines := array.from(lE, lS, lA, lB)
-    label bE = label.new(x2, s.entryRef, "ENTRY " + f_p(s.entryRef) + " (signal)", style = label.style_label_left, color = C_CLEAR, textcolor = cEntry, size = size.small)
-    label bS = label.new(x2, s.stop, "SL " + f_p(s.stop), style = label.style_label_left, color = C_CLEAR, textcolor = cSL, size = size.small)
-    label bA = label.new(x2, s.tp1, "TP1 " + f_p(s.tp1) + " · " + s.tp1Src, style = label.style_label_left, color = C_CLEAR, textcolor = cTP, size = size.small)
-    label bB = label.new(x2, s.tp2, "TP2 " + f_p(s.tp2) + " · " + s.tp2Src, style = label.style_label_left, color = C_CLEAR, textcolor = cTP, size = size.small)
+    label bE = label.new(x2, s.entryRef, tag + "ENTRY " + f_p(s.entryRef) + " (signal)", style = label.style_label_left, color = C_CLEAR, textcolor = cEntry, size = size.small)
+    label bS = label.new(x2, s.stop, tag + "SL " + f_p(s.stop), style = label.style_label_left, color = C_CLEAR, textcolor = cSL, size = size.small)
+    label bA = label.new(x2, s.tp1, tag + "TP1 " + f_p(s.tp1) + " · " + s.tp1Src, style = label.style_label_left, color = C_CLEAR, textcolor = cTP, size = size.small)
+    label bB = label.new(x2, s.tp2, tag + "TP2 " + f_p(s.tp2) + " · " + s.tp2Src, style = label.style_label_left, color = C_CLEAR, textcolor = cTP, size = size.small)
     s.labels := array.from(bE, bS, bA, bB)
     box zr = box.new(x1, math.max(s.entryRef, s.stop), x2, math.min(s.entryRef, s.stop), border_color = C_CLEAR, bgcolor = color.new(cSL, 88))
     box zw = box.new(x1, math.max(s.entryRef, s.tp2), x2, math.min(s.entryRef, s.tp2), border_color = C_CLEAR, bgcolor = color.new(cTP, 90))
@@ -715,6 +781,87 @@ f_invalidate(Setup s, string cat, string why, array<label> q) =>
     if alMgmt
         f_alert("SETUP_" + cat, s.dir, s.level, na, na, na, na, why)
 
+// ── Shared trade lifecycle (Model A and Model C use the SAME fill + exit rules)
+// mdl = "A" or "C". Event names for Model A are unchanged; Model C events get a "C_" prefix.
+f_fill(Setup s, array<label> q, string mdl) =>
+    string pfx = mdl == "A" ? "" : mdl + " "
+    s.entry := open
+    s.fillBar := bar_index
+    s.state := 6
+    if not na(s.lines) and s.lines.size() > 0
+        line.set_y1(s.lines.get(0), open)
+        line.set_y2(s.lines.get(0), open)
+        label.set_y(s.labels.get(0), open)
+        label.set_text(s.labels.get(0), pfx + "ENTRY " + f_p(open) + " (filled)")
+        if s.dir == 1
+            box.set_top(s.boxes.get(0), open)
+            box.set_bottom(s.boxes.get(1), open)
+        else
+            box.set_bottom(s.boxes.get(0), open)
+            box.set_top(s.boxes.get(1), open)
+    f_evLabel(q, bar_index, open, pfx + "FILL " + f_p(open), color.new(cEntry, 25), color.white, label.style_label_left, size.tiny, "Simulated fill at this bar's open (signal was on the previous closed bar)", yloc.price)
+    if alSig
+        f_alert((mdl == "A" ? "" : "C_") + "ENTRY_FILLED_SIM", s.dir, na, open, s.stop, s.tp1, s.tp2, "Model " + mdl + " simulated fill at bar open")
+
+// Conservative intrabar order: STOP first. Returns [outcome ("" while open), tp1 hit this bar, stop hit].
+f_manage(Setup s, array<label> q, string mdl) =>
+    string pfx = mdl == "A" ? "" : mdl + " "
+    string epf = mdl == "A" ? "" : "C_"
+    int dP = s.dir
+    string outc = ""
+    bool hitT1 = false
+    bool stopH = false
+    bool hitStop = dP == 1 ? low <= s.stop : high >= s.stop
+    if hitStop
+        float xPx = dP == 1 ? math.min(open, s.stop) : math.max(open, s.stop)
+        float rLeg = dP * (xPx - s.entry) / s.riskRef
+        s.resultR := s.tp1Done ? s.resultR + (1 - w1) * rLeg : rLeg
+        outc := s.tp1Done and s.beOn ? "BE STOP" : "STOP HIT"
+        stopH := true
+    else
+        hitT1 := not s.tp1Done and (dP == 1 ? high >= s.tp1 : low <= s.tp1)
+        if hitT1
+            s.tp1Done := true
+            s.resultR := w1 * dP * (s.tp1 - s.entry) / s.riskRef
+            if not na(s.labels) and s.labels.size() > 2
+                label.set_text(s.labels.get(2), pfx + "TP1 ✓ " + f_p(s.tp1))
+            f_evLabel(q, bar_index, s.tp1, pfx + "TP1 HIT", color.new(cTP, 20), color.black, dP == 1 ? label.style_label_down : label.style_label_up, size.small, "Partial " + str.tostring(tp1Pct) + "% closed at " + f_p(s.tp1), yloc.price)
+            if alMgmt
+                f_alert(epf + "TP1_HIT", dP, s.tp1, s.entry, s.stop, s.tp1, s.tp2, "")
+            if w1 >= 1.0
+                outc := "TP1 HIT"
+        if outc == "" and s.tp1Done and (dP == 1 ? high >= s.tp2 : low <= s.tp2)
+            s.resultR := s.resultR + (1 - w1) * dP * (s.tp2 - s.entry) / s.riskRef
+            outc := "TP2 HIT"
+        if outc == "" and maxBars > 0 and bar_index - s.fillBar + 1 >= maxBars
+            float rE = dP * (close - s.entry) / s.riskRef
+            s.resultR := s.tp1Done ? s.resultR + (1 - w1) * rE : rE
+            outc := "EARLY EXIT"
+        if hitT1 and useBE and outc == ""
+            s.beOn := true
+            s.stop := s.entry
+            if not na(s.lines) and s.lines.size() > 1
+                line.set_y1(s.lines.get(1), s.entry)
+                line.set_y2(s.lines.get(1), s.entry)
+                label.set_y(s.labels.get(1), s.entry)
+                label.set_text(s.labels.get(1), pfx + "SL → BE " + f_p(s.entry))
+    if outc != ""
+        s.state := 8
+        s.outcome := outc
+        s.doneBar := bar_index
+        f_tradeExtend(s, bar_index)
+        bool isWin = s.resultR > 0
+        float yO = outc == "STOP HIT" or outc == "BE STOP" ? s.stop : outc == "EARLY EXIT" ? close : outc == "TP1 HIT" ? s.tp1 : s.tp2
+        bool towardTP = outc == "TP2 HIT" or outc == "TP1 HIT"
+        string stO = (dP == 1) == towardTP ? label.style_label_down : label.style_label_up
+        f_evLabel(q, bar_index, yO, pfx + outc + " " + (s.resultR >= 0 ? "+" : "") + f_r(s.resultR) + "R", color.new(isWin ? cTP : outc == "BE STOP" ? C_GREY : cSL, 15), isWin ? color.black : color.white, stO, size.small, "Simulated result incl. " + str.tostring(tp1Pct) + "% partial at TP1", yloc.price)
+        f_log(f_desc(s), "TRADE", outc + " " + (s.resultR >= 0 ? "+" : "") + f_r(s.resultR) + "R (simulated)")
+        if alMgmt
+            f_alert(epf + (outc == "TP2 HIT" ? "TP2_HIT" : outc == "TP1 HIT" ? "TP1_FULL_EXIT" : outc == "EARLY EXIT" ? "EARLY_EXIT" : "STOP_HIT"), dP, yO, s.entry, s.stop, s.tp1, s.tp2, "result " + f_r(s.resultR) + "R")
+    else
+        f_tradeExtend(s, bar_index + 6)
+    [outc, hitT1, stopH]
+
 // Session high/low tracker (must be called on every bar).
 f_sess(bool inS) =>
     var float sH = na
@@ -737,6 +884,7 @@ f_sess(bool inS) =>
         dT := sT
         ended := true
     [sH, sL, dH, dL, dT, ended]
+
 
 // 15M market-structure engine. Runs INSIDE request.security on the confirmation TF.
 // Every returned value is shifted [1] → with lookahead_on this yields only the last
@@ -807,6 +955,21 @@ f_struct(int L, int R, float dm) =>
 
 [c15C, c15TC] = request.security(syminfo.tickerid, tfConf, [close[1], time_close[1]], lookahead = barmerge.lookahead_on)
 
+// ── Model C: completed 15M candles. TWO deliberately different requests:
+//  (a) lookahead_OFF, read ONLY on the confirmed chart bar whose close equals the 15M close
+//      (time_close == time_close(tfConf)). At that instant the 15M candle is complete, so its
+//      values are final on historical AND realtime bars → signal at the true 15M close.
+//  (b) expr[1] + lookahead_on = the previous completed 15M candle. Used only as a fallback when
+//      (a) was skipped (e.g. a missing chart bar). Each candle is processed exactly once (by time).
+[q15O, q15H, q15L, q15C, q15T, q15V, q15ATR, q15VA] = request.security(syminfo.tickerid, tfConf, [open, high, low, close, time, volume, ta.atr(14), ta.sma(volume, 20)], lookahead = barmerge.lookahead_off)
+[p15O, p15H, p15L, p15C, p15T, p15V, p15ATR, p15VA] = request.security(syminfo.tickerid, tfConf, [open[1], high[1], low[1], close[1], time[1], volume[1], ta.atr(14)[1], ta.sma(volume, 20)[1]], lookahead = barmerge.lookahead_on)
+// Directional bias: last COMPLETED 4H / 1H close vs that TF's EMA (non-repainting)
+[b4C, b4E] = request.security(syminfo.tickerid, tfHigh, [close[1], ta.ema(close, cEmaLen)[1]], lookahead = barmerge.lookahead_on)
+[b1C, b1E] = request.security(syminfo.tickerid, tfLow, [close[1], ta.ema(close, cEmaLen)[1]], lookahead = barmerge.lookahead_on)
+int  cBias4 = na(b4E) ? 0 : b4C > b4E ? 1 : b4C < b4E ? -1 : 0
+int  cBias1 = na(b1E) ? 0 : b1C > b1E ? 1 : b1C < b1E ? -1 : 0
+bool c15Last = time_close == time_close(tfConf)
+
 bool h4New   = not na(h4T) and (na(h4T[1]) or h4T != h4T[1])
 bool c15New  = not na(c15TC) and (na(c15TC[1]) or c15TC != c15TC[1])
 bool h1New   = not na(h1T) and (na(h1T[1]) or h1T != h1T[1])
@@ -816,6 +979,105 @@ bool swHNew  = not na(c15SwHT) and (na(c15SwHT[1]) or c15SwHT != c15SwHT[1])
 bool swLNew  = not na(c15SwLT) and (na(c15SwLT[1]) or c15SwLT != c15SwLT[1])
 bool mBullNew = not na(c15BullT) and (na(c15BullT[1]) or c15BullT != c15BullT[1])
 bool mBearNew = not na(c15BearT) and (na(c15BearT[1]) or c15BearT != c15BearT[1])
+
+// ───────────────────────────── MODEL C HELPERS ─────────────────────────────
+f_hhmm(int t, string tz) => hour(t, tz) * 100 + minute(t, tz)
+f_fmtT(int t) => str.format_time(t, "MM-dd HH:mm", syminfo.timezone)
+
+// Is open time `t` inside session "HHMM-HHMM" in time zone `tz`? (DST handled by the IANA zone)
+f_inSessT(int t, string sess, string tz) =>
+    int a = int(str.tonumber(str.substring(sess, 0, 4)))
+    int b = int(str.tonumber(str.substring(sess, 5, 9)))
+    int m = f_hhmm(t, tz)
+    a < b ? (m >= a and m < b) : (m >= a or m < b)
+
+// Name of the session whose OPEN candle starts at `t`, or "".
+f_cOpen(int t) =>
+    string nm = ""
+    if cOpenNy and f_hhmm(t, nyTZ) == int(str.tonumber(cOpenNyT))
+        nm := "NY open"
+    else if cOpenLon and f_hhmm(t, lonTZ) == int(str.tonumber(cOpenLonT))
+        nm := "London open"
+    else if cOpenAsia and f_hhmm(t, asiaTZ) == int(str.tonumber(cOpenAsiaT))
+        nm := "Asia open"
+    nm
+
+// Effective bias for Model C after the conflict policy. Returns [bias, conflict, text].
+f_cBias() =>
+    bool conflict = cBias4 != cBias1
+    int eff = cBiasMode == "4H only" ? cBias4 : cBiasMode == "1H only" ? cBias1 : not conflict ? cBias4 : cConflict == "Follow 4H" ? cBias4 : cConflict == "Follow 1H" ? cBias1 : 0
+    string a4 = cBias4 == 1 ? "↑" : cBias4 == -1 ? "↓" : "–"
+    string a1 = cBias1 == 1 ? "↑" : cBias1 == -1 ? "↓" : "–"
+    string txt = cBiasMode == "Off" ? "bias filter OFF (" + n4 + " " + a4 + " · " + n1 + " " + a1 + ")" : n4 + " " + a4 + " · " + n1 + " " + a1 + (cBiasMode == "4H + 1H" ? (conflict ? " → CONFLICT (" + cConflict + ")" : " → aligned") : "")
+    [eff, conflict, txt]
+
+// Context filters for a confirmed breakout. Returns "" when it passes, else the plain-English reason.
+f_cFilter(int d, int ct, float kO, float kC, float kAtr, float kV, float kVA) =>
+    string why = ""
+    bool inS = cSesAny or (cSesAsia and f_inSessT(ct, asiaSess, asiaTZ)) or (cSesLon and f_inSessT(ct, lonSess, lonTZ)) or (cSesNy and f_inSessT(ct, nySess, nyTZ))
+    [eff, conflict, btxt] = f_cBias()
+    if not inS
+        why := "the breakout candle (" + f_fmtT(ct) + ") is outside the enabled sessions"
+    else if cBiasMode == "4H + 1H" and conflict and cConflict == "Block trade"
+        why := n4 + " and " + n1 + " bias disagree (" + btxt + ")"
+    else if cBiasMode != "Off" and eff != d
+        why := "it is against the directional bias (" + btxt + ")"
+    else if cStructF and c15Trend != d
+        why := nC + " market structure is not " + (d == 1 ? "bullish" : "bearish")
+    else if cDispMin > 0 and not na(kAtr) and math.abs(kC - kO) < cDispMin * kAtr
+        why := "breakout body " + f_r(math.abs(kC - kO) / kAtr) + " ATR < " + f_r(cDispMin) + " ATR"
+    else if cVolMult > 0 and not na(kV) and not na(kVA) and kVA > 0 and kV < cVolMult * kVA
+        why := "breakout volume " + f_r(kV / kVA) + "× average < " + f_r(cVolMult) + "×"
+    why
+
+method cLock(CRef r, float h2, float l2, int t2) =>
+    r.h2 := h2
+    r.l2 := l2
+    r.t2 := t2
+    r.up := math.max(r.h1, h2)
+    r.lo := math.min(r.l1, l2)
+    r.state := 2
+    r.nSeen := 0
+    color cl = color.new(cCol, 10)
+    r.lns.push(line.new(r.t1, r.h1, r.t1 + c15Ms, r.h1, xloc = xloc.bar_time, color = cl, width = 2))
+    r.lns.push(line.new(r.t1, r.l1, r.t1 + c15Ms, r.l1, xloc = xloc.bar_time, color = cl, width = 2))
+    r.lns.push(line.new(t2, h2, t2 + c15Ms, h2, xloc = xloc.bar_time, color = cl, width = 2))
+    r.lns.push(line.new(t2, l2, t2 + c15Ms, l2, xloc = xloc.bar_time, color = cl, width = 2))
+    if cShowBnd
+        r.lns.push(line.new(r.t1, r.up, time + labOff, r.up, xloc = xloc.bar_time, color = color.new(cCol, 35), style = line.style_dashed, width = 1))
+        r.lns.push(line.new(r.t1, r.lo, time + labOff, r.lo, xloc = xloc.bar_time, color = color.new(cCol, 35), style = line.style_dashed, width = 1))
+        r.lbU := label.new(time + labOff, r.up, "C UPPER " + f_p(r.up), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = cCol, size = size.tiny)
+        r.lbL := label.new(time + labOff, r.lo, "C LOWER " + f_p(r.lo), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = cCol, size = size.tiny)
+    if alMgmt
+        f_alert("C_REFERENCE_LOCKED", 0, na, na, na, na, na, r.src + " pair " + f_fmtT(r.t1) + " + " + f_fmtT(t2) + " · upper " + f_p(r.up) + " · lower " + f_p(r.lo))
+
+method cExtend(CRef r, int x2) =>
+    if r.lns.size() == 6
+        line.set_x2(r.lns.get(4), x2)
+        line.set_x2(r.lns.get(5), x2)
+        label.set_x(r.lbU, x2)
+        label.set_x(r.lbL, x2)
+
+method cErase(CRef r) =>
+    if not na(r.lns)
+        for ln in r.lns
+            line.delete(ln)
+    if not na(r.lbU)
+        label.delete(r.lbU)
+        label.delete(r.lbL)
+
+// End a reference pair. st: 7 confirmed · 9 invalidated · 10 expired · 11 missed entry
+method cEnd(CRef r, int st, string why, array<label> q) =>
+    r.state := st
+    r.endWhy := why
+    r.endT := time
+    r.cExtend(time)
+    if st != 7
+        string cat = st == 9 ? "INVALIDATED" : st == 10 ? "EXPIRED" : "MISSED ENTRY"
+        f_evLabel(q, bar_index, high, "C " + (st == 9 ? "✕ INVALID" : st == 10 ? "EXPIRED" : "MISSED"), C_CLEAR, cCol, label.style_label_down, size.tiny, why, yloc.abovebar)
+        f_log("C · " + r.src + " U " + f_p(r.up) + " / L " + f_p(r.lo), cat, why)
+        if alMgmt
+            f_alert(st == 9 ? "C_INVALIDATED" : st == 10 ? "C_EXPIRED" : "C_MISSED_ENTRY", 0, na, na, na, na, na, why)
 
 // ───────────────────────────── CHART-TF SERIES ─────────────────────────────
 float atrE = ta.atr(14)
@@ -1010,85 +1272,21 @@ if barstate.isconfirmed
 
     // ── 6. Simulated fill (next bar open after the signal)
     if S.state == 5 and bar_index > S.sigBar
-        S.entry := open
-        S.fillBar := bar_index
-        S.state := 6
+        f_fill(S, evLabels, "A")
         evFill := true
-        if not na(S.lines)
-            line.set_y1(S.lines.get(0), open)
-            line.set_y2(S.lines.get(0), open)
-            label.set_y(S.labels.get(0), open)
-            label.set_text(S.labels.get(0), "ENTRY " + f_p(open) + " (filled)")
-            if S.dir == 1
-                box.set_top(S.boxes.get(0), open)
-                box.set_bottom(S.boxes.get(1), open)
-            else
-                box.set_bottom(S.boxes.get(0), open)
-                box.set_top(S.boxes.get(1), open)
-        f_evLabel(evLabels, bar_index, open, "FILL " + f_p(open), color.new(cEntry, 25), color.white, label.style_label_left, size.tiny, "Simulated fill at this bar's open (signal was on the previous closed bar)", yloc.price)
-        if alSig
-            f_alert("ENTRY_FILLED_SIM", S.dir, na, open, S.stop, S.tp1, S.tp2, "simulated fill at bar open")
 
-    // ── 7. Position management — conservative intrabar order: STOP first
+    // ── 7. Position management — conservative intrabar order: STOP first (shared with Model C)
     if S.state == 6
-        int dP = S.dir
-        string outc = ""
-        bool hitStop = dP == 1 ? low <= S.stop : high >= S.stop
-        if hitStop
-            float xPx = dP == 1 ? math.min(open, S.stop) : math.max(open, S.stop)
-            float rLeg = dP * (xPx - S.entry) / S.riskRef
-            S.resultR := S.tp1Done ? S.resultR + (1 - w1) * rLeg : rLeg
-            outc := S.tp1Done and S.beOn ? "BE STOP" : "STOP HIT"
-            evStop := true
-        else
-            bool hitT1 = not S.tp1Done and (dP == 1 ? high >= S.tp1 : low <= S.tp1)
-            if hitT1
-                S.tp1Done := true
-                S.resultR := w1 * dP * (S.tp1 - S.entry) / S.riskRef
-                evTP1 := true
-                if not na(S.labels)
-                    label.set_text(S.labels.get(2), "TP1 ✓ " + f_p(S.tp1))
-                f_evLabel(evLabels, bar_index, S.tp1, "TP1 HIT", color.new(cTP, 20), color.black, dP == 1 ? label.style_label_down : label.style_label_up, size.small, "Partial " + str.tostring(tp1Pct) + "% closed at " + f_p(S.tp1), yloc.price)
-                if alMgmt
-                    f_alert("TP1_HIT", dP, S.tp1, S.entry, S.stop, S.tp1, S.tp2, "")
-                if w1 >= 1.0
-                    outc := "TP1 HIT"
-            if outc == "" and S.tp1Done and (dP == 1 ? high >= S.tp2 : low <= S.tp2)
-                S.resultR := S.resultR + (1 - w1) * dP * (S.tp2 - S.entry) / S.riskRef
-                outc := "TP2 HIT"
-                evTP2 := true
-            if outc == "" and maxBars > 0 and bar_index - S.fillBar + 1 >= maxBars
-                float rE = dP * (close - S.entry) / S.riskRef
-                S.resultR := S.tp1Done ? S.resultR + (1 - w1) * rE : rE
-                outc := "EARLY EXIT"
-                evEarly := true
-            if hitT1 and useBE and outc == ""
-                S.beOn := true
-                S.stop := S.entry
-                if not na(S.lines)
-                    line.set_y1(S.lines.get(1), S.entry)
-                    line.set_y2(S.lines.get(1), S.entry)
-                    label.set_y(S.labels.get(1), S.entry)
-                    label.set_text(S.labels.get(1), "SL → BE " + f_p(S.entry))
-        if outc != ""
-            S.state := 8
-            S.outcome := outc
-            S.doneBar := bar_index
+        [oA, t1A, stA] = f_manage(S, evLabels, "A")
+        evTP1 := t1A
+        evStop := stA
+        evTP2 := oA == "TP2 HIT"
+        evEarly := oA == "EARLY EXIT"
+        if oA != ""
             evDone := true
-            f_tradeExtend(S, bar_index)
-            bool isWin = S.resultR > 0
-            float yO = outc == "STOP HIT" or outc == "BE STOP" ? S.stop : outc == "EARLY EXIT" ? close : outc == "TP1 HIT" ? S.tp1 : S.tp2
-            bool towardTP = outc == "TP2 HIT" or outc == "TP1 HIT"
-            string stO = (dP == 1) == towardTP ? label.style_label_down : label.style_label_up
-            f_evLabel(evLabels, bar_index, yO, outc + " " + (S.resultR >= 0 ? "+" : "") + f_r(S.resultR) + "R", color.new(isWin ? cTP : outc == "BE STOP" ? C_GREY : cSL, 15), isWin ? color.black : color.white, stO, size.small, "Simulated result incl. " + str.tostring(tp1Pct) + "% partial at TP1", yloc.price)
-            f_log(f_desc(S), "TRADE", outc + " " + (S.resultR >= 0 ? "+" : "") + f_r(S.resultR) + "R (simulated)")
             simN += 1
-            simW += isWin ? 1 : 0
+            simW += S.resultR > 0 ? 1 : 0
             simR += S.resultR
-            if alMgmt
-                f_alert(outc == "TP2 HIT" ? "TP2_HIT" : outc == "TP1 HIT" ? "TP1_FULL_EXIT" : outc == "EARLY EXIT" ? "EARLY_EXIT" : "STOP_HIT", dP, yO, S.entry, S.stop, S.tp1, S.tp2, "result " + f_r(S.resultR) + "R")
-        else
-            f_tradeExtend(S, bar_index + 6)
 
     // ── 8. Pending-setup checks. Each ending has ONE category and a plain-English reason.
     //    A new 4H / 1H candle opening never ends a setup: all levels below are LOCKED in S.
@@ -1261,9 +1459,9 @@ if barstate.isconfirmed
                 else
                     evSell := true
                 string tipS = S.srcKind + " sweep → " + nC + " " + S.confText + " → " + nE + " trigger | R:R to TP2 " + f_r(dD * (t2 - eRef) / risk)
-                f_evLabel(evLabels, bar_index, dD == 1 ? low : high, (dD == 1 ? "BUY\n" : "SELL\n") + f_p(eRef), dD == 1 ? cBull : cBear, color.white, dD == 1 ? label.style_label_up : label.style_label_down, size.normal, tipS, dD == 1 ? yloc.belowbar : yloc.abovebar)
+                f_evLabel(evLabels, bar_index, dD == 1 ? low : high, (dD == 1 ? "A · BUY\n" : "A · SELL\n") + f_p(eRef), dD == 1 ? cBull : cBear, color.white, dD == 1 ? label.style_label_up : label.style_label_down, size.normal, tipS, dD == 1 ? yloc.belowbar : yloc.abovebar)
                 f_pendDel(S)
-                f_tradeDraw(S)
+                f_tradeDraw(S, "A ")
                 tradeHist.push(S)
                 if tradeHist.size() > keepTrades
                     f_tradeDelete(tradeHist.shift())
@@ -1303,6 +1501,252 @@ if barstate.isconfirmed
     r4.refresh(barstate.islast, true)
     r1.refresh(barstate.islast, false)
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MODEL C — 15M DOUBLE-RANGE CONFIRMATION (independent of Model A)
+//  Runs on CLOSED chart bars. Each completed 15M candle is processed exactly once,
+//  on the chart bar whose close coincides with the 15M close (or, if that bar is
+//  missing, on the next chart bar — flagged "late"). Fill = NEXT chart bar open.
+// ═══════════════════════════════════════════════════════════════════════════════
+var CRef         CR        = CRef.new(lns = array.new<line>())
+var array<CRef>  cHist     = array.new<CRef>()
+var Setup        TC        = Setup.new()
+var array<Setup> cTrades   = array.new<Setup>()
+var int    cLastT      = na
+var int    cLastPairT2 = na
+var bool   cArmed      = false
+var int    cArmT       = na
+var float  cPrevH      = na
+var float  cPrevL      = na
+var int    cPrevT      = na
+var int    cSimN       = 0
+var int    cSimW       = 0
+var float  cSimR       = 0.0
+
+bool evCLock  = false
+bool evCBuy   = false
+bool evCSell  = false
+bool evCInval = false
+bool evCExp   = false
+bool evCMiss  = false
+bool evCFill  = false
+bool evCTP1   = false
+bool evCStop  = false
+bool evCTP2   = false
+bool evCEarly = false
+bool evCDone  = false
+
+if barstate.isconfirmed and cOn and tfOK
+    // ── C1. Trade lifecycle (shared rules with Model A)
+    if TC.state == 5 and bar_index > TC.sigBar
+        f_fill(TC, evLabels, "C")
+        evCFill := true
+    if TC.state == 6
+        [oC, t1C, stC] = f_manage(TC, evLabels, "C")
+        evCTP1 := t1C
+        evCStop := stC
+        evCTP2 := oC == "TP2 HIT"
+        evCEarly := oC == "EARLY EXIT"
+        if oC != ""
+            evCDone := true
+            cSimN += 1
+            cSimW += TC.resultR > 0 ? 1 : 0
+            cSimR += TC.resultR
+
+    // ── C2. Structure-event arming (event known only after its 15M candle closed)
+    if cRefMode == "First pair after 15M structure event" and (mBullNew or mBearNew)
+        cArmed := true
+        cArmT := math.max(nz(c15BullT), nz(c15BearT))
+
+    // ── C3. Pick at most one completed, not-yet-processed 15M candle
+    bool  haveC = false
+    bool  late  = false
+    float kO = na
+    float kH = na
+    float kL = na
+    float kC = na
+    int   kT = na
+    float kV = na
+    float kA = na
+    float kVA = na
+    if not na(p15T) and (na(cLastT) or p15T > cLastT)
+        haveC := true
+        late := not na(cLastT)
+        kO := p15O
+        kH := p15H
+        kL := p15L
+        kC := p15C
+        kT := p15T
+        kV := p15V
+        kA := p15ATR
+        kVA := p15VA
+    else if c15Last and not na(q15T) and (na(cLastT) or q15T > cLastT)
+        haveC := true
+        kO := q15O
+        kH := q15H
+        kL := q15L
+        kC := q15C
+        kT := q15T
+        kV := q15V
+        kA := q15ATR
+        kVA := q15VA
+
+    if haveC
+        cLastT := kT
+        string openNm = cRefMode == "Session-opening pair" ? f_cOpen(kT) : ""
+        float cBuf = cBufTk * syminfo.mintick
+        bool strictR = cSweepRule == "Strict: any trade beyond"
+        bool sweepR  = cSweepRule == "Sweep: trade beyond + 15M close back inside"
+
+        // A new session-opening candle supersedes a pair that is still waiting
+        if CR.state == 2 and openNm != ""
+            CR.cEnd(10, "Superseded by the " + openNm + " reference pair before any breakout.", evLabels)
+            evCExp := true
+
+        // ── C4. Watch a locked pair (only candles strictly AFTER the second reference candle)
+        if CR.state == 2 and kT > CR.t2
+            CR.nSeen := CR.nSeen + 1
+            bool inWin = cSweepWin == 0 or CR.nSeen <= cSweepWin
+            if inWin and (strictR or sweepR)
+                if kH > CR.up
+                    CR.upHit := true
+                    if strictR and not CR.bearDQ
+                        CR.bearDQ := true
+                        CR.bearWhy := "a 15M high (" + f_p(kH) + " at " + f_fmtT(kT) + ") traded above the upper boundary " + f_p(CR.up)
+                if kL < CR.lo
+                    CR.dnHit := true
+                    if strictR and not CR.bullDQ
+                        CR.bullDQ := true
+                        CR.bullWhy := "a 15M low (" + f_p(kL) + " at " + f_fmtT(kT) + ") traded below the lower boundary " + f_p(CR.lo)
+                if sweepR and CR.upHit and kC <= CR.up and not CR.bearDQ
+                    CR.bearDQ := true
+                    CR.bearWhy := "the upper boundary " + f_p(CR.up) + " was swept and a 15M candle closed back inside (" + f_fmtT(kT) + ")"
+                if sweepR and CR.dnHit and kC >= CR.lo and not CR.bullDQ
+                    CR.bullDQ := true
+                    CR.bullWhy := "the lower boundary " + f_p(CR.lo) + " was swept and a 15M candle closed back inside (" + f_fmtT(kT) + ")"
+            bool bearC = kC < CR.lo - cBuf
+            bool bullC = kC > CR.up + cBuf
+            if bearC or bullC
+                int dK = bullC ? 1 : -1
+                string side = dK == 1 ? "above the upper" : "below the lower"
+                string bnd = f_p(dK == 1 ? CR.up : CR.lo)
+                if (dK == 1 ? CR.bullDQ : CR.bearDQ)
+                    CR.cEnd(9, "15M closed " + side + " boundary " + bnd + " but the " + (dK == 1 ? "long" : "short") + " side was disqualified: " + (dK == 1 ? CR.bullWhy : CR.bearWhy) + ".", evLabels)
+                    evCInval := true
+                else
+                    string flt = f_cFilter(dK, kT, kO, kC, kA, kV, kVA)
+                    if flt != ""
+                        CR.cEnd(9, "Confirmed close " + side + " boundary " + bnd + " filtered out: " + flt + ".", evLabels)
+                        evCInval := true
+                    else if TC.state == 5 or TC.state == 6
+                        CR.cEnd(11, "Confirmed close " + side + " boundary " + bnd + ", but a Model C trade is already open.", evLabels)
+                        evCMiss := true
+                    else
+                        // Risk plan from the signal-time price (this bar's close = the 15M close when on time)
+                        float eRef = close
+                        float sbuf = cStopTk * syminfo.mintick
+                        float stp = na
+                        string stpTxt = "opposite boundary"
+                        if cStopMode == "Recent confirmed 15M swing"
+                            float sw = dK == 1 ? c15SwL : c15SwH
+                            if not na(sw) and dK * (eRef - sw) > 0
+                                stp := sw - dK * sbuf
+                                stpTxt := nC + " swing"
+                        else if cStopMode == "ATR" and not na(kA)
+                            stp := eRef - dK * cStopATR * kA
+                            stpTxt := f_r(cStopATR) + " ATR"
+                        if na(stp)
+                            stp := dK == 1 ? CR.lo - sbuf : CR.up + sbuf
+                        float risk = dK * (eRef - stp)
+                        float t1 = na
+                        float t2 = na
+                        string t2s = str.tostring(cTp2R) + "R"
+                        string miss = ""
+                        if risk <= 0
+                            miss := "price is already beyond the planned stop"
+                        else if not na(kA) and risk > cMaxRiskATR * kA
+                            miss := "stop distance " + f_r(risk / kA) + " × 15M ATR exceeds the " + f_r(cMaxRiskATR) + " ATR maximum"
+                        else
+                            t1 := eRef + dK * cTp1R * risk
+                            t2 := eRef + dK * cTp2R * risk
+                            if cLiqTP
+                                [pL, kLq] = f_nearestLiq(pools, dK, eRef, 0.0, na)
+                                if not na(pL)
+                                    if dK * (pL - eRef) < cMinRR * risk
+                                        miss := "the nearest liquidity (" + kLq + " " + f_p(pL) + ") is only " + f_r(dK * (pL - eRef) / risk) + "R away"
+                                    else
+                                        t2 := pL
+                                        t2s := kLq
+                            if miss == "" and dK * (t2 - eRef) / risk < cMinRR
+                                miss := "TP2 offers only " + f_r(dK * (t2 - eRef) / risk) + "R (< " + f_r(cMinRR) + "R)"
+                            if dK * (t2 - t1) <= 0
+                                t1 := eRef + (t2 - eRef) * 0.5
+                        if miss != ""
+                            CR.cEnd(11, "Confirmed close " + side + " boundary " + bnd + ", no trade: " + miss + ".", evLabels)
+                            evCMiss := true
+                        else
+                            TC := Setup.new(state = 5, dir = dK, srcTF = nC, srcKind = "C " + CR.src, level = dK == 1 ? CR.up : CR.lo, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(cTp1R) + "R", tp2Src = t2s, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
+                            f_tradeDraw(TC, "C ")
+                            cTrades.push(TC)
+                            if cTrades.size() > keepTrades
+                                f_tradeDelete(cTrades.shift())
+                            string tipC = "Model C · " + CR.src + " pair " + f_fmtT(CR.t1) + " + " + f_fmtT(CR.t2) + " · signal = 15M close " + f_fmtT(kT + c15Ms) + (late ? " (processed late)" : "") + " · fill = next bar open (simulated) · stop: " + stpTxt + " · R:R to TP2 " + f_r(dK * (t2 - eRef) / risk)
+                            f_evLabel(evLabels, bar_index, dK == 1 ? low : high, (dK == 1 ? "C · BUY\n" : "C · SELL\n") + f_p(eRef), color.new(dK == 1 ? cBull : cBear, 0), color.white, dK == 1 ? label.style_label_up : label.style_label_down, size.small, tipC, dK == 1 ? yloc.belowbar : yloc.abovebar)
+                            CR.cEnd(7, "Confirmed " + (dK == 1 ? "LONG" : "SHORT") + ": 15M closed " + side + " boundary " + bnd + ".", evLabels)
+                            if dK == 1
+                                evCBuy := true
+                            else
+                                evCSell := true
+                            if alSig
+                                f_alert(dK == 1 ? "C_BUY_CONFIRMED" : "C_SELL_CONFIRMED", dK, dK == 1 ? CR.up : CR.lo, eRef, stp, t1, t2, "Model C " + CR.src + " · fill assumed at next bar open")
+            else if CR.bullDQ and CR.bearDQ
+                CR.cEnd(9, "Both sides disqualified before any breakout: short — " + CR.bearWhy + "; long — " + CR.bullWhy + ".", evLabels)
+                evCInval := true
+            else if CR.nSeen >= cExpiry
+                CR.cEnd(10, "No 15M close beyond either boundary within " + str.tostring(cExpiry) + " candles.", evLabels)
+                evCExp := true
+            else
+                CR.cExtend(time + labOff)
+
+        // ── C5. Second reference candle → lock (must be the very next 15M candle)
+        if CR.state == 1
+            if kT == CR.t1 + c15Ms
+                CR.cLock(kH, kL, kT)
+                cLastPairT2 := kT
+                evCLock := true
+            else
+                CR.state := 0
+
+        // ── C6. First reference candle (never reuses a candle from a previous pair or its ending candle)
+        if CR.state != 1 and CR.state != 2
+            bool fresh = na(cLastPairT2) or kT > cLastPairT2
+            int endT = CR.state >= 7 ? CR.endT : na
+            string nmNew = ""
+            if cRefMode == "Session-opening pair" and openNm != ""
+                nmNew := openNm
+            else if cRefMode == "First pair after 15M structure event" and cArmed and kT >= cArmT
+                nmNew := "after " + nC + " structure"
+                cArmed := false
+            else if cRefMode == "Rolling consecutive pair" and not na(cPrevT) and kT == cPrevT + c15Ms and cPrevT > nz(cLastPairT2) and (na(endT) or cPrevT >= endT)
+                nmNew := "rolling"
+            if nmNew != "" and fresh
+                if CR.state != 0
+                    cHist.push(CR)
+                    if cHist.size() > 3
+                        CRef oldC = cHist.shift()
+                        oldC.cErase()
+                else
+                    CR.cErase()
+                if nmNew == "rolling"
+                    CR := CRef.new(state = 1, src = nmNew, h1 = cPrevH, l1 = cPrevL, t1 = cPrevT, lns = array.new<line>())
+                    CR.cLock(kH, kL, kT)
+                    cLastPairT2 := kT
+                    evCLock := true
+                else
+                    CR := CRef.new(state = 1, src = nmNew, h1 = kH, l1 = kL, t1 = kT, lns = array.new<line>())
+        cPrevH := kH
+        cPrevL := kL
+        cPrevT := kT
+
 // Keep labels of untouched pools at the right edge
 if barstate.islast and pools.size() > 0
     for l in pools
@@ -1317,7 +1761,7 @@ string dashPos = switch dashPosIn
     "Bottom right" => position.bottom_right
     "Bottom left"  => position.bottom_left
     => position.top_right
-var table dash = table.new(dashPos, 2, 18, bgcolor = color.new(#0B0F17, 6), frame_color = color.new(C_GOLD, 45), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
+var table dash = table.new(dashPos, 2, 22, bgcolor = color.new(#0B0F17, 6), frame_color = color.new(C_GOLD, 45), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
 
 f_row(table t, int rw, string k, string v, color vc) =>
     table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_valign = text.align_top, text_size = dashSz)
@@ -1328,7 +1772,7 @@ if barstate.isfirst and showDash
     table.merge_cells(dash, 0, 0, 1, 0)
 
 if barstate.islast and showDash
-    table.clear(dash, 0, 1, 1, 17)
+    table.clear(dash, 0, 1, 1, 21)
     CRTRange prD = primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
     string dW = S.dir == 1 ? "LONG" : "SHORT"
     color dC = S.dir == 1 ? cBull : cBear
@@ -1462,9 +1906,26 @@ if barstate.islast and showDash
         f_row(dash, row, "Last setup", diagT.get(lk) + " · " + diagS.get(lk) + " → " + lc + "\n" + diagR.get(lk), lc == "TRADE" ? cTP : lc == "SKIPPED" ? C_MUTED : C_GREY)
         row += 1
 
+    // ── Model C (independent state machine)
+    if cOn
+        [cEff, cCnf, cBTxt] = f_cBias()
+        float cb = cBufTk * syminfo.mintick
+        string cst = CR.state == 0 ? "WAITING FOR REFERENCE · " + cRefMode : CR.state == 1 ? "REFERENCE · 1st candle " + f_fmtT(CR.t1) + " captured, waiting for the 2nd" : CR.state == 2 ? "REFERENCE LOCKED · WATCHING BREAKOUT (" + str.tostring(CR.nSeen) + "/" + str.tostring(cExpiry) + ")\nU " + f_p(CR.up) + " / L " + f_p(CR.lo) + " · " + CR.src + "\nShort: " + (CR.bearDQ ? "✕ " + CR.bearWhy : "needs 15M close < " + f_p(CR.lo - cb)) + "\nLong: " + (CR.bullDQ ? "✕ " + CR.bullWhy : "needs 15M close > " + f_p(CR.up + cb)) : CR.state == 7 ? (TC.dir == 1 ? "CONFIRMED LONG" : "CONFIRMED SHORT") + " · " + CR.endWhy : (CR.state == 9 ? "INVALIDATED — " : CR.state == 10 ? "EXPIRED — " : "MISSED ENTRY — ") + CR.endWhy
+        color cstc = CR.state == 2 ? cCol : CR.state == 7 ? (TC.dir == 1 ? cBull : cBear) : CR.state >= 9 ? C_GREY : C_MUTED
+        f_row(dash, row, "Model C", cst, cstc)
+        row += 1
+        f_row(dash, row, "C bias", cBTxt, cCnf and cBiasMode == "4H + 1H" ? C_GOLD : C_MUTED)
+        row += 1
+        if TC.state == 5 or TC.state == 6
+            float cRisk = math.abs((TC.state == 5 ? TC.entryRef : TC.entry) - TC.stopInit)
+            float perU = cRisk * syminfo.pointvalue
+            float qty = perU > 0 ? (syminfo.type == "futures" ? math.floor(cRiskCash / perU) : math.floor(cRiskCash / perU * 100) / 100) : na
+            f_row(dash, row, "C trade", (TC.dir == 1 ? "LONG" : "SHORT") + " · E " + (TC.state == 5 ? "next open (signal " + f_p(TC.entryRef) + ")" : f_p(TC.entry)) + " · SL " + f_p(TC.stop) + "\nTP1 " + f_p(TC.tp1) + (TC.tp1Done ? " ✓" : "") + " · TP2 " + f_p(TC.tp2) + " (" + TC.tp2Src + ") · " + f_r(math.abs(TC.tp2 - TC.entryRef) / TC.riskRef) + "R\nSize " + str.tostring(qty) + (syminfo.type == "futures" ? " contracts" : " units") + " for " + str.tostring(cRiskCash) + " " + syminfo.currency + " risk (" + f_p(cRisk) + " pts × " + str.tostring(syminfo.pointvalue) + "/pt)", TC.dir == 1 ? cBull : cBear)
+            row += 1
+
     // Trade levels (actual calculated values only)
     if S.state == 5 or S.state == 6 or (recentDone and S.state == 8)
-        f_row(dash, row, "Entry", S.state == 5 ? "next open (signal " + f_p(S.entryRef) + ")" : f_p(S.entry), cEntry)
+        f_row(dash, row, "A entry", S.state == 5 ? "next open (signal " + f_p(S.entryRef) + ")" : f_p(S.entry), cEntry)
         row += 1
         f_row(dash, row, "SL", f_p(S.stop) + (S.beOn ? " (breakeven)" : ""), cSL)
         row += 1
@@ -1511,56 +1972,138 @@ plot(liveTrade ? S.tp1 : na, "TP1", color = cTP, display = display.data_window)
 plot(liveTrade ? S.tp2 : na, "TP2", color = cTP, display = display.data_window)
 plot(r1.active ? r1.mid : na, "Setup-TF CRT 50%", color = cMid, display = display.data_window)
 plot(r4.active ? r4.mid : na, "Higher-TF CRT 50%", color = cMid, display = display.data_window)
+bool liveC = TC.state == 5 or TC.state == 6
+plot(liveC ? (TC.state == 6 ? TC.entry : TC.entryRef) : na, "C Entry", color = cCol, display = display.data_window)
+plot(liveC ? TC.stop : na, "C Stop", color = cSL, display = display.data_window)
+plot(liveC ? TC.tp1 : na, "C TP1", color = cTP, display = display.data_window)
+plot(liveC ? TC.tp2 : na, "C TP2", color = cTP, display = display.data_window)
+plot(CR.state == 2 ? CR.up : na, "C Upper", color = cCol, display = display.data_window)
+plot(CR.state == 2 ? CR.lo : na, "C Lower", color = cCol, display = display.data_window)
 
 // (alertcondition() block removed in the strategy build — alert() calls still work)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STRATEGY EXECUTION LAYER — driven 1:1 by the indicator engine's events above.
+//  One model is traded per run, so Model A and Model C are tested independently.
 //  Entry: market order on the signal bar close → filled by TradingView at the
 //  NEXT bar's open (same assumption as the indicator's simulated fill).
 //  Exits: native stop / limit orders at the engine's SL / TP1 / TP2.
 // ═══════════════════════════════════════════════════════════════════════════════
 string G_ST = "⑬ Strategy (backtest only)"
-string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity"], group = G_ST)
-float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the 50% TP1 partial is possible.")
+string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range"], group = G_ST)
+string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity", "Risk cash per trade"], group = G_ST)
+float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the TP1 partial is possible.")
 float  riskPct  = input.float(0.5, "Risk % of equity per trade", minval = 0.01, maxval = 10, step = 0.05, group = G_ST)
+float  riskCash = input.float(500, "Risk cash per trade", minval = 1, group = G_ST, tooltip = "Quantity = risk cash ÷ (stop distance in points × syminfo.pointvalue), rounded DOWN to the quantity step. Never inferred from P&L.")
 float  qtyStep  = input.float(1, "Quantity step (1 = whole contracts)", minval = 0.000001, group = G_ST, tooltip = "Futures: 1. Spot / CFD gold: broker lot step in units (e.g. 1 oz). FX: 1000 units, etc.")
 float  maxQty   = input.float(50, "Maximum quantity", minval = 0.000001, group = G_ST)
 int    fromDate = input.time(timestamp("2022-01-01T00:00:00"), "Trade from", group = G_ST)
 int    toDate   = input.time(timestamp("2099-12-31T00:00:00"), "Trade until", group = G_ST, tooltip = "Use this to hold back an UNTOUCHED out-of-sample period while tuning.")
+bool   showStats = input.bool(true, "Show results table (by direction / session)", group = G_ST)
 
 f_floorStep(float q, float st) => math.floor(q / st + 1e-9) * st
 
+bool useC   = stModel == "Model C — 15M double-range"
+Setup T     = useC ? TC : S
+bool sigL   = useC ? evCBuy : evBuy
+bool sigS   = useC ? evCSell : evSell
+bool mTP1   = useC ? evCTP1 : evTP1
+bool mEarly = useC ? evCEarly : evEarly
+bool mDone  = useC ? evCDone : evDone
+string mTag = useC ? "C" : "A"
 bool inDates = time >= fromDate and time <= toDate
+
+var array<float> stRisk = array.new<float>()   // planned risk (account currency) per position, in entry order
 
 if barstate.isconfirmed
     // New signal → entry + bracket
-    if (evBuy or evSell) and inDates and strategy.position_size == 0
-        float riskPts = math.abs(S.entryRef - S.stop)
-        float rawQty  = sizeMode == "Fixed quantity" ? fixedQty : (strategy.equity * riskPct / 100) / (riskPts * syminfo.pointvalue)
+    if (sigL or sigS) and inDates and strategy.position_size == 0
+        float riskPts = math.abs(T.entryRef - T.stop)
+        float perUnit = riskPts * syminfo.pointvalue
+        float rawQty  = sizeMode == "Fixed quantity" ? fixedQty : sizeMode == "Risk % of equity" ? (strategy.equity * riskPct / 100) / perUnit : riskCash / perUnit
         float q  = math.min(f_floorStep(rawQty, qtyStep), maxQty)
         float q1 = f_floorStep(q * tp1Pct / 100, qtyStep)
         if q > 0
-            string eid = evBuy ? "MEKA L" : "MEKA S"
-            strategy.entry(eid, evBuy ? strategy.long : strategy.short, qty = q, comment = evBuy ? "BUY" : "SELL")
+            string eid = mTag + (sigL ? " L" : " S")
+            strategy.entry(eid, sigL ? strategy.long : strategy.short, qty = q, comment = mTag + (sigL ? " BUY" : " SELL"))
+            stRisk.push(perUnit * q)
             if q1 > 0 and q1 < q
-                strategy.exit(eid + " TP1", eid, qty = q1, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
-                strategy.exit(eid + " TP2", eid, qty = q - q1, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+                strategy.exit(eid + " TP1", eid, qty = q1, stop = T.stop, limit = T.tp1, comment_profit = "TP1", comment_loss = "SL")
+                strategy.exit(eid + " TP2", eid, qty = q - q1, stop = T.stop, limit = T.tp2, comment_profit = "TP2", comment_loss = "SL")
             else if q1 >= q
-                strategy.exit(eid + " TP1", eid, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
+                strategy.exit(eid + " TP1", eid, stop = T.stop, limit = T.tp1, comment_profit = "TP1", comment_loss = "SL")
             else
-                strategy.exit(eid + " TP2", eid, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+                strategy.exit(eid + " TP2", eid, stop = T.stop, limit = T.tp2, comment_profit = "TP2", comment_loss = "SL")
 
     // Breakeven after TP1 (only if enabled in the engine inputs)
-    if evTP1 and useBE and strategy.position_size != 0
-        string bid = strategy.position_size > 0 ? "MEKA L" : "MEKA S"
-        strategy.exit(bid + " TP2", bid, qty = math.abs(strategy.position_size), stop = strategy.position_avg_price, limit = S.tp2, comment_profit = "TP2", comment_loss = "BE")
+    if mTP1 and useBE and strategy.position_size != 0
+        string bid = mTag + (strategy.position_size > 0 ? " L" : " S")
+        strategy.exit(bid + " TP2", bid, qty = math.abs(strategy.position_size), stop = strategy.position_avg_price, limit = T.tp2, comment_profit = "TP2", comment_loss = "BE")
 
     // Time-based early exit at this bar's close
-    if evEarly and strategy.position_size != 0
+    if mEarly and strategy.position_size != 0
         strategy.close_all(comment = "EARLY EXIT", immediately = true)
 
     // Keep broker emulator and engine in lock-step (see docs: intrabar ordering)
-    if evDone and not evEarly and strategy.position_size != 0
+    if mDone and not mEarly and strategy.position_size != 0
         strategy.close_all(comment = "SYNC", immediately = true)
+
+// ───────────────────────────── RESULTS TABLE (measured by TradingView, nothing assumed) ─────────────────────────────
+// Partial exits create several closed-trade records per position; they are grouped by entry time.
+f_sessIdx(int t) =>
+    f_inSessT(t, nySess, nyTZ) ? 4 : f_inSessT(t, lonSess, lonTZ) ? 5 : f_inSessT(t, asiaSess, asiaTZ) ? 6 : 7
+
+var table stT = table.new(position.bottom_right, 9, 10, bgcolor = color.new(#0B0F17, 10), frame_color = color.new(C_GOLD, 50), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
+if barstate.islastconfirmedhistory and showStats or barstate.islast and showStats
+    // groups: 0 ALL · 1 LONG · 2 SHORT · 3 (unused) · 4 New York · 5 London · 6 Asia · 7 Other
+    array<float> gN  = array.new<float>(8, 0.0)
+    array<float> gW  = array.new<float>(8, 0.0)
+    array<float> gGP = array.new<float>(8, 0.0)
+    array<float> gGL = array.new<float>(8, 0.0)
+    array<float> gR  = array.new<float>(8, 0.0)
+    array<float> gRn = array.new<float>(8, 0.0)
+    int nCT = strategy.closedtrades
+    int pos = -1
+    int lastET = na
+    float pnl = 0.0
+    int pDir = 0
+    int pET = na
+    for i = 0 to nCT
+        bool flush = i == nCT or (i < nCT and strategy.closedtrades.entry_time(i) != lastET)
+        if flush and pos >= 0
+            float rr = pos < stRisk.size() ? pnl / stRisk.get(pos) : na
+            for g in array.from(0, pDir == 1 ? 1 : 2, f_sessIdx(pET))
+                gN.set(g, gN.get(g) + 1)
+                gW.set(g, gW.get(g) + (pnl > 0 ? 1 : 0))
+                gGP.set(g, gGP.get(g) + math.max(pnl, 0))
+                gGL.set(g, gGL.get(g) + math.min(pnl, 0))
+                if not na(rr)
+                    gR.set(g, gR.get(g) + rr)
+                    gRn.set(g, gRn.get(g) + 1)
+        if i < nCT
+            int et = strategy.closedtrades.entry_time(i)
+            if et != lastET
+                pos += 1
+                lastET := et
+                pnl := 0.0
+                pET := et
+                pDir := strategy.closedtrades.size(i) > 0 ? 1 : -1
+            pnl += strategy.closedtrades.profit(i)
+    table.clear(stT, 0, 0, 8, 9)
+    array<string> hdr = array.from("Model " + mTag + " · " + syminfo.ticker, "Trades", "Win %", "PF", "Net", "Avg win", "Avg loss", "Expect.", "Avg R")
+    for [c, h] in hdr
+        table.cell(stT, c, 0, h, text_color = C_GOLD, text_size = size.tiny)
+    array<string> names = array.from("ALL", "LONG", "SHORT", "", "New York", "London", "Asia", "Other")
+    int rw = 1
+    for g = 0 to 7
+        if g != 3 and gN.get(g) > 0
+            float n = gN.get(g)
+            float w = gW.get(g)
+            float gp = gGP.get(g)
+            float gl = gGL.get(g)
+            array<string> vals = array.from(names.get(g), str.tostring(n, "#"), str.tostring(100 * w / n, "#.0"), gl < 0 ? str.tostring(gp / -gl, "#.00") : "—", str.tostring(gp + gl, "#,##0"), w > 0 ? str.tostring(gp / w, "#,##0") : "—", n - w > 0 ? str.tostring(gl / (n - w), "#,##0") : "—", str.tostring((gp + gl) / n, "#,##0.0"), gRn.get(g) > 0 ? str.tostring(gR.get(g) / gRn.get(g), "#.00") : "—")
+            for [c, v] in vals
+                table.cell(stT, c, rw, v, text_color = g == 0 ? color.white : color.new(color.white, 25), text_size = size.tiny)
+            rw += 1
+    table.cell(stT, 0, rw, "Max DD " + str.tostring(strategy.max_drawdown, "#,##0") + " " + syminfo.currency + " · tick " + str.tostring(syminfo.mintick) + " · " + str.tostring(syminfo.pointvalue) + "/pt · commission & slippage = Properties tab", text_color = C_MUTED, text_size = size.tiny)
 

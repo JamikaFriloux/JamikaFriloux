@@ -10,8 +10,17 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 | `docs/CRT_RULES.md` | The exact, objective setup rules. |
 | `docs/SETTINGS.md` | Starting settings for Gold (XAUUSD / GC / MGC) and NQ / MNQ. |
 | `docs/TESTING.md` | Verification checklist, backtest protocol, known limitations. |
+| `docs/MODEL_C.md` | Model C (15M double-range confirmation): exact rules, MTF handling, measured results, checklist, open decisions. |
 | `docs/STATE_MACHINE_AUDIT.md` | Why setups kept invalidating, what was fixed, measured before/after on real gold data. |
 | `tools/replay/` | Python bar-for-bar replay of the engine + no-future-information test. |
+
+## Models
+
+* **Model A: CRT sweep/reclaim.** A 4H/1H CRT sweep and reclaim, confirmed on 15M, entered on 5M. Labels: `A · BUY` / `A · SELL`.
+* **Model C: 15M double-range confirmation.** Two completed 15M candles are frozen as a range, and a later 15M close beyond it triggers the trade. It is drawn in purple, with labels `C · BUY` / `C · SELL`. Settings are in input group ⑭; see `docs/MODEL_C.md`.
+* There is no Model B in the code (see `docs/MODEL_C.md`, decisions).
+
+The strategy trades **one model per run** (*Model traded by this strategy*), so each model is tested independently.
 
 ## Installation
 

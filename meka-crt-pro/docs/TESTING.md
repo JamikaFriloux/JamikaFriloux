@@ -46,6 +46,18 @@ Turn on **Display → Diagnostic log**. Then step through Bar Replay and check, 
 - [ ] Setups survive the first bar of a new hour / 4H candle. The dashboard's "Locked" row notes "reference candle has rolled".
 - [ ] "SWEEP IN PROGRESS" turns into "SWEEP CONFIRMED & RECLAIMED" only on the first 5M bar after a 15M candle closes back inside.
 
+## B4. Model C
+
+See the checklist in `docs/MODEL_C.md` §5. The logic replay and the no-future test:
+
+```bash
+python3 tools/replay/model_c.py gold XAU_5m.csv
+```
+
+```bash
+python3 tools/replay/model_c_repaint_test.py gold XAU_5m.csv
+```
+
 ## C. Backtesting protocol (strategy)
 
 1. **Split the data before you look at results.** Use `Trade from / Trade until` to choose an in-sample period, for example the oldest 60%. Do all tuning there. Keep the most recent 20–40% **untouched** and run it **once** at the end.
