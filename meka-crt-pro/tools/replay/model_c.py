@@ -26,14 +26,14 @@ NaN = float("nan")
 
 MARKETS = {
     # cost_pts: round-trip cost in price points per unit (spread/slippage + commission/pointvalue)
-    "gold": dict(tick=0.01, day_start_ny=17, cost_pts=0.30, sessions=dict(ASIA=("Asia/Tokyo", 900, 1500), LDN=("Europe/London", 800, 1630), NY=("America/New_York", 800, 1600))),
-    "nq": dict(tick=0.25, day_start_ny=18, cost_pts=0.5 + 4.5 / 20.0, sessions=dict(ASIA=("Asia/Tokyo", 900, 1500), LDN=("Europe/London", 800, 1630), NY=("America/New_York", 800, 1600))),
+    "gold": dict(tick=0.01, day_start_ny=17, cost_pts=0.30, windows=[("Europe/London", 800, 1100), ("America/New_York", 830, 1130)], sessions=dict(ASIA=("Asia/Tokyo", 900, 1500), LDN=("Europe/London", 800, 1630), NY=("America/New_York", 800, 1600))),
+    "nq": dict(tick=0.25, day_start_ny=18, cost_pts=0.5 + 4.5 / 20.0, windows=[("America/New_York", 930, 1130)], sessions=dict(ASIA=("Asia/Tokyo", 900, 1500), LDN=("Europe/London", 800, 1630), NY=("America/New_York", 800, 1600))),
 }
 OPENS = [("NY open", "America/New_York", 930), ("London open", "Europe/London", 800)]
 
 DEF = dict(refMode="session", bufTk=0, sweepRule="strict", sweepWin=0, expiry=8,
            bias="4H+1H", conflict="block", emaLen=50, structF=False, sessions=("ASIA", "LDN", "NY"), anyTime=False,
-           dispMin=0.0, volMult=0.0, stopMode="boundary", stopATR=1.5, stopTk=2, maxRiskATR=3.0,
+           dispMin=0.0, volMult=0.0, stopMode="boundary", stopATR=1.5, stopTk=2, maxRiskATR=2.0, minStopATR=1.0, maxStopPts=0.0, needWin=True,
            tp1R=1.0, tp2R=2.0, minRR=1.5, tp1Pct=50.0, pivL15=3, pivR15=2, dispMult=0.8)
 
 
@@ -86,7 +86,14 @@ def prep(df, mk, P):
         return (lt.hour * 100 + lt.minute).values
     hm = {tz: hhmm(t15, tz) for tz in {"Asia/Tokyo", "Europe/London", "America/New_York"}}
     last = np.r_[i15[1:] != i15[:-1], True]  # 5M bar whose close is the 15M close
-    return dict(n=n, i15=i15, A15=A15, b4=b4, b1=b1, atr15=atr15, vsma=vsma, s15=s15, t15=t15, hm=hm, last=last,
+    ph5, pl5 = M.pivots(df.h.values, 3, 2, True), M.pivots(df.l.values, 3, 2, False)
+    sw5H, sw5L = pd.Series(ph5).ffill().values, pd.Series(pl5).ffill().values  # last CONFIRMED 5M swing
+    win = np.zeros(n, bool)
+    for tz, a, b in mk["windows"]:
+        lt = utc.dt.tz_convert(tz)
+        hm5 = (lt.dt.hour * 100 + lt.dt.minute).values
+        win |= (hm5 >= a) & (hm5 < b)
+    return dict(sw5H=sw5H, sw5L=sw5L, win=win, n=n, i15=i15, A15=A15, b4=b4, b1=b1, atr15=atr15, vsma=vsma, s15=s15, t15=t15, hm=hm, last=last,
                 o=df.o.values, h=df.h.values, l=df.l.values, c=df.c.values, utc=utc)
 
 
@@ -202,22 +209,46 @@ def run(D, mk, P, t_from=None, t_to=None):
                         end(9, "filtered: " + why)
                     elif TC is not None and TC["state"] in (5, 6):
                         end(11, "trade open")
+                    elif P["needWin"] and not D["win"][i]:
+                        end(11, "not actionable: entries off")
                     else:
                         e = c[i]
                         sb = P["stopTk"] * tick
                         stp = NaN
-                        if P["stopMode"] == "swing" and st is not None:
+                        cap = min(P["maxRiskATR"] * kA if not math.isnan(kA) else 1e12, P["maxStopPts"] or 1e12)
+                        mnR = P["minStopATR"] * kA if not math.isnan(kA) else 0.0
+                        if P["stopMode"] == "smart":
+                            cands = [kL - sb if d == 1 else kH + sb]
+                            if st is not None:
+                                cands.append((st["swL"] - sb) if d == 1 else (st["swH"] + sb))
+                            cands.append((D["sw5L"][i] - sb) if d == 1 else (D["sw5H"][i] + sb))
+                            best = None
+                            for cv in cands:
+                                if not math.isnan(cv):
+                                    rr = d * (e - cv)
+                                    if mnR <= rr <= cap and (best is None or rr < best):
+                                        best, stp = rr, cv
+                            if math.isnan(stp) and not math.isnan(kA):
+                                ra = max(P["stopATR"] * kA, mnR)
+                                if ra <= cap:
+                                    stp = e - d * ra
+                            if math.isnan(stp):
+                                end(11, "no stop within limits")
+                                stp = None
+                        elif P["stopMode"] == "swing" and st is not None:
                             sw = st["swL"] if d == 1 else st["swH"]
                             if not math.isnan(sw) and d * (e - sw) > 0:
                                 stp = sw - d * sb
                         elif P["stopMode"] == "atr" and not math.isnan(kA):
                             stp = e - d * P["stopATR"] * kA
-                        if math.isnan(stp):
+                        if stp is not None and math.isnan(stp):
                             stp = CR["lo"] - sb if d == 1 else CR["up"] + sb
-                        risk = d * (e - stp)
-                        if risk <= 0:
+                        risk = d * (e - stp) if stp is not None else 0
+                        if stp is None:
+                            pass
+                        elif risk <= 0:
                             end(11, "beyond stop")
-                        elif not math.isnan(kA) and risk > P["maxRiskATR"] * kA:
+                        elif risk > cap:
                             end(11, "stop too wide")
                         elif P["tp2R"] < P["minRR"]:
                             end(11, "rr")
@@ -226,7 +257,7 @@ def run(D, mk, P, t_from=None, t_to=None):
                             if d * (t2 - t1) <= 0:
                                 t1 = e + (t2 - e) * 0.5
                             TC = dict(state=5, dir=d, sig=i, entryRef=e, stop=stp, risk=risk, t1=t1, t2=t2, tp1=False, R=0.0,
-                                      kT=kT, src=CR["src"], inRange=inRange)
+                                      kT=kT, src=CR["src"], inRange=inRange, riskATR=risk / kA if kA else NaN)
                             end(7, "confirmed")
             elif CR["bullDQ"] and CR["bearDQ"]:
                 end(9, "both sides disqualified")

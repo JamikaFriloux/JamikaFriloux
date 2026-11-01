@@ -96,6 +96,37 @@ Long/short and session splits **flip sign between years** (for example, gold lon
 
 The Oct 30, 2026 MNQ example could **not** be checked: no 2026 MNQ intraday data was available here. It was not used to set any parameter.
 
+## 4b. Cleanup update: session rule, stops and targets
+
+**Session contradiction (fixed).** Model C previously accepted a breakout anywhere inside the wide *tracking* sessions (e.g. NY 08:00–16:00), while the dashboard showed Model A's *entry windows* (e.g. 08:30–11:30). In addition, a "CONFIRMED SHORT" stayed on the dashboard after the window had closed.
+
+Now an **actionable** Model C signal also requires the entry windows (`cNeedWin`, default on, the same windows as Model A). A breakout confirmed outside them is logged as *Setup detected — NOT ACTIONABLE*, and no BUY/SELL or trade lines are drawn. The compact dashboard shows `BUY`/`SELL` only for an actionable trade, and once the window closes it shows `entries OFF · managing trade`.
+
+**Stops.**
+* New options:
+  * **Smart**: the tightest of the breakout candle, the last confirmed 15M swing and the last confirmed chart swing, between the min and max distance, falling back to ATR.
+  * Max stop in **points** for any model (`maxStopPts`, 0 = off; e.g. 40–60 for MNQ is your call).
+  * Model C max stop lowered from 3× to **2× the 15M ATR**.
+* A stop that is too wide makes the setup **NOT TRADABLE**. It is never forced.
+* Tested in the replay: raw model with the window rule, net R per trade after costs.
+
+| Stop method | Gold 2023 | Gold 2024 | NQ 2008 | Median stop, gold 2024 |
+|---|---|---|---|---|
+| Opposite boundary, reject > 3 ATR | +0.012 (214) | −0.007 (241) | −0.064 (61) | 6.8 pts |
+| **Opposite boundary, reject > 2 ATR (new default)** | −0.037 (108) | +0.042 (134) | −0.065 (33) | 5.2 pts |
+| 15M swing, reject > 2 ATR | −0.426 (55) | +0.047 (60) | −0.103 (18) | 4.9 pts |
+| ATR 1.5 | −0.102 (337) | −0.036 (346) | −0.081 (72) | 4.9 pts |
+| Smart, min 1.0 ATR | −0.079 (340) | −0.044 (346) | −0.065 (72) | 4.7 pts |
+| Smart, min 0.5 ATR | −0.209 (348) | −0.089 (353) | −0.063 (72) | 3.7 pts |
+
+Tighter stops look better on the chart but were hit by noise far more often. That is why the default keeps the structural stop and **rejects** wide setups instead of tightening them.
+
+**Targets.**
+* **Model C:** R multiples stay the default (tested), and they shrink automatically with the capped stop. New option: *Smart: liquidity + R (capped)*, where TP1/TP2 = the nearest untouched liquidity, else R, and never beyond `cTp2MaxR` (3R). That option is **not covered by the replay**, which does not model the liquidity pools.
+* **Model A:** TP2 is now capped at `tp2MaxR` (4R), using liquidity inside the cap where available, so a distant 4H boundary no longer produces a far target. This cap was not re-measured.
+
+Defaults after this update (gold replay, sessions + 4H+1H bias): 56 trades at +0.032R (2023), 57 at +0.075R (2024). Samples are small; this is not evidence of an edge.
+
 ## 5. Testing checklist
 
 - [ ] Compile the indicator and the strategy in TradingView (they have not been compiled here), and send any compiler error with its line number.

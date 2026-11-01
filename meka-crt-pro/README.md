@@ -43,7 +43,9 @@ python3 tools/build_strategy.py
 
 **Detailed mode** adds the 4H range (thicker), previous ranges, BSL/SSL pools (PDH/PDL, PWH/PWL, Asia/London/NY, 15M swings, EQH/EQL), all pool sweeps with zones, breakouts, 15M CHoCH/BOS, and optional premium/discount shading.
 
-**Dashboard** rows: Market · 4H CRT · 1H CRT · 15M · 5M · Liquidity · Session · **Status** · **Next** (the exact missing confirmation) · Entry / SL / TP1 / TP2 / Risk while a trade is live.
+**Dashboard (Compact, default):** Bias (4H/1H) · Setup (model + what it waits for) · **Signal** (`BUY`/`SELL` only for an actionable trade, otherwise `WAIT` or `SETUP · NOT TRADABLE`, with the reason in the tooltip) · Entry · Stop (pts) · TP1 · TP2 (R) · Session (entries ON/OFF). Hover a value for details. *Dashboard style → Full* restores the diagnostic dashboard.
+
+**Clean mode** hides minor event labels (fills, TP1 markers, 15M ticks, invalidation tags, every CRT sweep, pending guide lines, reference-candle segments). They are still computed, alerted and logged, and *Detailed* mode shows them.
 
 Status values: `WATCHING RANGE`, `SWEEP IN PROGRESS`, `SWEEP CONFIRMED & RECLAIMED · WATCH LONG/SHORT`, `15M CONFIRMED · WATCH …`, `BUY/SELL CONFIRMED`, `TRADE ACTIVE`, `TP1 HIT · RUNNER ACTIVE`, `TP2 HIT`, `STOP HIT`, `BE STOP`, `EARLY EXIT`, and the no-trade endings `SETUP INVALIDATED` (structural), `SETUP CANCELLED · CONFLICT`, `MISSED ENTRY`, `SETUP EXPIRED`, `EXPIRED · SESSION CLOSED`, `SETUP REPLACED`, plus `IDLE · NO VALID RANGE`. The "Last setup" row always shows the latest ending in plain English. Turn on **Diagnostic log** for the last 20.
 
