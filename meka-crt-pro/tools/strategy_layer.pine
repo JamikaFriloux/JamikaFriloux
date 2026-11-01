@@ -1,0 +1,49 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STRATEGY EXECUTION LAYER — driven 1:1 by the indicator engine's events above.
+//  Entry: market order on the signal bar close → filled by TradingView at the
+//  NEXT bar's open (same assumption as the indicator's simulated fill).
+//  Exits: native stop / limit orders at the engine's SL / TP1 / TP2.
+// ═══════════════════════════════════════════════════════════════════════════════
+string G_ST = "⑬ Strategy (backtest only)"
+string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity"], group = G_ST)
+float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the 50% TP1 partial is possible.")
+float  riskPct  = input.float(0.5, "Risk % of equity per trade", minval = 0.01, maxval = 10, step = 0.05, group = G_ST)
+float  qtyStep  = input.float(1, "Quantity step (1 = whole contracts)", minval = 0.000001, group = G_ST, tooltip = "Futures: 1. Spot / CFD gold: broker lot step in units (e.g. 1 oz). FX: 1000 units, etc.")
+float  maxQty   = input.float(50, "Maximum quantity", minval = 0.000001, group = G_ST)
+int    fromDate = input.time(timestamp("2022-01-01T00:00:00"), "Trade from", group = G_ST)
+int    toDate   = input.time(timestamp("2099-12-31T00:00:00"), "Trade until", group = G_ST, tooltip = "Use this to hold back an UNTOUCHED out-of-sample period while tuning.")
+
+f_floorStep(float q, float st) => math.floor(q / st + 1e-9) * st
+
+bool inDates = time >= fromDate and time <= toDate
+
+if barstate.isconfirmed
+    // New signal → entry + bracket
+    if (evBuy or evSell) and inDates and strategy.position_size == 0
+        float riskPts = math.abs(S.entryRef - S.stop)
+        float rawQty  = sizeMode == "Fixed quantity" ? fixedQty : (strategy.equity * riskPct / 100) / (riskPts * syminfo.pointvalue)
+        float q  = math.min(f_floorStep(rawQty, qtyStep), maxQty)
+        float q1 = f_floorStep(q * tp1Pct / 100, qtyStep)
+        if q > 0
+            string eid = evBuy ? "MEKA L" : "MEKA S"
+            strategy.entry(eid, evBuy ? strategy.long : strategy.short, qty = q, comment = evBuy ? "BUY" : "SELL")
+            if q1 > 0 and q1 < q
+                strategy.exit(eid + " TP1", eid, qty = q1, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
+                strategy.exit(eid + " TP2", eid, qty = q - q1, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+            else if q1 >= q
+                strategy.exit(eid + " TP1", eid, stop = S.stop, limit = S.tp1, comment_profit = "TP1", comment_loss = "SL")
+            else
+                strategy.exit(eid + " TP2", eid, stop = S.stop, limit = S.tp2, comment_profit = "TP2", comment_loss = "SL")
+
+    // Breakeven after TP1 (only if enabled in the engine inputs)
+    if evTP1 and useBE and strategy.position_size != 0
+        string bid = strategy.position_size > 0 ? "MEKA L" : "MEKA S"
+        strategy.exit(bid + " TP2", bid, qty = math.abs(strategy.position_size), stop = strategy.position_avg_price, limit = S.tp2, comment_profit = "TP2", comment_loss = "BE")
+
+    // Time-based early exit at this bar's close
+    if evEarly and strategy.position_size != 0
+        strategy.close_all(comment = "EARLY EXIT", immediately = true)
+
+    // Keep broker emulator and engine in lock-step (see docs: intrabar ordering)
+    if evDone and not evEarly and strategy.position_size != 0
+        strategy.close_all(comment = "SYNC", immediately = true)
