@@ -151,16 +151,16 @@ bool   alSig       = input.bool(true, "BUY / SELL & simulated fills", group = G_
 bool   alMgmt      = input.bool(true, "TP / SL / early exit / invalidation", group = G_ALR)
 
 string G_COL = "⑫ Colours"
-color  cHi    = input.color(#FF3B3B, "CRT high", inline = "c1", group = G_COL)
-color  cLo    = input.color(#22C55E, "CRT low", inline = "c1", group = G_COL)
-color  cMid   = input.color(#FFC83D, "CRT 50%", inline = "c1", group = G_COL)
-color  cBull  = input.color(#00C176, "Bull", inline = "c2", group = G_COL)
-color  cBear  = input.color(#FF3D57, "Bear", inline = "c2", group = G_COL)
-color  cBSL   = input.color(#FF8A65, "BSL", inline = "c3", group = G_COL)
-color  cSSL   = input.color(#4DD0E1, "SSL", inline = "c3", group = G_COL)
-color  cEntry = input.color(#2F80ED, "Entry", inline = "c4", group = G_COL)
-color  cTP    = input.color(#00E676, "Targets", inline = "c4", group = G_COL)
-color  cSL    = input.color(#FF5252, "Stop", inline = "c4", group = G_COL)
+color  cHi    = input.color(#FF3B3B, "CRT high / low / 50%", inline = "c1", group = G_COL)
+color  cLo    = input.color(#22C55E, "", inline = "c1", group = G_COL)
+color  cMid   = input.color(#FFC83D, "", inline = "c1", group = G_COL)
+color  cBull  = input.color(#00C176, "Bull / Bear", inline = "c2", group = G_COL)
+color  cBear  = input.color(#FF3D57, "", inline = "c2", group = G_COL)
+color  cBSL   = input.color(#FF8A65, "BSL / SSL", inline = "c3", group = G_COL)
+color  cSSL   = input.color(#4DD0E1, "", inline = "c3", group = G_COL)
+color  cEntry = input.color(#2F80ED, "Entry / Targets / Stop", inline = "c4", group = G_COL)
+color  cTP    = input.color(#00E676, "", inline = "c4", group = G_COL)
+color  cSL    = input.color(#FF5252, "", inline = "c4", group = G_COL)
 
 string G_MC = "⑭ Model C — 15M double-range confirmation"
 bool   cOn        = input.bool(true, "Enable Model C", group = G_MC)
@@ -179,9 +179,9 @@ string cBiasMode  = input.string("4H + 1H", "Directional bias filter", options =
 string cConflict  = input.string("Block trade", "When 4H and 1H disagree", options = ["Block trade", "Follow 4H", "Follow 1H"], group = G_MC)
 int    cEmaLen    = input.int(50, "Bias = last completed close vs EMA(N) of that TF", minval = 2, group = G_MC)
 bool   cStructF   = input.bool(false, "Require 15M market structure in trade direction", group = G_MC)
-bool   cSesAsia   = input.bool(true, "Confirm in Asia session", inline = "cs", group = G_MC)
-bool   cSesLon    = input.bool(true, "London", inline = "cs", group = G_MC)
-bool   cSesNy     = input.bool(true, "New York", inline = "cs", group = G_MC)
+bool   cSesAsia   = input.bool(true, "Confirm in session: Asia / London / New York", inline = "cs", group = G_MC)
+bool   cSesLon    = input.bool(true, "", inline = "cs", group = G_MC)
+bool   cSesNy     = input.bool(true, "", inline = "cs", group = G_MC)
 bool   cSesAny    = input.bool(false, "Any time (no session filter — raw-model test)", group = G_MC)
 float  cDispMin   = input.float(0.0, "Min breakout body (× 15M ATR14, 0 = off)", minval = 0.0, step = 0.1, group = G_MC)
 float  cVolMult   = input.float(0.0, "Min breakout volume (× 20-candle avg, 0 = off)", minval = 0.0, step = 0.1, group = G_MC)
@@ -210,9 +210,9 @@ bool   fvgStrongOnly = input.bool(false, "Show only strong-displacement gaps", g
 int    fvgShowN    = input.int(2, "Zones shown per side (above / below price)", minval = 1, maxval = 5, group = G_FVG)
 float  fvgMaxDist  = input.float(8.0, "Only show zones within × ATR of price", minval = 1.0, step = 0.5, group = G_FVG)
 int    fvgMaxAge   = input.int(288, "Forget gaps older than N chart bars", minval = 20, maxval = 3000, group = G_FVG)
-color  fvgBullC    = input.color(color.new(#26A69A, 86), "Bullish FVG", inline = "fc", group = G_FVG)
-color  fvgBearC    = input.color(color.new(#EF5350, 86), "Bearish FVG", inline = "fc", group = G_FVG)
-color  fvgInvC     = input.color(color.new(#9E9E9E, 86), "Inverse", inline = "fc", group = G_FVG)
+color  fvgBullC    = input.color(color.new(#26A69A, 86), "FVG colours: bullish / bearish / inverse", inline = "fc", group = G_FVG)
+color  fvgBearC    = input.color(color.new(#EF5350, 86), "", inline = "fc", group = G_FVG)
+color  fvgInvC     = input.color(color.new(#9E9E9E, 86), "", inline = "fc", group = G_FVG)
 
 string G_SD = "⑯ Supply & Demand / order blocks (context overlay)"
 bool   sdOn        = input.bool(true, "Detect supply & demand zones", group = G_SD)
@@ -224,8 +224,8 @@ int    sdMaxTouch  = input.int(3, "Retire a zone after N retests", minval = 1, m
 int    sdShowN     = input.int(2, "Zones shown per side", minval = 1, maxval = 5, group = G_SD)
 float  sdMaxDist   = input.float(10.0, "Only show zones within × ATR of price", minval = 1.0, step = 0.5, group = G_SD)
 int    sdMaxAge    = input.int(576, "Forget zones older than N chart bars", minval = 20, maxval = 5000, group = G_SD)
-color  sdDemC      = input.color(color.new(#00C176, 88), "Demand", inline = "sc", group = G_SD)
-color  sdSupC      = input.color(color.new(#FF3D57, 88), "Supply", inline = "sc", group = G_SD)
+color  sdDemC      = input.color(color.new(#00C176, 88), "Zone colours: demand / supply", inline = "sc", group = G_SD)
+color  sdSupC      = input.color(color.new(#FF3D57, 88), "", inline = "sc", group = G_SD)
 
 string G_MS = "⑰ Structure & liquidity overlays"
 string msShow      = input.string("Detailed mode only", "15M BOS / CHoCH / MSS markers", options = ["Detailed mode only", "Always", "Off"], group = G_MS, tooltip = "BOS = break in the direction of the prior 15M structure. CHoCH = first break against it. MSS = a CHoCH whose breaking candle is a displacement candle. All are drawn only after the breaking 15M candle has closed.")
