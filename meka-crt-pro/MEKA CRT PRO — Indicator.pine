@@ -347,7 +347,7 @@ string dashSz    = dashSizeIn == "Tiny" ? size.tiny : dashSizeIn == "Normal" ? s
 
 // ── Settings object: every input / derived setting used inside functions (keeps each
 //    function far below Pine's 254 "external elements" limit — one object instead of ~200 values)
-type CFG
+type CFG1
     int histCount
     bool showPD = false
     bool showPools = false
@@ -418,6 +418,8 @@ type CFG
     color cEntry
     color cTP
     color cSL
+
+type CFG2
     bool cOn = false
     string cRefMode
     bool cOpenAsia = false
@@ -487,6 +489,8 @@ type CFG
     float amdCompress
     int amdAccExp
     string amdRclTF
+
+type CFG3
     int amdReclaim
     int amdAccept
     float amdMaxSweep
@@ -547,10 +551,13 @@ type CFG
     int keepResolved
     string dashSz
 
-var CFG K = CFG.new()
 
-// fills part of K (each setup function stays far below the 254 external-element limit)
-f_initK1(CFG k) =>
+var CFG1 K1 = CFG1.new()
+var CFG2 K2 = CFG2.new()
+var CFG3 K3 = CFG3.new()
+
+// fills K1 once (each setup function stays far below the 254 external-element limit)
+f_initK1(CFG1 k) =>
     k.histCount := histCount
     k.showPD := showPD
     k.showPools := showPools
@@ -621,6 +628,10 @@ f_initK1(CFG k) =>
     k.cEntry := cEntry
     k.cTP := cTP
     k.cSL := cSL
+    true
+
+// fills K2 once (each setup function stays far below the 254 external-element limit)
+f_initK2(CFG2 k) =>
     k.cOn := cOn
     k.cRefMode := cRefMode
     k.cOpenAsia := cOpenAsia
@@ -634,10 +645,6 @@ f_initK1(CFG k) =>
     k.cSweepWin := cSweepWin
     k.cExpiry := cExpiry
     k.cBiasMode := cBiasMode
-    true
-
-// fills part of K (each setup function stays far below the 254 external-element limit)
-f_initK2(CFG k) =>
     k.cConflict := cConflict
     k.cEmaLen := cEmaLen
     k.cStructF := cStructF
@@ -694,6 +701,10 @@ f_initK2(CFG k) =>
     k.amdCompress := amdCompress
     k.amdAccExp := amdAccExp
     k.amdRclTF := amdRclTF
+    true
+
+// fills K3 once (each setup function stays far below the 254 external-element limit)
+f_initK3(CFG3 k) =>
     k.amdReclaim := amdReclaim
     k.amdAccept := amdAccept
     k.amdMaxSweep := amdMaxSweep
@@ -717,10 +728,6 @@ f_initK2(CFG k) =>
     k.cfMaxCon := cfMaxCon
     k.cfReqBias := cfReqBias
     k.cfReqClear := cfReqClear
-    true
-
-// fills part of K (each setup function stays far below the 254 external-element limit)
-f_initK3(CFG k) =>
     k.cfModels := cfModels
     k.fmOn := fmOn
     k.fmStrong := fmStrong
@@ -760,9 +767,10 @@ f_initK3(CFG k) =>
     true
 
 if barstate.isfirst
-    f_initK1(K)
-    f_initK2(K)
-    f_initK3(K)
+    f_initK1(K1)
+    f_initK2(K2)
+    f_initK3(K3)
+
 
 // ───────────────────────────── TYPES ─────────────────────────────
 // A tracked liquidity level (CRT boundaries are liquidity levels too).
@@ -959,9 +967,9 @@ f_poolName(Liq l) =>
     (l.side == 1 ? "BSL " : "SSL ") + l.kind + " " + f_p(l.price)
 
 f_poolDraw(Liq l, int x0) =>
-    color c = l.side == 1 ? K.cBSL : K.cSSL
+    color c = l.side == 1 ? K1.cBSL : K1.cSSL
     l.ln := line.new(x0, l.price, time, l.price, xloc = xloc.bar_time, extend = extend.right, color = color.new(c, 35), style = line.style_dotted, width = 1)
-    l.lb := label.new(time + K.labOff, l.price, f_poolName(l), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = color.new(c, 10), size = size.tiny)
+    l.lb := label.new(time + K3.labOff, l.price, f_poolName(l), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = color.new(c, 10), size = size.tiny)
 
 f_poolUndraw(Liq l) =>
     if not na(l.ln)
@@ -974,7 +982,7 @@ f_trimPools(array<Liq> arr, int side) =>
     for l in arr
         if not l.isCRT and l.state == 0 and l.side == side
             cnt += 1
-    while cnt > K.poolMax
+    while cnt > K1.poolMax
         int oi = -1
         int ot = na
         for [i, l] in arr
@@ -1007,8 +1015,8 @@ f_addPool(array<Liq> arr, float p, int side, string kind, float tol, int expT, i
                 done := true
                 break
     if not na(p) and not done
-        Liq n = Liq.new(price = p, side = side, kind = kind, created = time, expires = expT, rcTF = K.rcPool)
-        if (K.isDet or K.liqAlways) and K.showPools
+        Liq n = Liq.new(price = p, side = side, kind = kind, created = time, expires = expT, rcTF = K3.rcPool)
+        if (K3.isDet or K2.liqAlways) and K1.showPools
             f_poolDraw(n, na(x0) ? time : x0)
         arr.push(n)
         f_trimPools(arr, side)
@@ -1044,7 +1052,7 @@ method process(Liq l, float pen, int rcl, int acc, bool nw, float cc, int tc) =>
                 ev := 2
             else
                 l.tfCnt := l.tfCnt + 1
-                if l.tfCnt >= (l.rcTF == 1 ? K.reclaimWin15 : 1)
+                if l.tfCnt >= (l.rcTF == 1 ? K1.reclaimWin15 : 1)
                     l.state := 3
                     l.resolvedBar := bar_index
                     ev := 3
@@ -1091,16 +1099,16 @@ method retire(CRTRange r, array<line> hist, bool keep) =>
             line.set_x2(r.lnHi, time)
             line.set_x2(r.lnLo, time)
             line.set_x2(r.lnMid, time)
-            line.set_color(r.lnHi, color.new(K.cHi, 70))
-            line.set_color(r.lnLo, color.new(K.cLo, 70))
-            line.set_color(r.lnMid, color.new(K.cMid, 70))
+            line.set_color(r.lnHi, color.new(K1.cHi, 70))
+            line.set_color(r.lnLo, color.new(K1.cLo, 70))
+            line.set_color(r.lnMid, color.new(K1.cMid, 70))
             line.set_width(r.lnHi, 1)
             line.set_width(r.lnLo, 1)
             line.set_width(r.lnMid, 1)
             hist.push(r.lnHi)
             hist.push(r.lnLo)
             hist.push(r.lnMid)
-            while hist.size() > K.histCount * 3
+            while hist.size() > K1.histCount * 3
                 line.delete(hist.shift())
         else
             line.delete(r.lnHi)
@@ -1125,21 +1133,21 @@ method retire(CRTRange r, array<line> hist, bool keep) =>
 method drawNew(CRTRange r, bool primary, bool isHigh) =>
     int w = isHigh ? 2 : 1
     int tr = isHigh ? 0 : 15
-    r.lnHi  := line.new(r.t0, r.hi, time, r.hi, xloc = xloc.bar_time, extend = extend.right, color = color.new(K.cHi, tr), style = line.style_solid, width = w)
-    r.lnLo  := line.new(r.t0, r.lo, time, r.lo, xloc = xloc.bar_time, extend = extend.right, color = color.new(K.cLo, tr), style = line.style_solid, width = w)
-    r.lnMid := line.new(r.t0, r.mid, time, r.mid, xloc = xloc.bar_time, extend = extend.right, color = color.new(K.cMid, tr), style = line.style_dashed, width = w)
-    int xl = time + K.labOff * (isHigh ? 7 : 3)
-    r.lbHi  := label.new(xl, r.hi, r.tf + " CRT HIGH " + f_p(r.hi), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K.cHi, size = size.small)
-    r.lbLo  := label.new(xl, r.lo, r.tf + " CRT LOW " + f_p(r.lo), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K.cLo, size = size.small)
-    r.lbMid := label.new(xl, r.mid, r.tf + " CRT 50% " + f_p(r.mid), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K.cMid, size = size.small)
-    if K.showPD and primary
-        r.bxP := box.new(r.t0, r.hi, time, r.mid, border_color = C_CLEAR, xloc = xloc.bar_time, extend = extend.right, bgcolor = color.new(K.cHi, 93))
-        r.bxD := box.new(r.t0, r.mid, time, r.lo, border_color = C_CLEAR, xloc = xloc.bar_time, extend = extend.right, bgcolor = color.new(K.cLo, 93))
+    r.lnHi  := line.new(r.t0, r.hi, time, r.hi, xloc = xloc.bar_time, extend = extend.right, color = color.new(K1.cHi, tr), style = line.style_solid, width = w)
+    r.lnLo  := line.new(r.t0, r.lo, time, r.lo, xloc = xloc.bar_time, extend = extend.right, color = color.new(K1.cLo, tr), style = line.style_solid, width = w)
+    r.lnMid := line.new(r.t0, r.mid, time, r.mid, xloc = xloc.bar_time, extend = extend.right, color = color.new(K1.cMid, tr), style = line.style_dashed, width = w)
+    int xl = time + K3.labOff * (isHigh ? 7 : 3)
+    r.lbHi  := label.new(xl, r.hi, r.tf + " CRT HIGH " + f_p(r.hi), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K1.cHi, size = size.small)
+    r.lbLo  := label.new(xl, r.lo, r.tf + " CRT LOW " + f_p(r.lo), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K1.cLo, size = size.small)
+    r.lbMid := label.new(xl, r.mid, r.tf + " CRT 50% " + f_p(r.mid), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K1.cMid, size = size.small)
+    if K1.showPD and primary
+        r.bxP := box.new(r.t0, r.hi, time, r.mid, border_color = C_CLEAR, xloc = xloc.bar_time, extend = extend.right, bgcolor = color.new(K1.cHi, 93))
+        r.bxD := box.new(r.t0, r.mid, time, r.lo, border_color = C_CLEAR, xloc = xloc.bar_time, extend = extend.right, bgcolor = color.new(K1.cLo, 93))
 
 // Called on the first chart bar after a reference candle completes.
 method roll(CRTRange r, float hi, float lo, int t0, float atrH, array<Liq> arr, array<line> hist, bool vis, bool keep, bool primary, bool isHigh, float priorH, float priorL) =>
     float rng = hi - lo
-    bool valid = not na(hi) and not na(lo) and not na(atrH) and rng > 0 and rng >= K.minRangeATR * atrH and rng <= K.maxRangeATR * atrH
+    bool valid = not na(hi) and not na(lo) and not na(atrH) and rng > 0 and rng >= K1.minRangeATR * atrH and rng <= K1.maxRangeATR * atrH
     if valid
         if r.active
             r.retire(hist, keep)
@@ -1150,9 +1158,9 @@ method roll(CRTRange r, float hi, float lo, int t0, float atrH, array<Liq> arr, 
         r.age := 0
         r.active := true
         r.lastFail := false
-        int rc = isHigh ? K.rcCRT4 : K.rcCRT1
-        Liq lh = Liq.new(price = hi, side = 1, kind = r.tf + " CRT HIGH", tf = r.tf, isCRT = true, hiTF = isHigh, rHi = hi, rLo = lo, created = time, rcTF = rc, rT0 = t0, external = K.extLook == 0 or na(priorH) or hi > priorH)
-        Liq ll = Liq.new(price = lo, side = -1, kind = r.tf + " CRT LOW", tf = r.tf, isCRT = true, hiTF = isHigh, rHi = hi, rLo = lo, created = time, rcTF = rc, rT0 = t0, external = K.extLook == 0 or na(priorL) or lo < priorL)
+        int rc = isHigh ? K3.rcCRT4 : K3.rcCRT1
+        Liq lh = Liq.new(price = hi, side = 1, kind = r.tf + " CRT HIGH", tf = r.tf, isCRT = true, hiTF = isHigh, rHi = hi, rLo = lo, created = time, rcTF = rc, rT0 = t0, external = K1.extLook == 0 or na(priorH) or hi > priorH)
+        Liq ll = Liq.new(price = lo, side = -1, kind = r.tf + " CRT LOW", tf = r.tf, isCRT = true, hiTF = isHigh, rHi = hi, rLo = lo, created = time, rcTF = rc, rT0 = t0, external = K1.extLook == 0 or na(priorL) or lo < priorL)
         r.hiLiq := lh
         r.loLiq := ll
         arr.push(lh)
@@ -1162,7 +1170,7 @@ method roll(CRTRange r, float hi, float lo, int t0, float atrH, array<Liq> arr, 
     else
         r.lastFail := true
         r.age := r.age + 1
-        if r.active and r.age > K.rangeMaxAge
+        if r.active and r.age > K1.rangeMaxAge
             r.retire(hist, keep)
             r.active := false
     valid
@@ -1172,7 +1180,7 @@ method refresh(CRTRange r, bool isLast, bool isHigh) =>
         line.set_style(r.lnHi, r.hiLiq.state == 2 ? line.style_dotted : r.hiLiq.state == 3 ? line.style_dashed : line.style_solid)
         line.set_style(r.lnLo, r.loLiq.state == 2 ? line.style_dotted : r.loLiq.state == 3 ? line.style_dashed : line.style_solid)
         if isLast
-            int xl = time + K.labOff * (isHigh ? 7 : 3)
+            int xl = time + K3.labOff * (isHigh ? 7 : 3)
             label.set_x(r.lbHi, xl)
             label.set_x(r.lbLo, xl)
             label.set_x(r.lbMid, xl)
@@ -1209,7 +1217,7 @@ f_sweepLabel(array<label> q, Liq l, bool star) =>
     bool bsl = l.side == 1
     string head = l.isCRT ? (l.tf + (bsl ? " CRT HIGH SWEPT" : " CRT LOW SWEPT")) : ((bsl ? "BSL SWEPT · " : "SSL SWEPT · ") + l.kind)
     string txt = head + (star ? " ★" : "") + "\n" + f_p(l.price)
-    color bg = bsl ? color.new(K.cBear, 20) : color.new(K.cBull, 20)
+    color bg = bsl ? color.new(K1.cBear, 20) : color.new(K1.cBull, 20)
     string tip = "Level " + f_p(l.price) + " | extreme " + f_p(l.ext) + " | breach→reclaim " + str.tostring(bar_index - l.breachBar + 1) + " bar(s)" + (star ? " | ★ aligned with active CRT setup" : "")
     l.lbSweep := f_evLabel(q, bar_index, l.ext, txt, bg, color.white, bsl ? label.style_label_down : label.style_label_up, size.small, tip, yloc.price)
     l.labeled := true
@@ -1218,7 +1226,7 @@ f_alert(string ev, int d, float lvl, float en, float sl, float t1, float t2, str
     string ds = d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE"
     string mdl = str.startswith(ev, "C_") ? "C" : str.startswith(ev, "AMD_") ? "AMD" : str.startswith(ev, "FVG_") ? "FVG" : "A"
     string msg = ""
-    if K.alJSON
+    if K1.alJSON
         msg := "{\"source\":\"MEKA CRT PRO\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"timeframe\":\"" + timeframe.period + "\",\"model\":\"" + mdl + "\",\"event\":\"" + ev + "\",\"direction\":\"" + ds + "\",\"close\":" + str.tostring(close, format.mintick) + ",\"level\":" + (na(lvl) ? "null" : str.tostring(lvl, format.mintick)) + ",\"entry\":" + (na(en) ? "null" : str.tostring(en, format.mintick)) + ",\"sl\":" + (na(sl) ? "null" : str.tostring(sl, format.mintick)) + ",\"tp1\":" + (na(t1) ? "null" : str.tostring(t1, format.mintick)) + ",\"tp2\":" + (na(t2) ? "null" : str.tostring(t2, format.mintick)) + ",\"note\":\"" + note + "\",\"bar_time\":" + str.tostring(time) + "}"
     else
         msg := "MEKA CRT PRO [" + mdl + "] | " + syminfo.ticker + " " + timeframe.period + " | " + ev + " " + ds + " | close " + f_p(close) + (na(lvl) ? "" : " | level " + f_p(lvl)) + (na(en) ? "" : " | entry " + f_p(en)) + (na(sl) ? "" : " | SL " + f_p(sl)) + (na(t1) ? "" : " | TP1 " + f_p(t1)) + (na(t2) ? "" : " | TP2 " + f_p(t2)) + (note == "" ? "" : " | " + note)
@@ -1227,18 +1235,18 @@ f_alert(string ev, int d, float lvl, float en, float sl, float t1, float t2, str
 f_tradeDraw(Setup s, string tag) =>
     int x1 = bar_index
     int x2 = bar_index + 4
-    line lE = line.new(x1, s.entryRef, x2, s.entryRef, color = K.cEntry, width = 2)
-    line lS = line.new(x1, s.stop, x2, s.stop, color = K.cSL, width = 2)
-    line lA = line.new(x1, s.tp1, x2, s.tp1, color = K.cTP, width = 1, style = line.style_dashed)
-    line lB = line.new(x1, s.tp2, x2, s.tp2, color = K.cTP, width = 2)
+    line lE = line.new(x1, s.entryRef, x2, s.entryRef, color = K1.cEntry, width = 2)
+    line lS = line.new(x1, s.stop, x2, s.stop, color = K1.cSL, width = 2)
+    line lA = line.new(x1, s.tp1, x2, s.tp1, color = K1.cTP, width = 1, style = line.style_dashed)
+    line lB = line.new(x1, s.tp2, x2, s.tp2, color = K1.cTP, width = 2)
     s.lines := array.from(lE, lS, lA, lB)
-    label bE = label.new(x2, s.entryRef, tag + "ENTRY " + f_p(s.entryRef), style = label.style_label_left, color = C_CLEAR, textcolor = K.cEntry, size = size.small)
-    label bS = label.new(x2, s.stop, tag + "SL " + f_p(s.stop), style = label.style_label_left, color = C_CLEAR, textcolor = K.cSL, size = size.small)
-    label bA = label.new(x2, s.tp1, tag + "TP1 " + f_p(s.tp1), style = label.style_label_left, color = C_CLEAR, textcolor = K.cTP, size = size.small)
-    label bB = label.new(x2, s.tp2, tag + "TP2 " + f_p(s.tp2) + " · " + f_r(math.abs(s.tp2 - s.entryRef) / s.riskRef) + "R", style = label.style_label_left, color = C_CLEAR, textcolor = K.cTP, size = size.small)
+    label bE = label.new(x2, s.entryRef, tag + "ENTRY " + f_p(s.entryRef), style = label.style_label_left, color = C_CLEAR, textcolor = K1.cEntry, size = size.small)
+    label bS = label.new(x2, s.stop, tag + "SL " + f_p(s.stop), style = label.style_label_left, color = C_CLEAR, textcolor = K1.cSL, size = size.small)
+    label bA = label.new(x2, s.tp1, tag + "TP1 " + f_p(s.tp1), style = label.style_label_left, color = C_CLEAR, textcolor = K1.cTP, size = size.small)
+    label bB = label.new(x2, s.tp2, tag + "TP2 " + f_p(s.tp2) + " · " + f_r(math.abs(s.tp2 - s.entryRef) / s.riskRef) + "R", style = label.style_label_left, color = C_CLEAR, textcolor = K1.cTP, size = size.small)
     s.labels := array.from(bE, bS, bA, bB)
-    box zr = box.new(x1, math.max(s.entryRef, s.stop), x2, math.min(s.entryRef, s.stop), border_color = C_CLEAR, bgcolor = color.new(K.cSL, 92))
-    box zw = box.new(x1, math.max(s.entryRef, s.tp2), x2, math.min(s.entryRef, s.tp2), border_color = C_CLEAR, bgcolor = color.new(K.cTP, 93))
+    box zr = box.new(x1, math.max(s.entryRef, s.stop), x2, math.min(s.entryRef, s.stop), border_color = C_CLEAR, bgcolor = color.new(K1.cSL, 92))
+    box zw = box.new(x1, math.max(s.entryRef, s.tp2), x2, math.min(s.entryRef, s.tp2), border_color = C_CLEAR, bgcolor = color.new(K1.cTP, 93))
     s.boxes := array.from(zr, zw)
 
 f_tradeExtend(Setup s, int x2) =>
@@ -1264,42 +1272,42 @@ f_targets(int d, float entry, float risk, float rHi, float rLo, float rMid, stri
     float opp = d == 1 ? rHi : rLo
     float tp2 = na
     string tp2s = ""
-    if K.tp2Mode == "R multiple"
-        tp2 := entry + d * K.tp2R * risk
-        tp2s := str.tostring(K.tp2R) + "R"
+    if K1.tp2Mode == "R multiple"
+        tp2 := entry + d * K1.tp2R * risk
+        tp2s := str.tostring(K1.tp2R) + "R"
     else
-        if d * (opp - entry) >= K.minRR * risk
+        if d * (opp - entry) >= K1.minRR * risk
             tp2 := opp
             tp2s := rTF + (d == 1 ? " CRT HIGH" : " CRT LOW")
         else
             // external liquidity beyond the opposite boundary, capped at one extra range height
-            [px, kx] = f_nearestLiq(arr, d, entry, K.minRR * risk, opp + d * (rHi - rLo))
+            [px, kx] = f_nearestLiq(arr, d, entry, K1.minRR * risk, opp + d * (rHi - rLo))
             if not na(px)
                 tp2 := px
                 tp2s := kx
     // Cap far structural targets (e.g. a 4H boundary hundreds of points away)
-    if not na(tp2) and K.tp2Mode != "R multiple" and K.tp2MaxR > 0 and d * (tp2 - entry) > K.tp2MaxR * risk
-        [pc, kc] = f_nearestLiq(arr, d, entry, K.minRR * risk, entry + d * K.tp2MaxR * risk)
-        tp2 := not na(pc) ? pc : entry + d * K.tp2MaxR * risk
-        tp2s := not na(pc) ? kc : "cap " + str.tostring(K.tp2MaxR) + "R"
+    if not na(tp2) and K1.tp2Mode != "R multiple" and K1.tp2MaxR > 0 and d * (tp2 - entry) > K1.tp2MaxR * risk
+        [pc, kc] = f_nearestLiq(arr, d, entry, K1.minRR * risk, entry + d * K1.tp2MaxR * risk)
+        tp2 := not na(pc) ? pc : entry + d * K1.tp2MaxR * risk
+        tp2s := not na(pc) ? kc : "cap " + str.tostring(K1.tp2MaxR) + "R"
     float tp1 = na
     string tp1s = ""
     if not na(tp2)
-        if K.tp1Mode == "R multiple"
-            tp1 := entry + d * K.tp1R * risk
-            tp1s := str.tostring(K.tp1R) + "R"
+        if K1.tp1Mode == "R multiple"
+            tp1 := entry + d * K1.tp1R * risk
+            tp1s := str.tostring(K1.tp1R) + "R"
         else
-            if K.tp1Mode == "CRT 50%" and d * (rMid - entry) >= K.tp1MinR * risk and d * (tp2 - rMid) > 0
+            if K1.tp1Mode == "CRT 50%" and d * (rMid - entry) >= K1.tp1MinR * risk and d * (tp2 - rMid) > 0
                 tp1 := rMid
                 tp1s := "CRT 50%"
             if na(tp1)
-                [p1x, k1x] = f_nearestLiq(arr, d, entry, K.tp1MinR * risk, tp2)
+                [p1x, k1x] = f_nearestLiq(arr, d, entry, K1.tp1MinR * risk, tp2)
                 if not na(p1x) and d * (tp2 - p1x) > 0
                     tp1 := p1x
                     tp1s := k1x
             if na(tp1)
-                tp1 := entry + d * K.tp1R * risk
-                tp1s := str.tostring(K.tp1R) + "R"
+                tp1 := entry + d * K1.tp1R * risk
+                tp1s := str.tostring(K1.tp1R) + "R"
         if d * (tp2 - tp1) <= 0
             tp1 := entry + (tp2 - entry) * 0.5
             tp1s := "½ way to TP2"
@@ -1344,10 +1352,10 @@ f_invalidate(Setup s, string cat, string why, array<label> q) =>
     s.doneBar := bar_index
     f_pendDel(s)
     string tag = cat == "STRUCTURAL" ? "✕ INVALIDATED" : cat == "CONFLICT" ? "✕ CONFLICT" : cat == "MISSED" ? "MISSED ENTRY" : cat == "SESSION" ? "SESSION CLOSED" : cat == "REPLACED" ? "REPLACED" : "EXPIRED"
-    if K.isDet
+    if K3.isDet
         f_evLabel(q, bar_index, s.dir == 1 ? low : high, tag, color.new(C_GREY, 15), color.white, s.dir == 1 ? label.style_label_up : label.style_label_down, size.tiny, why, s.dir == 1 ? yloc.belowbar : yloc.abovebar)
     f_log(f_desc(s), cat, why)
-    if K.alMgmt
+    if K1.alMgmt
         f_alert("SETUP_" + cat, s.dir, s.level, na, na, na, na, why)
 
 // ── Shared trade lifecycle (Model A and Model C use the SAME fill + exit rules)
@@ -1369,9 +1377,9 @@ f_fill(Setup s, array<label> q, string mdl) =>
         else
             box.set_bottom(s.boxes.get(0), open)
             box.set_top(s.boxes.get(1), open)
-    if K.isDet
-        f_evLabel(q, bar_index, open, pfx + "FILL " + f_p(open), color.new(K.cEntry, 25), color.white, label.style_label_left, size.tiny, "Simulated fill at this bar's open (signal was on the previous closed bar)", yloc.price)
-    if K.alSig
+    if K3.isDet
+        f_evLabel(q, bar_index, open, pfx + "FILL " + f_p(open), color.new(K1.cEntry, 25), color.white, label.style_label_left, size.tiny, "Simulated fill at this bar's open (signal was on the previous closed bar)", yloc.price)
+    if K1.alSig
         f_alert(epf + "ENTRY_FILLED_SIM", s.dir, na, open, s.stop, s.tp1, s.tp2, "Model " + mdl + " simulated fill at bar open")
 
 // Conservative intrabar order: STOP first. Returns [outcome ("" while open), tp1 hit this bar, stop hit].
@@ -1386,30 +1394,30 @@ f_manage(Setup s, array<label> q, string mdl) =>
     if hitStop
         float xPx = dP == 1 ? math.min(open, s.stop) : math.max(open, s.stop)
         float rLeg = dP * (xPx - s.entry) / s.riskRef
-        s.resultR := s.tp1Done ? s.resultR + (1 - K.w1) * rLeg : rLeg
+        s.resultR := s.tp1Done ? s.resultR + (1 - K3.w1) * rLeg : rLeg
         outc := s.tp1Done and s.beOn ? "BE STOP" : "STOP HIT"
         stopH := true
     else
         hitT1 := not s.tp1Done and (dP == 1 ? high >= s.tp1 : low <= s.tp1)
         if hitT1
             s.tp1Done := true
-            s.resultR := K.w1 * dP * (s.tp1 - s.entry) / s.riskRef
+            s.resultR := K3.w1 * dP * (s.tp1 - s.entry) / s.riskRef
             if not na(s.labels) and s.labels.size() > 2
                 label.set_text(s.labels.get(2), pfx + "TP1 ✓ " + f_p(s.tp1))
-            if K.isDet
-                f_evLabel(q, bar_index, s.tp1, pfx + "TP1 HIT", color.new(K.cTP, 20), color.black, dP == 1 ? label.style_label_down : label.style_label_up, size.small, "Partial " + str.tostring(K.tp1Pct) + "% closed at " + f_p(s.tp1), yloc.price)
-            if K.alMgmt
+            if K3.isDet
+                f_evLabel(q, bar_index, s.tp1, pfx + "TP1 HIT", color.new(K1.cTP, 20), color.black, dP == 1 ? label.style_label_down : label.style_label_up, size.small, "Partial " + str.tostring(K1.tp1Pct) + "% closed at " + f_p(s.tp1), yloc.price)
+            if K1.alMgmt
                 f_alert(epf + "TP1_HIT", dP, s.tp1, s.entry, s.stop, s.tp1, s.tp2, "")
-            if K.w1 >= 1.0
+            if K3.w1 >= 1.0
                 outc := "TP1 HIT"
         if outc == "" and s.tp1Done and (dP == 1 ? high >= s.tp2 : low <= s.tp2)
-            s.resultR := s.resultR + (1 - K.w1) * dP * (s.tp2 - s.entry) / s.riskRef
+            s.resultR := s.resultR + (1 - K3.w1) * dP * (s.tp2 - s.entry) / s.riskRef
             outc := "TP2 HIT"
-        if outc == "" and K.maxBars > 0 and bar_index - s.fillBar + 1 >= K.maxBars
+        if outc == "" and K1.maxBars > 0 and bar_index - s.fillBar + 1 >= K1.maxBars
             float rE = dP * (close - s.entry) / s.riskRef
-            s.resultR := s.tp1Done ? s.resultR + (1 - K.w1) * rE : rE
+            s.resultR := s.tp1Done ? s.resultR + (1 - K3.w1) * rE : rE
             outc := "EARLY EXIT"
-        if hitT1 and K.useBE and outc == ""
+        if hitT1 and K1.useBE and outc == ""
             s.beOn := true
             s.stop := s.entry
             if not na(s.lines) and s.lines.size() > 1
@@ -1426,9 +1434,9 @@ f_manage(Setup s, array<label> q, string mdl) =>
         float yO = outc == "STOP HIT" or outc == "BE STOP" ? s.stop : outc == "EARLY EXIT" ? close : outc == "TP1 HIT" ? s.tp1 : s.tp2
         bool towardTP = outc == "TP2 HIT" or outc == "TP1 HIT"
         string stO = (dP == 1) == towardTP ? label.style_label_down : label.style_label_up
-        f_evLabel(q, bar_index, yO, pfx + outc + " " + (s.resultR >= 0 ? "+" : "") + f_r(s.resultR) + "R", color.new(isWin ? K.cTP : outc == "BE STOP" ? C_GREY : K.cSL, 15), isWin ? color.black : color.white, stO, size.small, "Simulated result incl. " + str.tostring(K.tp1Pct) + "% partial at TP1", yloc.price)
+        f_evLabel(q, bar_index, yO, pfx + outc + " " + (s.resultR >= 0 ? "+" : "") + f_r(s.resultR) + "R", color.new(isWin ? K1.cTP : outc == "BE STOP" ? C_GREY : K1.cSL, 15), isWin ? color.black : color.white, stO, size.small, "Simulated result incl. " + str.tostring(K1.tp1Pct) + "% partial at TP1", yloc.price)
         f_log(f_desc(s), "TRADE", outc + " " + (s.resultR >= 0 ? "+" : "") + f_r(s.resultR) + "R (simulated)")
-        if K.alMgmt
+        if K1.alMgmt
             f_alert(epf + (outc == "TP2 HIT" ? "TP2_HIT" : outc == "TP1 HIT" ? "TP1_FULL_EXIT" : outc == "EARLY EXIT" ? "EARLY_EXIT" : "STOP_HIT"), dP, yO, s.entry, s.stop, s.tp1, s.tp2, "result " + f_r(s.resultR) + "R")
     else
         f_tradeExtend(s, bar_index + 4)
@@ -1649,78 +1657,78 @@ f_inSessT(int t, string sess, string tz) =>
 // Name of the session whose OPEN candle starts at `t`, or "".
 f_cOpen(int t) =>
     string nm = ""
-    if K.cOpenNy and f_hhmm(t, K.nyTZ) == int(str.tonumber(K.cOpenNyT))
+    if K2.cOpenNy and f_hhmm(t, K1.nyTZ) == int(str.tonumber(K2.cOpenNyT))
         nm := "NY open"
-    else if K.cOpenLon and f_hhmm(t, K.lonTZ) == int(str.tonumber(K.cOpenLonT))
+    else if K2.cOpenLon and f_hhmm(t, K1.lonTZ) == int(str.tonumber(K2.cOpenLonT))
         nm := "London open"
-    else if K.cOpenAsia and f_hhmm(t, K.asiaTZ) == int(str.tonumber(K.cOpenAsiaT))
+    else if K2.cOpenAsia and f_hhmm(t, K1.asiaTZ) == int(str.tonumber(K2.cOpenAsiaT))
         nm := "Asia open"
     nm
 
 // Effective bias for Model C after the conflict policy. Returns [bias, conflict, text].
 f_cBias() =>
     bool conflict = Q.cBias4 != Q.cBias1
-    int eff = K.cBiasMode == "4H only" ? Q.cBias4 : K.cBiasMode == "1H only" ? Q.cBias1 : not conflict ? Q.cBias4 : K.cConflict == "Follow 4H" ? Q.cBias4 : K.cConflict == "Follow 1H" ? Q.cBias1 : 0
+    int eff = K2.cBiasMode == "4H only" ? Q.cBias4 : K2.cBiasMode == "1H only" ? Q.cBias1 : not conflict ? Q.cBias4 : K2.cConflict == "Follow 4H" ? Q.cBias4 : K2.cConflict == "Follow 1H" ? Q.cBias1 : 0
     string a4 = Q.cBias4 == 1 ? "↑" : Q.cBias4 == -1 ? "↓" : "–"
     string a1 = Q.cBias1 == 1 ? "↑" : Q.cBias1 == -1 ? "↓" : "–"
-    string txt = K.cBiasMode == "Off" ? "bias filter OFF (" + K.n4 + " " + a4 + " · " + K.n1 + " " + a1 + ")" : K.n4 + " " + a4 + " · " + K.n1 + " " + a1 + (K.cBiasMode == "4H + 1H" ? (conflict ? " → CONFLICT (" + K.cConflict + ")" : " → aligned") : "")
+    string txt = K2.cBiasMode == "Off" ? "bias filter OFF (" + K3.n4 + " " + a4 + " · " + K3.n1 + " " + a1 + ")" : K3.n4 + " " + a4 + " · " + K3.n1 + " " + a1 + (K2.cBiasMode == "4H + 1H" ? (conflict ? " → CONFLICT (" + K2.cConflict + ")" : " → aligned") : "")
     [eff, conflict, txt]
 
 // Context filters for a confirmed breakout. Returns "" when it passes, else the plain-English reason.
 f_cFilter(int d, int ct, float kO, float kC, float kAtr, float kV, float kVA) =>
     string why = ""
-    bool inS = K.cSesAny or (K.cSesAsia and f_inSessT(ct, K.asiaSess, K.asiaTZ)) or (K.cSesLon and f_inSessT(ct, K.lonSess, K.lonTZ)) or (K.cSesNy and f_inSessT(ct, K.nySess, K.nyTZ))
+    bool inS = K2.cSesAny or (K2.cSesAsia and f_inSessT(ct, K1.asiaSess, K1.asiaTZ)) or (K2.cSesLon and f_inSessT(ct, K1.lonSess, K1.lonTZ)) or (K2.cSesNy and f_inSessT(ct, K1.nySess, K1.nyTZ))
     [eff, conflict, btxt] = f_cBias()
     if not inS
         why := "the breakout candle (" + f_fmtT(ct) + ") is outside the enabled sessions"
-    else if K.cBiasMode == "4H + 1H" and conflict and K.cConflict == "Block trade"
-        why := K.n4 + " and " + K.n1 + " bias disagree (" + btxt + ")"
-    else if K.cBiasMode != "Off" and eff != d
+    else if K2.cBiasMode == "4H + 1H" and conflict and K2.cConflict == "Block trade"
+        why := K3.n4 + " and " + K3.n1 + " bias disagree (" + btxt + ")"
+    else if K2.cBiasMode != "Off" and eff != d
         why := "it is against the directional bias (" + btxt + ")"
-    else if K.cStructF and Q.c15Trend != d
-        why := K.nC + " market structure is not " + (d == 1 ? "bullish" : "bearish")
-    else if K.cDispMin > 0 and not na(kAtr) and math.abs(kC - kO) < K.cDispMin * kAtr
-        why := "breakout body " + f_r(math.abs(kC - kO) / kAtr) + " ATR < " + f_r(K.cDispMin) + " ATR"
-    else if K.cVolMult > 0 and not na(kV) and not na(kVA) and kVA > 0 and kV < K.cVolMult * kVA
-        why := "breakout volume " + f_r(kV / kVA) + "× average < " + f_r(K.cVolMult) + "×"
+    else if K2.cStructF and Q.c15Trend != d
+        why := K3.nC + " market structure is not " + (d == 1 ? "bullish" : "bearish")
+    else if K2.cDispMin > 0 and not na(kAtr) and math.abs(kC - kO) < K2.cDispMin * kAtr
+        why := "breakout body " + f_r(math.abs(kC - kO) / kAtr) + " ATR < " + f_r(K2.cDispMin) + " ATR"
+    else if K2.cVolMult > 0 and not na(kV) and not na(kVA) and kVA > 0 and kV < K2.cVolMult * kVA
+        why := "breakout volume " + f_r(kV / kVA) + "× average < " + f_r(K2.cVolMult) + "×"
     why
 
 // Model C targets. Returns [tp1, tp2, tp1 source, tp2 source, reason-if-not-tradable].
 f_cTargets(int d, float e, float risk, array<Liq> arr) =>
     float t1 = na
     float t2 = na
-    string s1 = str.tostring(K.cTp1R) + "R"
-    string s2 = str.tostring(K.cTp2R) + "R"
+    string s1 = str.tostring(K2.cTp1R) + "R"
+    string s2 = str.tostring(K2.cTp2R) + "R"
     string miss = ""
-    float capP = K.cTp2MaxR > 0 ? e + d * K.cTp2MaxR * risk : na
-    if K.cTpMode == "R multiples"
-        t1 := e + d * K.cTp1R * risk
-        t2 := e + d * K.cTp2R * risk
-    else if K.cTpMode == "Nearest liquidity (strict)"
-        t1 := e + d * K.cTp1R * risk
-        t2 := e + d * K.cTp2R * risk
+    float capP = K2.cTp2MaxR > 0 ? e + d * K2.cTp2MaxR * risk : na
+    if K2.cTpMode == "R multiples"
+        t1 := e + d * K2.cTp1R * risk
+        t2 := e + d * K2.cTp2R * risk
+    else if K2.cTpMode == "Nearest liquidity (strict)"
+        t1 := e + d * K2.cTp1R * risk
+        t2 := e + d * K2.cTp2R * risk
         [pL, kLq] = f_nearestLiq(arr, d, e, 0.0, na)
         if not na(pL)
-            if d * (pL - e) < K.cMinRR * risk
+            if d * (pL - e) < K2.cMinRR * risk
                 miss := "the nearest liquidity (" + kLq + " " + f_p(pL) + ") is only " + f_r(d * (pL - e) / risk) + "R away"
             else
                 t2 := pL
                 s2 := kLq
     else
-        [p1, k1] = f_nearestLiq(arr, d, e, K.tp1MinR * risk, capP)
-        t1 := not na(p1) ? p1 : e + d * K.cTp1R * risk
+        [p1, k1] = f_nearestLiq(arr, d, e, K1.tp1MinR * risk, capP)
+        t1 := not na(p1) ? p1 : e + d * K2.cTp1R * risk
         s1 := not na(p1) ? k1 : s1
-        [p2, k2] = f_nearestLiq(arr, d, e, math.max(K.cMinRR * risk, d * (t1 - e) + syminfo.mintick), capP)
-        t2 := not na(p2) ? p2 : e + d * K.cTp2R * risk
+        [p2, k2] = f_nearestLiq(arr, d, e, math.max(K2.cMinRR * risk, d * (t1 - e) + syminfo.mintick), capP)
+        t2 := not na(p2) ? p2 : e + d * K2.cTp2R * risk
         s2 := not na(p2) ? k2 : s2
     if not na(capP) and d * (t2 - capP) > 0
         t2 := capP
-        s2 := "cap " + str.tostring(K.cTp2MaxR) + "R"
+        s2 := "cap " + str.tostring(K2.cTp2MaxR) + "R"
     if d * (t2 - t1) <= 0
         t1 := e + (t2 - e) * 0.5
         s1 := "½ to TP2"
-    if miss == "" and d * (t2 - e) / risk < K.cMinRR
-        miss := "TP2 offers only " + f_r(d * (t2 - e) / risk) + "R (< " + f_r(K.cMinRR) + "R)"
+    if miss == "" and d * (t2 - e) / risk < K2.cMinRR
+        miss := "TP2 offers only " + f_r(d * (t2 - e) / risk) + "R (< " + f_r(K2.cMinRR) + "R)"
     [t1, t2, s1, s2, miss]
 
 method cLock(CRef r, float h2, float l2, int t2) =>
@@ -1731,18 +1739,18 @@ method cLock(CRef r, float h2, float l2, int t2) =>
     r.lo := math.min(r.l1, l2)
     r.state := 2
     r.nSeen := 0
-    color cl = color.new(K.cCol, 10)
-    if K.isDet
-        r.lns.push(line.new(r.t1, r.h1, r.t1 + K.c15Ms, r.h1, xloc = xloc.bar_time, color = cl, width = 2))
-        r.lns.push(line.new(r.t1, r.l1, r.t1 + K.c15Ms, r.l1, xloc = xloc.bar_time, color = cl, width = 2))
-        r.lns.push(line.new(t2, h2, t2 + K.c15Ms, h2, xloc = xloc.bar_time, color = cl, width = 2))
-        r.lns.push(line.new(t2, l2, t2 + K.c15Ms, l2, xloc = xloc.bar_time, color = cl, width = 2))
-    if K.cShowBnd
-        r.lns.push(line.new(r.t1, r.up, time + K.labOff, r.up, xloc = xloc.bar_time, color = color.new(K.cCol, 35), style = line.style_dashed, width = 1))
-        r.lns.push(line.new(r.t1, r.lo, time + K.labOff, r.lo, xloc = xloc.bar_time, color = color.new(K.cCol, 35), style = line.style_dashed, width = 1))
-        r.lbU := label.new(time + K.labOff, r.up, "C UPPER " + f_p(r.up), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K.cCol, size = size.tiny)
-        r.lbL := label.new(time + K.labOff, r.lo, "C LOWER " + f_p(r.lo), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K.cCol, size = size.tiny)
-    if K.alMgmt
+    color cl = color.new(K2.cCol, 10)
+    if K3.isDet
+        r.lns.push(line.new(r.t1, r.h1, r.t1 + K3.c15Ms, r.h1, xloc = xloc.bar_time, color = cl, width = 2))
+        r.lns.push(line.new(r.t1, r.l1, r.t1 + K3.c15Ms, r.l1, xloc = xloc.bar_time, color = cl, width = 2))
+        r.lns.push(line.new(t2, h2, t2 + K3.c15Ms, h2, xloc = xloc.bar_time, color = cl, width = 2))
+        r.lns.push(line.new(t2, l2, t2 + K3.c15Ms, l2, xloc = xloc.bar_time, color = cl, width = 2))
+    if K2.cShowBnd
+        r.lns.push(line.new(r.t1, r.up, time + K3.labOff, r.up, xloc = xloc.bar_time, color = color.new(K2.cCol, 35), style = line.style_dashed, width = 1))
+        r.lns.push(line.new(r.t1, r.lo, time + K3.labOff, r.lo, xloc = xloc.bar_time, color = color.new(K2.cCol, 35), style = line.style_dashed, width = 1))
+        r.lbU := label.new(time + K3.labOff, r.up, "C UPPER " + f_p(r.up), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K2.cCol, size = size.tiny)
+        r.lbL := label.new(time + K3.labOff, r.lo, "C LOWER " + f_p(r.lo), xloc = xloc.bar_time, style = label.style_label_left, color = C_CLEAR, textcolor = K2.cCol, size = size.tiny)
+    if K1.alMgmt
         f_alert("C_REFERENCE_LOCKED", 0, na, na, na, na, na, r.src + " pair " + f_fmtT(r.t1) + " + " + f_fmtT(t2) + " · upper " + f_p(r.up) + " · lower " + f_p(r.lo))
 
 method cExtend(CRef r, int x2) =>
@@ -1769,12 +1777,12 @@ method cEnd(CRef r, int st, string why, array<label> q) =>
     r.cExtend(time)
     if st != 7
         string cat = st == 9 ? "INVALIDATED" : st == 10 ? "EXPIRED" : "NOT TRADABLE"
-        if not K.isDet
+        if not K3.isDet
             r.cErase()
         else
-            f_evLabel(q, bar_index, high, "C " + (st == 9 ? "✕ INVALID" : st == 10 ? "EXPIRED" : "NOT TRADABLE"), C_CLEAR, K.cCol, label.style_label_down, size.tiny, why, yloc.abovebar)
+            f_evLabel(q, bar_index, high, "C " + (st == 9 ? "✕ INVALID" : st == 10 ? "EXPIRED" : "NOT TRADABLE"), C_CLEAR, K2.cCol, label.style_label_down, size.tiny, why, yloc.abovebar)
         f_log("C · " + r.src + " U " + f_p(r.up) + " / L " + f_p(r.lo), cat, why)
-        if K.alMgmt
+        if K1.alMgmt
             f_alert(st == 9 ? "C_INVALIDATED" : st == 10 ? "C_EXPIRED" : "C_MISSED_ENTRY", 0, na, na, na, na, na, why)
 
 // ───────────────────────────── CHART-TF SERIES ─────────────────────────────
@@ -1916,12 +1924,12 @@ var array<Zone> zones  = array.new<Zone>()
 var array<box>  ctxBox = array.new<box>()
 
 f_zRank(Zone z) =>
-    (z.touches == 0 ? 2 : z.touches == 1 ? 1 : 0) + (z.bos ? 1 : 0) + (z.disp >= 2 * K.sdDispATR ? 2 : 1)
+    (z.touches == 0 ? 2 : z.touches == 1 ? 1 : 0) + (z.bos ? 1 : 0) + (z.disp >= 2 * K2.sdDispATR ? 2 : 1)
 
 f_blkContext(bool go) =>
     if go
         // ── FVG update (gaps created on an earlier bar only)
-        if K.fvgOn and fvgs.size() > 0
+        if K2.fvgOn and fvgs.size() > 0
             for i = fvgs.size() - 1 to 0
                 FVG g = fvgs.get(i)
                 if g.bar < bar_index and g.state < 2
@@ -1959,22 +1967,22 @@ f_blkContext(bool go) =>
                             g.state := 1
                             g.tapBar := na(g.tapBar) ? bar_index : g.tapBar
                             g.fill := math.max(g.fill, (high - g.bot) / (g.top - g.bot))
-                if g.state >= 2 or bar_index - g.bar > K.fvgMaxAge
+                if g.state >= 2 or bar_index - g.bar > K2.fvgMaxAge
                     fvgs.remove(i)
         // ── FVG detection: three CLOSED candles [2], [1], [0]
-        if K.fvgOn and bar_index >= 2 and not na(atrE)
+        if K2.fvgOn and bar_index >= 2 and not na(atrE)
             float body1 = math.abs(close[1] - open[1])
             float gUp = low - high[2]
             float gDn = low[2] - high
-            if gUp > 0 and gUp >= K.fvgMinATR * atrE
-                fvgs.push(FVG.new(dir = 1, top = low, bot = high[2], t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] > open[1] and body1 >= K.fvgStrongATR * atrE, bos = not na(lastBull5Bar) and lastBull5Bar >= bar_index - 1))
-            if gDn > 0 and gDn >= K.fvgMinATR * atrE
-                fvgs.push(FVG.new(dir = -1, top = low[2], bot = high, t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] < open[1] and body1 >= K.fvgStrongATR * atrE, bos = not na(lastBear5Bar) and lastBear5Bar >= bar_index - 1))
+            if gUp > 0 and gUp >= K2.fvgMinATR * atrE
+                fvgs.push(FVG.new(dir = 1, top = low, bot = high[2], t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] > open[1] and body1 >= K2.fvgStrongATR * atrE, bos = not na(lastBull5Bar) and lastBull5Bar >= bar_index - 1))
+            if gDn > 0 and gDn >= K2.fvgMinATR * atrE
+                fvgs.push(FVG.new(dir = -1, top = low[2], bot = high, t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] < open[1] and body1 >= K2.fvgStrongATR * atrE, bos = not na(lastBear5Bar) and lastBear5Bar >= bar_index - 1))
             while fvgs.size() > 40
                 fvgs.shift()
 
         // ── Supply / demand update
-        if K.sdOn and zones.size() > 0
+        if K2.sdOn and zones.size() > 0
             for i = zones.size() - 1 to 0
                 Zone z = zones.get(i)
                 if z.state == 0 and z.bar < bar_index
@@ -1987,21 +1995,21 @@ f_blkContext(bool go) =>
                         if not z.inside
                             z.touches := z.touches + 1
                             z.inside := true
-                            if z.touches > K.sdMaxTouch
+                            if z.touches > K2.sdMaxTouch
                                 z.state := 2
                                 z.endBar := bar_index
                     else
                         z.inside := false
-                if bar_index - z.bar > K.sdMaxAge or (z.state != 0 and bar_index - z.endBar > 48)
+                if bar_index - z.bar > K2.sdMaxAge or (z.state != 0 and bar_index - z.endBar > 48)
                     zones.remove(i)
         // ── Supply / demand detection: this CLOSED bar is a displacement candle
-        if K.sdOn and bar_index > K.sdLook and not na(atrE)
-            bool bullD = close > open and close - open >= K.sdDispATR * atrE and close > high[1]
-            bool bearD = close < open and open - close >= K.sdDispATR * atrE and close < low[1]
+        if K2.sdOn and bar_index > K2.sdLook and not na(atrE)
+            bool bullD = close > open and close - open >= K2.sdDispATR * atrE and close > high[1]
+            bool bearD = close < open and open - close >= K2.sdDispATR * atrE and close < low[1]
             if bullD or bearD
                 int dZ = bullD ? 1 : -1
                 int k = 1
-                for j = 1 to K.sdLook
+                for j = 1 to K2.sdLook
                     if dZ == 1 ? close[j] < open[j] : close[j] > open[j]
                         k := j
                         break
@@ -2041,24 +2049,24 @@ f_conf(int d, float e, float t1, string mdl) =>
     bool biasOK = Q.cBias4 == d and Q.cBias1 == d
     if biasOK
         pro += 1
-        ok := f_cfAdd(ok, K.n4 + "/" + K.n1 + " bias")
+        ok := f_cfAdd(ok, K3.n4 + "/" + K3.n1 + " bias")
     else if Q.cBias4 == -d and Q.cBias1 == -d
         con += 1
-        no := f_cfAdd(no, K.n4 + "/" + K.n1 + " bias")
+        no := f_cfAdd(no, K3.n4 + "/" + K3.n1 + " bias")
     if Q.c15Trend == d
         pro += 1
-        ok := f_cfAdd(ok, K.nC + " structure")
+        ok := f_cfAdd(ok, K3.nC + " structure")
     else if Q.c15Trend == -d
         con += 1
-        no := f_cfAdd(no, K.nC + " structure")
+        no := f_cfAdd(no, K3.nC + " structure")
     if r1.active
         bool disc = e < r1.mid
         if (d == 1) == disc
             pro += 1
-            ok := f_cfAdd(ok, K.n1 + (disc ? " discount" : " premium"))
+            ok := f_cfAdd(ok, K3.n1 + (disc ? " discount" : " premium"))
         else
             con += 1
-            no := f_cfAdd(no, K.n1 + (disc ? " discount" : " premium"))
+            no := f_cfAdd(no, K3.n1 + (disc ? " discount" : " premium"))
     bool fSup = false
     bool fOpp = false
     for g in fvgs
@@ -2103,17 +2111,17 @@ f_conf(int d, float e, float t1, string mdl) =>
 
 // Returns "" if the candidate passes the configured confluence rules, else the reason.
 f_cfReject(int pro, int con, bool biasOK, bool clear, string mdl) =>
-    bool applies = K.cfModels == "All models" or (K.cfModels == "FVG model only" and mdl == "FVG") or (K.cfModels == "Models A + C only" and (mdl == "A" or mdl == "C"))
+    bool applies = K3.cfModels == "All models" or (K3.cfModels == "FVG model only" and mdl == "FVG") or (K3.cfModels == "Models A + C only" and (mdl == "A" or mdl == "C"))
     string r = ""
     if applies
-        if K.cfReqBias and not biasOK
+        if K3.cfReqBias and not biasOK
             r := "4H and 1H bias are not both aligned (mandatory)"
-        else if K.cfReqClear and not clear
+        else if K3.cfReqClear and not clear
             r := "an opposing FVG / zone sits between entry and TP1 (mandatory)"
-        else if K.cfMode == "Filter — min aligned / max opposing" and pro < K.cfMinPro
-            r := "only " + str.tostring(pro) + " aligned factor(s), needs " + str.tostring(K.cfMinPro)
-        else if K.cfMode == "Filter — min aligned / max opposing" and con > K.cfMaxCon
-            r := str.tostring(con) + " opposing factor(s), max " + str.tostring(K.cfMaxCon)
+        else if K3.cfMode == "Filter — min aligned / max opposing" and pro < K3.cfMinPro
+            r := "only " + str.tostring(pro) + " aligned factor(s), needs " + str.tostring(K3.cfMinPro)
+        else if K3.cfMode == "Filter — min aligned / max opposing" and con > K3.cfMaxCon
+            r := str.tostring(con) + " opposing factor(s), max " + str.tostring(K3.cfMaxCon)
     r
 
 f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBlock, string p_lastLiq, int p_lastSSLBar, int p_simN, float p_simR, int p_simW) =>
@@ -2129,21 +2137,21 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
     if go
         // ── 2. Roll CRT reference ranges on completion of a 4H / 1H candle
         if Q.h4New
-            r4.roll(Q.h4H, Q.h4L, Q.h4T, Q.h4ATR, pools, hist4, K.vis4, K.keepHist, K.primHigh, true, Q.h4PH, Q.h4PL)
+            r4.roll(Q.h4H, Q.h4L, Q.h4T, Q.h4ATR, pools, hist4, K3.vis4, K3.keepHist, K3.primHigh, true, Q.h4PH, Q.h4PL)
         if Q.h1New
-            r1.roll(Q.h1H, Q.h1L, Q.h1T, Q.h1ATR, pools, hist1, K.vis1, K.keepHist, not K.primHigh, false, Q.h1PH, Q.h1PL)
-        CRTRange pr = K.primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
+            r1.roll(Q.h1H, Q.h1L, Q.h1T, Q.h1ATR, pools, hist1, K3.vis1, K3.keepHist, not K3.primHigh, false, Q.h1PH, Q.h1PL)
+        CRTRange pr = K3.primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
 
         // ── 3. Liquidity pools (built only from information that existed before this bar)
-        float tol = K.eqTolATR * atrE
-        int expD = time + K.poolDays * K.dayMs
-        if K.trackPD and Q.pdNew
+        float tol = K1.eqTolATR * atrE
+        int expD = time + K1.poolDays * K3.dayMs
+        if K1.trackPD and Q.pdNew
             f_addPool(pools, Q.pdH, 1, "PDH", tol, expD, na, false)
             f_addPool(pools, Q.pdL, -1, "PDL", tol, expD, na, false)
-        if K.trackPW and Q.pwNew
-            f_addPool(pools, Q.pwH, 1, "PWH", tol, time + K.poolDays * 3 * K.dayMs, na, false)
-            f_addPool(pools, Q.pwL, -1, "PWL", tol, time + K.poolDays * 3 * K.dayMs, na, false)
-        if K.trackSess
+        if K1.trackPW and Q.pwNew
+            f_addPool(pools, Q.pwH, 1, "PWH", tol, time + K1.poolDays * 3 * K3.dayMs, na, false)
+            f_addPool(pools, Q.pwL, -1, "PWL", tol, time + K1.poolDays * 3 * K3.dayMs, na, false)
+        if K1.trackSess
             if asEnd
                 f_addPool(pools, asDH, 1, "ASIA H", tol, expD, asDT, false)
                 f_addPool(pools, asDL, -1, "ASIA L", tol, expD, asDT, false)
@@ -2153,11 +2161,11 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
             if nyEnd
                 f_addPool(pools, nyDH, 1, "NY H", tol, expD, nyDT, false)
                 f_addPool(pools, nyDL, -1, "NY L", tol, expD, nyDT, false)
-        if K.trackSw
+        if K1.trackSw
             if Q.swHNew and not na(Q.c15SwH)
-                f_addPool(pools, Q.c15SwH, 1, K.nC + " SWING H", tol, expD, Q.c15SwHT, true)
+                f_addPool(pools, Q.c15SwH, 1, K3.nC + " SWING H", tol, expD, Q.c15SwHT, true)
             if Q.swLNew and not na(Q.c15SwL)
-                f_addPool(pools, Q.c15SwL, -1, K.nC + " SWING L", tol, expD, Q.c15SwLT, true)
+                f_addPool(pools, Q.c15SwL, -1, K3.nC + " SWING L", tol, expD, Q.c15SwLT, true)
 
         // ── 4. Sweep / breakout classification for every tracked level
         Liq best = na
@@ -2172,7 +2180,7 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
             bool  nwR = l.rcTF == 1 ? Q.c15New : l.rcTF == 2 ? Q.h1New : Q.h4New
             float ccR = l.rcTF == 1 ? Q.c15C : l.rcTF == 2 ? Q.h1C : Q.h4C
             int   tcR = l.rcTF == 1 ? Q.c15TC : l.rcTF == 2 ? Q.h1TC : Q.h4TC
-            int ev = l.process(K.minPen, K.reclaimBars, K.acceptBars, nwR, ccR, tcR)
+            int ev = l.process(K3.minPen, K1.reclaimBars, K1.acceptBars, nwR, ccR, tcR)
             if ev == 2
                 bool qual = false
                 int score = 0
@@ -2181,16 +2189,16 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                 string qTF = ""
                 int qT0 = na
                 if l.isCRT
-                    if (l.hiTF ? K.src4 : K.src1) and not l.external
+                    if (l.hiTF ? K3.src4 : K3.src1) and not l.external
                         w_lastBlock := l.kind + " sweep ignored: internal boundary (an earlier " + l.tf + " candle already traded beyond it)"
-                    if (l.hiTF ? K.src4 : K.src1) and l.external
+                    if (l.hiTF ? K3.src4 : K3.src1) and l.external
                         qual := true
                         score := l.hiTF ? 3 : 2
                         qHi := l.rHi
                         qLo := l.rLo
                         qTF := l.tf
                         qT0 := l.rT0
-                else if K.usePools and pr.active
+                else if K1.usePools and pr.active
                     l.aligned := l.side == 1 ? l.price >= pr.mid : l.price <= pr.mid
                     if l.aligned
                         qual := true
@@ -2199,11 +2207,11 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                         qLo := pr.lo
                         qTF := pr.tf
                         qT0 := pr.t0
-                qual := qual and K.tfOK and math.abs(l.ext - l.price) <= K.maxSweepATR * atrE
-                if K.isDet
+                qual := qual and K3.tfOK and math.abs(l.ext - l.price) <= K1.maxSweepATR * atrE
+                if K3.isDet
                     f_sweepLabel(evLabels, l, qual and not l.isCRT)
-                    if K.isDet
-                        zoneQ.push(box.new(l.breachBar, math.max(l.price, l.ext), bar_index, math.min(l.price, l.ext), border_color = color.new(l.side == 1 ? K.cBear : K.cBull, 60), bgcolor = color.new(l.side == 1 ? K.cBear : K.cBull, 88)))
+                    if K3.isDet
+                        zoneQ.push(box.new(l.breachBar, math.max(l.price, l.ext), bar_index, math.min(l.price, l.ext), border_color = color.new(l.side == 1 ? K1.cBear : K1.cBull, 60), bgcolor = color.new(l.side == 1 ? K1.cBear : K1.cBull, 88)))
                         if zoneQ.size() > 40
                             box.delete(zoneQ.shift())
                 if l.side == -1
@@ -2217,7 +2225,7 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                         e.evHiSwept := true
                     else
                         e.evLoSwept := true
-                if K.alSweep
+                if K1.alSweep
                     f_alert(l.isCRT ? (l.side == 1 ? "CRT_HIGH_SWEPT" : "CRT_LOW_SWEPT") : "LIQUIDITY_RECLAIMED", -l.side, l.price, na, na, na, na, l.kind + " reclaimed, extreme " + f_p(l.ext))
                 if qual and score > bestScore
                     best := l
@@ -2226,7 +2234,7 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                     bLo := qLo
                     bTF := qTF
                     bT0 := qT0
-            else if ev == 3 and K.isDet
+            else if ev == 3 and K3.isDet
                 f_evLabel(evLabels, bar_index, l.price, (l.isCRT ? l.kind + " BROKEN" : (l.side == 1 ? "BSL BREAK · " : "SSL BREAK · ") + l.kind), color.new(C_GREY, 30), color.white, l.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, "Accepted beyond " + f_p(l.price) + " — breakout, not a sweep", yloc.price)
             if (ev == 2 or ev == 3) and not na(l.ln)
                 line.set_extend(l.ln, extend.none)
@@ -2268,28 +2276,28 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
             string cat = ""
             string why = ""
             // STRUCTURAL: price reached the planned stop (sweep extreme ∓ buffer) — the trade would have lost
-            bool through = dA == 1 ? (K.wickInval ? low <= w_S.invalLvl : close <= w_S.invalLvl) : (K.wickInval ? high >= w_S.invalLvl : close >= w_S.invalLvl)
+            bool through = dA == 1 ? (K1.wickInval ? low <= w_S.invalLvl : close <= w_S.invalLvl) : (K1.wickInval ? high >= w_S.invalLvl : close >= w_S.invalLvl)
             // CONFLICT: the confirmation TF printed a structure break the OTHER way after the reclaim
             int oppT = dA == 1 ? Q.c15BearT : Q.c15BullT
-            bool conflict = K.conflictInval and w_S.state == 3 and not na(oppT) and oppT > w_S.reclaimT
+            bool conflict = K1.conflictInval and w_S.state == 3 and not na(oppT) and oppT > w_S.reclaimT
             // MISSED: TP1 area reached before an entry existed (no chasing)
             bool ran = dA == 1 ? high >= w_S.rMid : low <= w_S.rMid
             if through
                 cat := "STRUCTURAL"
-                why := "Price " + (K.wickInval ? "traded" : "closed") + " through the planned stop " + f_p(w_S.invalLvl) + " (sweep extreme " + f_p(w_S.ext) + " + buffer) before an entry — the sweep failed."
+                why := "Price " + (K1.wickInval ? "traded" : "closed") + " through the planned stop " + f_p(w_S.invalLvl) + " (sweep extreme " + f_p(w_S.ext) + " + buffer) before an entry — the sweep failed."
             else if conflict
                 cat := "CONFLICT"
-                why := K.nC + " broke structure " + (dA == 1 ? "DOWN at " + f_p(Q.c15BearLvl) : "UP at " + f_p(Q.c15BullLvl)) + " after the reclaim — opposite confirmation, setup cancelled."
+                why := K3.nC + " broke structure " + (dA == 1 ? "DOWN at " + f_p(Q.c15BearLvl) : "UP at " + f_p(Q.c15BullLvl)) + " after the reclaim — opposite confirmation, setup cancelled."
             else if ran
                 cat := "MISSED"
-                why := "Price reached the CRT 50% " + f_p(w_S.rMid) + " " + (w_S.state == 3 ? "before " + K.nC + " confirmed" : "after " + K.nC + " but before a valid " + K.nE + " entry") + " — move missed, not chased."
-            else if w_S.state == 3 and bar_index - w_S.reclaimBar > K.confExpiry
+                why := "Price reached the CRT 50% " + f_p(w_S.rMid) + " " + (w_S.state == 3 ? "before " + K3.nC + " confirmed" : "after " + K3.nC + " but before a valid " + K3.nE + " entry") + " — move missed, not chased."
+            else if w_S.state == 3 and bar_index - w_S.reclaimBar > K1.confExpiry
                 cat := "EXPIRED"
-                why := "No " + K.nC + " confirmation within " + str.tostring(K.confExpiry) + " bars of the reclaim."
-            else if w_S.state == 4 and bar_index - w_S.confBar > K.entryExpiry
+                why := "No " + K3.nC + " confirmation within " + str.tostring(K1.confExpiry) + " bars of the reclaim."
+            else if w_S.state == 4 and bar_index - w_S.confBar > K1.entryExpiry
                 bool sess = str.contains(w_S.reject, "entry window")
                 cat := sess ? "SESSION" : "EXPIRED"
-                why := sess ? "Valid " + K.nE + " triggers appeared only while new entries were OFF (outside the entry windows); expired after " + str.tostring(K.entryExpiry) + " bars." : "No valid " + K.nE + " entry within " + str.tostring(K.entryExpiry) + " bars of " + K.nC + " confirmation" + (w_S.reject != "" ? " (last trigger rejected: " + w_S.reject + ")." : ".")
+                why := sess ? "Valid " + K3.nE + " triggers appeared only while new entries were OFF (outside the entry windows); expired after " + str.tostring(K1.entryExpiry) + " bars." : "No valid " + K3.nE + " entry within " + str.tostring(K1.entryExpiry) + " bars of " + K3.nC + " confirmation" + (w_S.reject != "" ? " (last trigger rejected: " + w_S.reject + ")." : ".")
             if cat != ""
                 f_invalidate(w_S, cat, why, evLabels)
                 e.evInval := true
@@ -2298,18 +2306,18 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
         if not na(best)
             int dB = -best.side
             float bMid = (bHi + bLo) / 2
-            float bufB = math.max(K.stopBufTk * syminfo.mintick, K.stopBufATR * atrE)
+            float bufB = math.max(K1.stopBufTk * syminfo.mintick, K1.stopBufATR * atrE)
             float invB = dB == 1 ? best.ext - bufB : best.ext + bufB
             string block = ""
             bool logIt = true
-            if K.htfFilter and w_h4Bias == -dB and not best.hiTF
-                block := "it is against the " + K.n4 + " CRT bias"
+            if K1.htfFilter and w_h4Bias == -dB and not best.hiTF
+                block := "it is against the " + K3.n4 + " CRT bias"
             else if (dB == 1 ? high >= bMid : low <= bMid) or (dB == 1 ? best.fav >= bMid : best.fav <= bMid)
                 block := "price already reached the CRT 50% before the reclaim was confirmed"
             else if w_S.state == 5 or w_S.state == 6
                 block := "a trade is already active"
                 logIt := false
-            else if K.roomCheck
+            else if K1.roomCheck
                 // Best plausible entry = a retest of the swept level. If even that has no ≥ min-R:R target,
                 // the sweep can never become a trade → say so instead of showing SETUP FORMING.
                 float rBest = dB * (best.price - invB)
@@ -2318,7 +2326,7 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                     [x1, x2, x1s, x2s] = f_targets(dB, best.price, rBest, bHi, bLo, bMid, bTF, pools)
                     t2B := x2
                 if na(t2B)
-                    block := "there is no target ≥ " + f_r(K.minRR) + "R even from a retest of the level"
+                    block := "there is no target ≥ " + f_r(K1.minRR) + "R even from a retest of the level"
             if block == ""
                 if (w_S.state == 3 or w_S.state == 4) and w_S.dir != dB
                     f_invalidate(w_S, "REPLACED", "Replaced by an opposite qualifying sweep (" + best.kind + " " + f_p(best.price) + ").", evLabels)
@@ -2331,11 +2339,11 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                     label.set_text(best.lbSweep, label.get_text(best.lbSweep) + "\nRECLAIMED · WATCH " + (dB == 1 ? "LONG ↑" : "SHORT ↓"))
                     // Locked levels for the pending setup (independent of later range rolls)
                     int xs = bar_index
-                    if K.isDet
-                        w_S.plInv := line.new(xs, invB, bar_index + 3, invB, color = color.new(K.cSL, 35), style = line.style_dotted, width = 1)
-                        w_S.plMid := line.new(xs, bMid, bar_index + 3, bMid, color = color.new(K.cMid, 25), style = line.style_dotted, width = 1)
-                        w_S.pbInv := label.new(bar_index + 3, invB, "INVALID " + (dB == 1 ? "≤ " : "≥ ") + f_p(invB), style = label.style_label_left, color = C_CLEAR, textcolor = color.new(K.cSL, 10), size = size.tiny)
-                        w_S.pbMid := label.new(bar_index + 3, bMid, "LOCKED " + bTF + " 50% " + f_p(bMid), style = label.style_label_left, color = C_CLEAR, textcolor = color.new(K.cMid, 10), size = size.tiny)
+                    if K3.isDet
+                        w_S.plInv := line.new(xs, invB, bar_index + 3, invB, color = color.new(K1.cSL, 35), style = line.style_dotted, width = 1)
+                        w_S.plMid := line.new(xs, bMid, bar_index + 3, bMid, color = color.new(K1.cMid, 25), style = line.style_dotted, width = 1)
+                        w_S.pbInv := label.new(bar_index + 3, invB, "INVALID " + (dB == 1 ? "≤ " : "≥ ") + f_p(invB), style = label.style_label_left, color = C_CLEAR, textcolor = color.new(K1.cSL, 10), size = size.tiny)
+                        w_S.pbMid := label.new(bar_index + 3, bMid, "LOCKED " + bTF + " 50% " + f_p(bMid), style = label.style_label_left, color = C_CLEAR, textcolor = color.new(K1.cMid, 10), size = size.tiny)
                 else
                     block := "a " + (w_S.dir == 1 ? "long" : "short") + " setup is already pending"
                     logIt := false
@@ -2352,9 +2360,9 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
             bool  mDs  = dC == 1 ? Q.c15BullDs : Q.c15BearDs
             float mLvl = dC == 1 ? Q.c15BullLvl : Q.c15BearLvl
             int   dT   = dC == 1 ? Q.c15BullDT : Q.c15BearDT
-            bool mssOK  = not na(mT) and mT > w_S.breachTime and (not K.reqChoch or mCh)
+            bool mssOK  = not na(mT) and mT > w_S.breachTime and (not K1.reqChoch or mCh)
             bool dispOK = not na(dT) and dT > w_S.breachTime
-            bool ok = switch K.confMode
+            bool ok = switch K1.confMode
                 "MSS / CHoCH"        => mssOK
                 "MSS + Displacement" => mssOK and mDs
                 => mssOK or dispOK
@@ -2367,23 +2375,23 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                     e.evConfBull := true
                 else
                     e.evConfBear := true
-                if K.isDet
-                    f_evLabel(evLabels, bar_index, dC == 1 ? low : high, K.nC + " ✓", color.new(dC == 1 ? K.cBull : K.cBear, 45), color.white, dC == 1 ? label.style_label_up : label.style_label_down, size.tiny, K.nC + " confirmed: " + w_S.confText, dC == 1 ? yloc.belowbar : yloc.abovebar)
-                if K.alConf
+                if K3.isDet
+                    f_evLabel(evLabels, bar_index, dC == 1 ? low : high, K3.nC + " ✓", color.new(dC == 1 ? K1.cBull : K1.cBear, 45), color.white, dC == 1 ? label.style_label_up : label.style_label_down, size.tiny, K3.nC + " confirmed: " + w_S.confText, dC == 1 ? yloc.belowbar : yloc.abovebar)
+                if K1.alConf
                     f_alert(dC == 1 ? "CONF_15M_BULLISH" : "CONF_15M_BEARISH", dC, w_S.rtLvl, na, na, na, na, w_S.confText)
 
         // ── 11. 5M entry trigger + risk/target qualification → SIGNAL
         if w_S.state == 4
             int dD = w_S.dir
-            float tolR = K.retestTol * atrE
+            float tolR = K1.retestTol * atrE
             bool brk = dD == 1 ? bull5Brk : bear5Brk
             bool rt  = dD == 1 ? (low <= w_S.rtLvl + tolR and close > w_S.rtLvl and close > open) : (high >= w_S.rtLvl - tolR and close < w_S.rtLvl and close < open)
             bool mom = dD == 1 ? (close > open and close > high[1]) : (close < open and close < low[1])
             // Timestamp-paired: on the bar the 15M confirmation becomes known, a 5M break that already
             // happened after the breach (and ≤ pairBars ago) completes the 5M side. Entry = THIS bar's close.
             int l5 = dD == 1 ? lastBull5Bar : lastBear5Bar
-            bool paired = K.pairedConf and w_S.confBar == bar_index and not na(l5) and l5 >= w_S.breachBar and bar_index - l5 <= K.pairBars
-            bool trig = switch K.trigMode
+            bool paired = K1.pairedConf and w_S.confBar == bar_index and not na(l5) and l5 >= w_S.breachBar and bar_index - l5 <= K1.pairBars
+            bool trig = switch K1.trigMode
                 "5M structure break"  => brk or paired
                 "Retest of 15M break" => rt
                 "Momentum candle"     => mom
@@ -2399,16 +2407,16 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                 string t2s = ""
                 if risk <= 0
                     rej := "entry beyond stop"
-                else if risk > K.maxRiskATR * atrE
-                    rej := "too far from stop (" + f_r(risk / atrE) + " ATR > " + f_r(K.maxRiskATR) + ")"
-                else if K.maxStopPts > 0 and risk > K.maxStopPts
-                    rej := "stop " + f_p(risk) + " pts > max " + f_p(K.maxStopPts) + " pts"
-                else if K.reqDiscount and (dD == 1 ? eRef >= w_S.rMid : eRef <= w_S.rMid)
+                else if risk > K1.maxRiskATR * atrE
+                    rej := "too far from stop (" + f_r(risk / atrE) + " ATR > " + f_r(K1.maxRiskATR) + ")"
+                else if K1.maxStopPts > 0 and risk > K1.maxStopPts
+                    rej := "stop " + f_p(risk) + " pts > max " + f_p(K1.maxStopPts) + " pts"
+                else if K1.reqDiscount and (dD == 1 ? eRef >= w_S.rMid : eRef <= w_S.rMid)
                     rej := dD == 1 ? "entry not in discount" : "entry not in premium"
                 else if not entryAllowed
                     rej := "outside entry window"
-                else if K.htfFilter and w_h4Bias == -dD and not w_S.hiTF
-                    rej := "against " + K.n4 + " CRT bias"
+                else if K1.htfFilter and w_h4Bias == -dD and not w_S.hiTF
+                    rej := "against " + K3.n4 + " CRT bias"
                 else
                     [a1, a2, a1s, a2s] = f_targets(dD, eRef, risk, w_S.rHi, w_S.rLo, w_S.rMid, w_S.srcTF, pools)
                     t1 := a1
@@ -2416,9 +2424,9 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                     t1s := a1s
                     t2s := a2s
                     if na(t2)
-                        rej := "no target with ≥ " + f_r(K.minRR) + "R"
-                    else if dD * (t2 - eRef) / risk < K.minRR
-                        rej := "R:R " + f_r(dD * (t2 - eRef) / risk) + " < " + f_r(K.minRR)
+                        rej := "no target with ≥ " + f_r(K1.minRR) + "R"
+                    else if dD * (t2 - eRef) / risk < K1.minRR
+                        rej := "R:R " + f_r(dD * (t2 - eRef) / risk) + " < " + f_r(K1.minRR)
                 string cfA = ""
                 if rej == ""
                     [cPa, cNa, cTa, cBa, cCa] = f_conf(dD, eRef, t1, "A")
@@ -2443,15 +2451,15 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
                         e.evBuy := true
                     else
                         e.evSell := true
-                    string tipS = w_S.srcKind + " sweep → " + K.nC + " " + w_S.confText + " → " + K.nE + " trigger | R:R to TP2 " + f_r(dD * (t2 - eRef) / risk) + " | confluence " + cfA
+                    string tipS = w_S.srcKind + " sweep → " + K3.nC + " " + w_S.confText + " → " + K3.nE + " trigger | R:R to TP2 " + f_r(dD * (t2 - eRef) / risk) + " | confluence " + cfA
                     f_log(f_desc(w_S), "SIGNAL", "CRT qualifies · confluence " + cfA)
-                    f_evLabel(evLabels, bar_index, dD == 1 ? low : high, (dD == 1 ? "A · BUY\n" : "A · SELL\n") + f_p(eRef), dD == 1 ? K.cBull : K.cBear, color.white, dD == 1 ? label.style_label_up : label.style_label_down, size.normal, tipS, dD == 1 ? yloc.belowbar : yloc.abovebar)
+                    f_evLabel(evLabels, bar_index, dD == 1 ? low : high, (dD == 1 ? "A · BUY\n" : "A · SELL\n") + f_p(eRef), dD == 1 ? K1.cBull : K1.cBear, color.white, dD == 1 ? label.style_label_up : label.style_label_down, size.normal, tipS, dD == 1 ? yloc.belowbar : yloc.abovebar)
                     f_pendDel(w_S)
                     f_tradeDraw(w_S, "A ")
                     tradeHist.push(w_S)
-                    if tradeHist.size() > K.keepTrades
+                    if tradeHist.size() > K1.keepTrades
                         f_tradeDelete(tradeHist.shift())
-                    if K.alSig
+                    if K1.alSig
                         f_alert(dD == 1 ? "BUY_CONFIRMED" : "SELL_CONFIRMED", dD, w_S.level, eRef, stp, t1, t2, "fill assumed at next bar open")
                 else
                     w_S.reject := rej
@@ -2467,19 +2475,19 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
         if pools.size() > 0
             for i = pools.size() - 1 to 0
                 Liq l = pools.get(i)
-                bool rm = l.isCRT ? (l.retired and l.state != 1) : ((l.state == 0 and time > l.expires) or ((l.state == 2 or l.state == 3) and bar_index - l.resolvedBar > K.keepResolved))
+                bool rm = l.isCRT ? (l.retired and l.state != 1) : ((l.state == 0 and time > l.expires) or ((l.state == 2 or l.state == 3) and bar_index - l.resolvedBar > K3.keepResolved))
                 if rm
                     f_poolUndraw(l)
                     pools.remove(i)
 
         // ── 13. Detailed-mode 15M structure markers
-        if K.msShow == "Always" or (K.msShow == "Detailed mode only" and K.isDet and K.showMSS)
+        if K2.msShow == "Always" or (K2.msShow == "Detailed mode only" and K3.isDet and K1.showMSS)
             if Q.mBullNew and not na(Q.c15BullPT)
-                mssQ.push(line.new(Q.c15BullPT, Q.c15BullLvl, time, Q.c15BullLvl, xloc = xloc.bar_time, color = color.new(K.cBull, 30), style = line.style_dashed, width = 1))
-                f_evLabel(evLabels, bar_index, Q.c15BullLvl, K.nC + (Q.c15BullCh and Q.c15BullDs ? " MSS ↑" : Q.c15BullCh ? " CHoCH ↑" : " BOS ↑"), C_CLEAR, color.new(K.cBull, 0), label.style_label_down, size.tiny, "Confirmed on a closed " + K.nC + " candle", yloc.price)
+                mssQ.push(line.new(Q.c15BullPT, Q.c15BullLvl, time, Q.c15BullLvl, xloc = xloc.bar_time, color = color.new(K1.cBull, 30), style = line.style_dashed, width = 1))
+                f_evLabel(evLabels, bar_index, Q.c15BullLvl, K3.nC + (Q.c15BullCh and Q.c15BullDs ? " MSS ↑" : Q.c15BullCh ? " CHoCH ↑" : " BOS ↑"), C_CLEAR, color.new(K1.cBull, 0), label.style_label_down, size.tiny, "Confirmed on a closed " + K3.nC + " candle", yloc.price)
             if Q.mBearNew and not na(Q.c15BearPT)
-                mssQ.push(line.new(Q.c15BearPT, Q.c15BearLvl, time, Q.c15BearLvl, xloc = xloc.bar_time, color = color.new(K.cBear, 30), style = line.style_dashed, width = 1))
-                f_evLabel(evLabels, bar_index, Q.c15BearLvl, K.nC + (Q.c15BearCh and Q.c15BearDs ? " MSS ↓" : Q.c15BearCh ? " CHoCH ↓" : " BOS ↓"), C_CLEAR, color.new(K.cBear, 0), label.style_label_up, size.tiny, "Confirmed on a closed " + K.nC + " candle", yloc.price)
+                mssQ.push(line.new(Q.c15BearPT, Q.c15BearLvl, time, Q.c15BearLvl, xloc = xloc.bar_time, color = color.new(K1.cBear, 30), style = line.style_dashed, width = 1))
+                f_evLabel(evLabels, bar_index, Q.c15BearLvl, K3.nC + (Q.c15BearCh and Q.c15BearDs ? " MSS ↓" : Q.c15BearCh ? " CHoCH ↓" : " BOS ↓"), C_CLEAR, color.new(K1.cBear, 0), label.style_label_up, size.tiny, "Confirmed on a closed " + K3.nC + " candle", yloc.price)
             while mssQ.size() > 30
                 line.delete(mssQ.shift())
 
@@ -2547,14 +2555,14 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
             e.evCEarly := oC == "EARLY EXIT"
             if oC != ""
                 e.evCDone := true
-                if not K.isDet and w_CR.state == 7
+                if not K3.isDet and w_CR.state == 7
                     w_CR.cErase()
                 w_cSimN += 1
                 w_cSimW += w_TC.resultR > 0 ? 1 : 0
                 w_cSimR += w_TC.resultR
 
         // ── C2. Structure-event arming (event known only after its 15M candle closed)
-        if K.cRefMode == "First pair after 15M structure event" and (Q.mBullNew or Q.mBearNew)
+        if K2.cRefMode == "First pair after 15M structure event" and (Q.mBullNew or Q.mBearNew)
             w_cArmed := true
             w_cArmT := math.max(nz(Q.c15BullT), nz(Q.c15BearT))
 
@@ -2593,10 +2601,10 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
 
         if haveC
             w_cLastT := kT
-            string openNm = K.cRefMode == "Session-opening pair" ? f_cOpen(kT) : ""
-            float cBuf = K.cBufTk * syminfo.mintick
-            bool strictR = K.cSweepRule == "Strict: any trade beyond"
-            bool sweepR  = K.cSweepRule == "Sweep: trade beyond + 15M close back inside"
+            string openNm = K2.cRefMode == "Session-opening pair" ? f_cOpen(kT) : ""
+            float cBuf = K2.cBufTk * syminfo.mintick
+            bool strictR = K2.cSweepRule == "Strict: any trade beyond"
+            bool sweepR  = K2.cSweepRule == "Sweep: trade beyond + 15M close back inside"
 
             // A new session-opening candle supersedes a pair that is still waiting
             if w_CR.state == 2 and openNm != ""
@@ -2606,7 +2614,7 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
             // ── C4. Watch a locked pair (only candles strictly AFTER the second reference candle)
             if w_CR.state == 2 and kT > w_CR.t2
                 w_CR.nSeen := w_CR.nSeen + 1
-                bool inWin = K.cSweepWin == 0 or w_CR.nSeen <= K.cSweepWin
+                bool inWin = K2.cSweepWin == 0 or w_CR.nSeen <= K2.cSweepWin
                 if inWin and (strictR or sweepR)
                     if kH > w_CR.up
                         w_CR.upHit := true
@@ -2641,20 +2649,20 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
                         else if w_TC.state == 5 or w_TC.state == 6
                             w_CR.cEnd(11, "Confirmed close " + side + " boundary " + bnd + ", but a Model C trade is already open.", evLabels)
                             e.evCMiss := true
-                        else if K.cNeedWin and not entryAllowed
+                        else if K2.cNeedWin and not entryAllowed
                             w_CR.cEnd(11, "Setup detected (15M closed " + side + " boundary " + bnd + ") but NOT ACTIONABLE: entries are OFF outside the entry windows.", evLabels)
                             e.evCMiss := true
                         else
                             // Risk plan from the signal-time price (this bar's close = the 15M close when on time)
                             float eRef = close
-                            float sbuf = K.cStopTk * syminfo.mintick
-                            float capR = math.min(na(kA) ? 1e12 : K.cMaxRiskATR * kA, K.maxStopPts > 0 ? K.maxStopPts : 1e12)
-                            float minR = na(kA) ? 0.0 : K.cMinStopATR * kA
+                            float sbuf = K2.cStopTk * syminfo.mintick
+                            float capR = math.min(na(kA) ? 1e12 : K2.cMaxRiskATR * kA, K1.maxStopPts > 0 ? K1.maxStopPts : 1e12)
+                            float minR = na(kA) ? 0.0 : K2.cMinStopATR * kA
                             float stp = na
                             string stpTxt = "opposite boundary"
-                            if K.cStopMode == "Smart: nearest structure, then ATR"
+                            if K2.cStopMode == "Smart: nearest structure, then ATR"
                                 array<float> cand = array.from(dK == 1 ? kL - sbuf : kH + sbuf, dK == 1 ? Q.c15SwL - sbuf : Q.c15SwH + sbuf, dK == 1 ? sw5L - sbuf : sw5H + sbuf)
-                                array<string> cnm = array.from("breakout candle", K.nC + " swing", K.nE + " swing")
+                                array<string> cnm = array.from("breakout candle", K3.nC + " swing", K3.nE + " swing")
                                 float bestR = na
                                 for [ix, cv] in cand
                                     if not na(cv)
@@ -2664,19 +2672,19 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
                                             stp := cv
                                             stpTxt := cnm.get(ix)
                                 if na(stp) and not na(kA)
-                                    float ra = math.max(K.cStopATR * kA, minR)
+                                    float ra = math.max(K2.cStopATR * kA, minR)
                                     if ra <= capR
                                         stp := eRef - dK * ra
-                                        stpTxt := f_r(K.cStopATR) + " ATR"
+                                        stpTxt := f_r(K2.cStopATR) + " ATR"
                             else
-                                if K.cStopMode == "Recent confirmed 15M swing"
+                                if K2.cStopMode == "Recent confirmed 15M swing"
                                     float sw = dK == 1 ? Q.c15SwL : Q.c15SwH
                                     if not na(sw) and dK * (eRef - sw) > 0
                                         stp := sw - dK * sbuf
-                                        stpTxt := K.nC + " swing"
-                                else if K.cStopMode == "ATR" and not na(kA)
-                                    stp := eRef - dK * K.cStopATR * kA
-                                    stpTxt := f_r(K.cStopATR) + " ATR"
+                                        stpTxt := K3.nC + " swing"
+                                else if K2.cStopMode == "ATR" and not na(kA)
+                                    stp := eRef - dK * K2.cStopATR * kA
+                                    stpTxt := f_r(K2.cStopATR) + " ATR"
                                 if na(stp)
                                     stp := dK == 1 ? w_CR.lo - sbuf : w_CR.up + sbuf
                             float risk = na(stp) ? na : dK * (eRef - stp)
@@ -2709,33 +2717,33 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
                                 w_CR.cEnd(11, "Setup detected (15M closed " + side + " boundary " + bnd + ") but NOT TRADABLE: " + miss + ".", evLabels)
                                 e.evCMiss := true
                             else
-                                w_TC := Setup.new(state = 5, dir = dK, srcTF = K.nC, srcKind = "C " + w_CR.src, level = dK == 1 ? w_CR.up : w_CR.lo, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = t1s, tp2Src = t2s, cfTxt = cfTc, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
+                                w_TC := Setup.new(state = 5, dir = dK, srcTF = K3.nC, srcKind = "C " + w_CR.src, level = dK == 1 ? w_CR.up : w_CR.lo, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = t1s, tp2Src = t2s, cfTxt = cfTc, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
                                 f_tradeDraw(w_TC, "C ")
                                 f_log(f_desc(w_TC), "SIGNAL", "RANGE BREAK qualifies · confluence " + cfTc)
                                 cTrades.push(w_TC)
-                                if cTrades.size() > K.keepTrades
+                                if cTrades.size() > K1.keepTrades
                                     f_tradeDelete(cTrades.shift())
-                                string tipC = "Model C · " + w_CR.src + " pair " + f_fmtT(w_CR.t1) + " + " + f_fmtT(w_CR.t2) + " · signal = 15M close " + f_fmtT(kT + K.c15Ms) + (late ? " (processed late)" : "") + " · fill = next bar open (simulated) · stop: " + stpTxt + " · R:R to TP2 " + f_r(dK * (t2 - eRef) / risk) + " · confluence " + cfTc
-                                f_evLabel(evLabels, bar_index, dK == 1 ? low : high, (dK == 1 ? "C · BUY\n" : "C · SELL\n") + f_p(eRef), color.new(dK == 1 ? K.cBull : K.cBear, 0), color.white, dK == 1 ? label.style_label_up : label.style_label_down, size.small, tipC, dK == 1 ? yloc.belowbar : yloc.abovebar)
+                                string tipC = "Model C · " + w_CR.src + " pair " + f_fmtT(w_CR.t1) + " + " + f_fmtT(w_CR.t2) + " · signal = 15M close " + f_fmtT(kT + K3.c15Ms) + (late ? " (processed late)" : "") + " · fill = next bar open (simulated) · stop: " + stpTxt + " · R:R to TP2 " + f_r(dK * (t2 - eRef) / risk) + " · confluence " + cfTc
+                                f_evLabel(evLabels, bar_index, dK == 1 ? low : high, (dK == 1 ? "C · BUY\n" : "C · SELL\n") + f_p(eRef), color.new(dK == 1 ? K1.cBull : K1.cBear, 0), color.white, dK == 1 ? label.style_label_up : label.style_label_down, size.small, tipC, dK == 1 ? yloc.belowbar : yloc.abovebar)
                                 w_CR.cEnd(7, "Confirmed " + (dK == 1 ? "LONG" : "SHORT") + ": 15M closed " + side + " boundary " + bnd + ".", evLabels)
                                 if dK == 1
                                     e.evCBuy := true
                                 else
                                     e.evCSell := true
-                                if K.alSig
+                                if K1.alSig
                                     f_alert(dK == 1 ? "C_BUY_CONFIRMED" : "C_SELL_CONFIRMED", dK, dK == 1 ? w_CR.up : w_CR.lo, eRef, stp, t1, t2, "Model C " + w_CR.src + " · fill assumed at next bar open")
                 else if w_CR.bullDQ and w_CR.bearDQ
                     w_CR.cEnd(9, "Both sides disqualified before any breakout: short — " + w_CR.bearWhy + "; long — " + w_CR.bullWhy + ".", evLabels)
                     e.evCInval := true
-                else if w_CR.nSeen >= K.cExpiry
-                    w_CR.cEnd(10, "No 15M close beyond either boundary within " + str.tostring(K.cExpiry) + " candles.", evLabels)
+                else if w_CR.nSeen >= K2.cExpiry
+                    w_CR.cEnd(10, "No 15M close beyond either boundary within " + str.tostring(K2.cExpiry) + " candles.", evLabels)
                     e.evCExp := true
                 else
-                    w_CR.cExtend(time + K.labOff)
+                    w_CR.cExtend(time + K3.labOff)
 
             // ── C5. Second reference candle → lock (must be the very next 15M candle)
             if w_CR.state == 1
-                if kT == w_CR.t1 + K.c15Ms
+                if kT == w_CR.t1 + K3.c15Ms
                     w_CR.cLock(kH, kL, kT)
                     w_cLastPairT2 := kT
                     e.evCLock := true
@@ -2747,12 +2755,12 @@ f_engC(bool go, EV e, CRef p_CR, Setup p_TC, int p_cArmT, bool p_cArmed, int p_c
                 bool fresh = na(w_cLastPairT2) or kT > w_cLastPairT2
                 int endT = w_CR.state >= 7 ? w_CR.endT : na
                 string nmNew = ""
-                if K.cRefMode == "Session-opening pair" and openNm != ""
+                if K2.cRefMode == "Session-opening pair" and openNm != ""
                     nmNew := openNm
-                else if K.cRefMode == "First pair after 15M structure event" and w_cArmed and kT >= w_cArmT
-                    nmNew := "after " + K.nC + " structure"
+                else if K2.cRefMode == "First pair after 15M structure event" and w_cArmed and kT >= w_cArmT
+                    nmNew := "after " + K3.nC + " structure"
                     w_cArmed := false
-                else if K.cRefMode == "Rolling consecutive pair" and not na(w_cPrevT) and kT == w_cPrevT + K.c15Ms and w_cPrevT > nz(w_cLastPairT2) and (na(endT) or w_cPrevT >= endT)
+                else if K2.cRefMode == "Rolling consecutive pair" and not na(w_cPrevT) and kT == w_cPrevT + K3.c15Ms and w_cPrevT > nz(w_cLastPairT2) and (na(endT) or w_cPrevT >= endT)
                     nmNew := "rolling"
                 if nmNew != "" and fresh
                     if w_CR.state != 0
@@ -2794,19 +2802,19 @@ f_blkZonesDraw(bool go) =>
         for b in ctxBox
             box.delete(b)
         ctxBox.clear()
-        int xR = time + K.labOff * 2
-        if K.fvgOn and K.fvgShow and fvgs.size() > 0
+        int xR = time + K3.labOff * 2
+        if K2.fvgOn and K2.fvgShow and fvgs.size() > 0
             for side in array.from(1, -1)
                 array<int> used = array.new<int>()
-                for n = 1 to K.fvgShowN
+                for n = 1 to K2.fvgShowN
                     int bi = -1
                     float bd = na
                     bool bs = false
                     for [i, g] in fvgs
                         bool okSide = side == 1 ? g.bot < close : g.top > close
-                        if g.dir == side and okSide and (K.fvgShowInv or not g.inv) and (not K.fvgStrongOnly or g.strong or g.inv) and not used.includes(i)
+                        if g.dir == side and okSide and (K2.fvgShowInv or not g.inv) and (not K2.fvgStrongOnly or g.strong or g.inv) and not used.includes(i)
                             float dist = math.max(0.0, side == 1 ? close - g.top : g.bot - close)
-                            if dist <= K.fvgMaxDist * atrE and (bi < 0 or (g.strong and not bs) or (g.strong == bs and dist < bd))
+                            if dist <= K2.fvgMaxDist * atrE and (bi < 0 or (g.strong and not bs) or (g.strong == bs and dist < bd))
                                 bi := i
                                 bd := dist
                                 bs := g.strong
@@ -2814,32 +2822,32 @@ f_blkZonesDraw(bool go) =>
                         used.push(bi)
                         FVG g = fvgs.get(bi)
                         string tx = (g.inv ? "IFVG" : "FVG") + (g.strong ? " ★" : "") + (g.state == 1 ? " ◐" : "")
-                        ctxBox.push(box.new(g.t0, g.top, xR, g.bot, xloc = xloc.bar_time, border_color = g.inv ? color.new(#9E9E9E, 40) : C_CLEAR, border_style = line.style_dashed, bgcolor = g.inv ? K.fvgInvC : side == 1 ? K.fvgBullC : K.fvgBearC, text = tx, text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_right))
-        if K.sdOn and K.sdShow and zones.size() > 0
+                        ctxBox.push(box.new(g.t0, g.top, xR, g.bot, xloc = xloc.bar_time, border_color = g.inv ? color.new(#9E9E9E, 40) : C_CLEAR, border_style = line.style_dashed, bgcolor = g.inv ? K2.fvgInvC : side == 1 ? K2.fvgBullC : K2.fvgBearC, text = tx, text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_right))
+        if K2.sdOn and K2.sdShow and zones.size() > 0
             for side in array.from(1, -1)
                 array<int> used = array.new<int>()
-                for n = 1 to K.sdShowN
+                for n = 1 to K2.sdShowN
                     int bi = -1
                     float bd = na
                     for [i, z] in zones
                         bool okSide = side == 1 ? z.bot < close : z.top > close
                         if z.state == 0 and z.dir == side and okSide and not used.includes(i)
                             float dist = math.max(0.0, side == 1 ? close - z.top : z.bot - close)
-                            if dist <= K.sdMaxDist * atrE and (bi < 0 or dist < bd)
+                            if dist <= K2.sdMaxDist * atrE and (bi < 0 or dist < bd)
                                 bi := i
                                 bd := dist
                     if bi >= 0
                         used.push(bi)
                         Zone z = zones.get(bi)
-                        ctxBox.push(box.new(z.t0, z.top, xR, z.bot, xloc = xloc.bar_time, border_color = color.new(side == 1 ? K.sdDemC : K.sdSupC, 40), border_width = 1, bgcolor = side == 1 ? K.sdDemC : K.sdSupC, text = (side == 1 ? "DEMAND " : "SUPPLY ") + str.tostring(f_zRank(z)) + "/5" + (z.bos ? " · BOS" : ""), text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_left))
-            if K.sdShowDead
+                        ctxBox.push(box.new(z.t0, z.top, xR, z.bot, xloc = xloc.bar_time, border_color = color.new(side == 1 ? K2.sdDemC : K2.sdSupC, 40), border_width = 1, bgcolor = side == 1 ? K2.sdDemC : K2.sdSupC, text = (side == 1 ? "DEMAND " : "SUPPLY ") + str.tostring(f_zRank(z)) + "/5" + (z.bos ? " · BOS" : ""), text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_left))
+            if K2.sdShowDead
                 int nDead = 0
                 if zones.size() > 0
                     for i = zones.size() - 1 to 0
                         Zone z = zones.get(i)
-                        if z.state == 1 and nDead < 2 and math.abs((z.top + z.bot) / 2 - close) <= K.sdMaxDist * atrE
+                        if z.state == 1 and nDead < 2 and math.abs((z.top + z.bot) / 2 - close) <= K2.sdMaxDist * atrE
                             nDead += 1
-                            ctxBox.push(box.new(z.t0, z.top, time + K.labOff, z.bot, xloc = xloc.bar_time, border_color = color.new(#607D8B, 70), border_style = line.style_dotted, bgcolor = color.new(#607D8B, 95), text = (z.dir == 1 ? "demand" : "supply") + " invalid", text_size = size.tiny, text_color = color.new(#607D8B, 30), text_halign = text.align_left))
+                            ctxBox.push(box.new(z.t0, z.top, time + K3.labOff, z.bot, xloc = xloc.bar_time, border_color = color.new(#607D8B, 70), border_style = line.style_dotted, bgcolor = color.new(#607D8B, 95), text = (z.dir == 1 ? "demand" : "supply") + " invalid", text_size = size.tiny, text_color = color.new(#607D8B, 30), text_halign = text.align_left))
     true
 
 f_blkZonesDraw(barstate.islast)
@@ -2862,11 +2870,11 @@ f_amdEnd(AMD a, int st, string why, array<label> q) =>
     if not na(a.bx)
         box.set_right(a.bx, time)
         if st != 7
-            box.set_border_color(a.bx, color.new(K.amdCol, 75))
+            box.set_border_color(a.bx, color.new(K3.amdCol, 75))
     if st != 7
         string cat = st == 9 ? "INVALIDATED" : st == 10 ? "EXPIRED" : "NOT TRADABLE"
         f_log("AMD · range " + f_p(a.lo) + " – " + f_p(a.hi) + (a.dir != 0 ? (a.dir == 1 ? " → LONG" : " → SHORT") : ""), cat, why)
-        if K.alMgmt
+        if K1.alMgmt
             f_alert(st == 9 ? "AMD_INVALIDATED" : st == 10 ? "AMD_EXPIRED" : "AMD_NOT_TRADABLE", a.dir, na, na, na, na, na, why)
 
 f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
@@ -2887,9 +2895,9 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
             if oD != ""
                 e.evDDone := true
 
-        float bufD = K.amdStopTk * syminfo.mintick
+        float bufD = K3.amdStopTk * syminfo.mintick
         // ── D2. Manipulation watch on a locked accumulation range
-        bool asiaMode = K.amdAccMode == "Asia range → London / New York"
+        bool asiaMode = K2.amdAccMode == "Asia range → London / New York"
         bool manipSess = not asiaMode or inLon or inNy
         if w_AD.state >= 1 and w_AD.state <= 3 and asiaMode and nyEnd
             f_amdEnd(w_AD, 10, "The New York session ended — the Asia range is not carried into the next day.", evLabels)
@@ -2898,7 +2906,7 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
         //  intact · swept & reclaimed (kept, noted) · accepted breakout / expansion (invalidated)
         if w_AD.state == 1 and bar_index > w_AD.lockBar and asiaMode and not manipSess
             float exMax = math.max(high - w_AD.hi, w_AD.lo - low)
-            if exMax > K.amdMaxSweep * atrE
+            if exMax > K3.amdMaxSweep * atrE
                 f_amdEnd(w_AD, 9, "Before London, price moved " + f_r(exMax / atrE) + " ATR beyond the Asia range — expansion, not accumulation.", evLabels)
                 e.evDInval := true
             else
@@ -2909,15 +2917,15 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
                     if sideNow != 0
                         w_AD.preOut := sideNow == w_AD.preSide ? w_AD.preOut + 1 : 1
                         w_AD.preSide := sideNow
-                        if w_AD.preOut >= K.amdAccept
+                        if w_AD.preOut >= K3.amdAccept
                             f_amdEnd(w_AD, 9, "Accepted breakout before London: " + str.tostring(w_AD.preOut) + " consecutive 15M closes " + (sideNow == 1 ? "above " + f_p(w_AD.hi) : "below " + f_p(w_AD.lo)) + ".", evLabels)
                             e.evDInval := true
                     else
                         w_AD.preOut := 0
                         w_AD.preSide := 0
         if w_AD.state == 1 and bar_index > w_AD.lockBar and manipSess
-            bool upB = high - w_AD.hi >= K.minPen
-            bool dnB = w_AD.lo - low >= K.minPen
+            bool upB = high - w_AD.hi >= K3.minPen
+            bool dnB = w_AD.lo - low >= K3.minPen
             if upB and dnB
                 f_amdEnd(w_AD, 9, "Both sides of the accumulation range were broken on the same candle — no clear manipulation.", evLabels)
                 e.evDInval := true
@@ -2927,18 +2935,18 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
                 w_AD.mExt := upB ? high : low
                 w_AD.mBar := bar_index
                 w_AD.outCnt := 0
-            else if not asiaMode and bar_index - w_AD.lockBar > K.amdAccExp
-                f_amdEnd(w_AD, 10, "No manipulation within " + str.tostring(K.amdAccExp) + " bars of the accumulation lock.", evLabels)
+            else if not asiaMode and bar_index - w_AD.lockBar > K2.amdAccExp
+                f_amdEnd(w_AD, 10, "No manipulation within " + str.tostring(K2.amdAccExp) + " bars of the accumulation lock.", evLabels)
                 e.evDExp := true
         if w_AD.state == 2
             w_AD.mExt := w_AD.side == 1 ? math.max(w_AD.mExt, high) : math.min(w_AD.mExt, low)
             float depth = w_AD.side == 1 ? w_AD.mExt - w_AD.hi : w_AD.lo - w_AD.mExt
             // 15M mode: judge the reclaim only on the chart bar whose close IS the completed 15M close
-            bool evalNow = K.amdRclTF == "Chart candle close" or Q.c15Last
-            int  rclWin = K.amdRclTF == "Chart candle close" ? K.amdReclaim : K.amdReclaim * K.c15Bars
+            bool evalNow = K2.amdRclTF == "Chart candle close" or Q.c15Last
+            int  rclWin = K2.amdRclTF == "Chart candle close" ? K3.amdReclaim : K3.amdReclaim * K3.c15Bars
             bool backIn = evalNow and (w_AD.side == 1 ? close < w_AD.hi : close > w_AD.lo)
             bool outC = evalNow and (w_AD.side == 1 ? close > w_AD.hi : close < w_AD.lo)
-            if depth > K.amdMaxSweep * atrE
+            if depth > K3.amdMaxSweep * atrE
                 f_amdEnd(w_AD, 9, "Move beyond the range was " + f_r(depth / atrE) + " ATR deep — expansion, not a manipulation sweep.", evLabels)
                 e.evDInval := true
             else if backIn
@@ -2947,15 +2955,15 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
                 w_AD.confBar := bar_index
                 w_AD.structOK := false
                 e.evDManip := true
-                if K.amdShowMark
-                    f_evLabel(evLabels, bar_index, w_AD.mExt, "M", color.new(K.amdCol, 20), color.black, w_AD.side == 1 ? label.style_triangledown : label.style_triangleup, size.tiny, "Manipulation confirmed: swept " + (w_AD.side == 1 ? "above " + f_p(w_AD.hi) : "below " + f_p(w_AD.lo)) + " (extreme " + f_p(w_AD.mExt) + ") and closed back inside", w_AD.side == 1 ? yloc.abovebar : yloc.belowbar)
-                if K.alSweep
+                if K3.amdShowMark
+                    f_evLabel(evLabels, bar_index, w_AD.mExt, "M", color.new(K3.amdCol, 20), color.black, w_AD.side == 1 ? label.style_triangledown : label.style_triangleup, size.tiny, "Manipulation confirmed: swept " + (w_AD.side == 1 ? "above " + f_p(w_AD.hi) : "below " + f_p(w_AD.lo)) + " (extreme " + f_p(w_AD.mExt) + ") and closed back inside", w_AD.side == 1 ? yloc.abovebar : yloc.belowbar)
+                if K1.alSweep
                     f_alert("AMD_MANIPULATION_CONFIRMED", w_AD.dir, w_AD.side == 1 ? w_AD.hi : w_AD.lo, na, na, na, na, "range " + f_p(w_AD.lo) + " – " + f_p(w_AD.hi) + ", extreme " + f_p(w_AD.mExt))
             else
                 if outC
                     w_AD.outCnt := w_AD.outCnt + 1
-                if w_AD.outCnt >= K.amdAccept or bar_index - w_AD.mBar + 1 >= rclWin
-                    f_amdEnd(w_AD, 9, "Price " + (w_AD.outCnt >= K.amdAccept ? "accepted outside the range (" + str.tostring(w_AD.outCnt) + " closes)" : "did not close back inside within " + str.tostring(K.amdReclaim) + (K.amdRclTF == "Chart candle close" ? " bars" : " " + K.nC + " candles")) + " — breakout, not manipulation.", evLabels)
+                if w_AD.outCnt >= K3.amdAccept or bar_index - w_AD.mBar + 1 >= rclWin
+                    f_amdEnd(w_AD, 9, "Price " + (w_AD.outCnt >= K3.amdAccept ? "accepted outside the range (" + str.tostring(w_AD.outCnt) + " closes)" : "did not close back inside within " + str.tostring(K3.amdReclaim) + (K2.amdRclTF == "Chart candle close" ? " bars" : " " + K3.nC + " candles")) + " — breakout, not manipulation.", evLabels)
                     e.evDInval := true
         // ── D3. Distribution
         if w_AD.state == 3 and bar_index > w_AD.confBar
@@ -2964,36 +2972,36 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
             if d == 1 ? bull5Brk : bear5Brk
                 w_AD.structOK := true
             bool lost = d == 1 ? low < w_AD.mExt : high > w_AD.mExt
-            bool dispC = d == 1 ? (close > open and close - open >= K.amdDispATR * atrE) : (close < open and open - close >= K.amdDispATR * atrE)
-            float lvl = K.amdDistLvl == "Range midpoint" ? mid : d == 1 ? w_AD.hi : w_AD.lo
+            bool dispC = d == 1 ? (close > open and close - open >= K3.amdDispATR * atrE) : (close < open and open - close >= K3.amdDispATR * atrE)
+            float lvl = K3.amdDistLvl == "Range midpoint" ? mid : d == 1 ? w_AD.hi : w_AD.lo
             bool beyond = d == 1 ? close > lvl : close < lvl
             if lost
                 f_amdEnd(w_AD, 9, "Price broke the manipulation extreme " + f_p(w_AD.mExt) + " before distribution.", evLabels)
                 e.evDInval := true
-            else if dispC and beyond and (not K.amdStruct or w_AD.structOK)
-                if K.amdShowMark
-                    f_evLabel(evLabels, bar_index, d == 1 ? low : high, "D", color.new(d == 1 ? K.cBull : K.cBear, 30), color.white, d == 1 ? label.style_triangleup : label.style_triangledown, size.tiny, "Distribution confirmed: displacement close " + (d == 1 ? "above " : "below ") + f_p(lvl), d == 1 ? yloc.belowbar : yloc.abovebar)
+            else if dispC and beyond and (not K3.amdStruct or w_AD.structOK)
+                if K3.amdShowMark
+                    f_evLabel(evLabels, bar_index, d == 1 ? low : high, "D", color.new(d == 1 ? K1.cBull : K1.cBear, 30), color.white, d == 1 ? label.style_triangleup : label.style_triangledown, size.tiny, "Distribution confirmed: displacement close " + (d == 1 ? "above " : "below ") + f_p(lvl), d == 1 ? yloc.belowbar : yloc.abovebar)
                 [effD, cnfD, btD] = f_cBias()
                 string why = ""
-                if K.amdBias != "Off" and K.cBiasMode != "Off" and ((K.cBiasMode == "4H + 1H" and cnfD and K.cConflict == "Block trade") or effD != d)
+                if K3.amdBias != "Off" and K2.cBiasMode != "Off" and ((K2.cBiasMode == "4H + 1H" and cnfD and K2.cConflict == "Block trade") or effD != d)
                     why := "against the directional bias (" + btD + ")"
                 else if not entryAllowed
                     why := "entries are OFF outside the entry windows"
                 else if w_TD.state == 5 or w_TD.state == 6
                     why := "an AMD trade is already open"
                 float eRef = close
-                float stp = K.amdStopMode == "Range midpoint" ? mid - d * bufD : K.amdStopMode == "Displacement candle" ? (d == 1 ? low - bufD : high + bufD) : (d == 1 ? w_AD.mExt - bufD : w_AD.mExt + bufD)
+                float stp = K3.amdStopMode == "Range midpoint" ? mid - d * bufD : K3.amdStopMode == "Displacement candle" ? (d == 1 ? low - bufD : high + bufD) : (d == 1 ? w_AD.mExt - bufD : w_AD.mExt + bufD)
                 float risk = d * (eRef - stp)
-                float capD = math.min(K.amdCapMode == "Range-based" ? (w_AD.hi - w_AD.lo) + K.amdMaxSweep * atrE + bufD : K.amdMaxRisk * atrE, K.maxStopPts > 0 ? K.maxStopPts : 1e12)
+                float capD = math.min(K3.amdCapMode == "Range-based" ? (w_AD.hi - w_AD.lo) + K3.amdMaxSweep * atrE + bufD : K3.amdMaxRisk * atrE, K1.maxStopPts > 0 ? K1.maxStopPts : 1e12)
                 if why == "" and risk <= 0
                     why := "price is already beyond the planned stop"
                 else if why == "" and risk > capD
                     why := "stop " + f_p(risk) + " pts is wider than the " + f_p(capD) + " pts maximum"
-                else if why == "" and K.amdTp2R < K.amdMinRR
-                    why := "TP2 " + f_r(K.amdTp2R) + "R is below the minimum R:R"
+                else if why == "" and K3.amdTp2R < K3.amdMinRR
+                    why := "TP2 " + f_r(K3.amdTp2R) + "R is below the minimum R:R"
                 string cfTd = ""
                 if why == ""
-                    [cPd, cNd, cTd, cBd, cCd] = f_conf(d, eRef, eRef + d * K.amdTp1R * risk, "AMD")
+                    [cPd, cNd, cTd, cBd, cCd] = f_conf(d, eRef, eRef + d * K3.amdTp1R * risk, "AMD")
                     cfTd := cTd
                     string crd = f_cfReject(cPd, cNd, cBd, cCd, "AMD")
                     if crd != ""
@@ -3002,44 +3010,44 @@ f_engAMD(bool go, EV e, AMD p_AD, Setup p_TD, int p_amdLastEnd) =>
                     f_amdEnd(w_AD, 11, "Distribution confirmed but NOT TRADABLE: " + why + ".", evLabels)
                     e.evDMiss := true
                 else
-                    float t1 = eRef + d * K.amdTp1R * risk
-                    float t2 = eRef + d * K.amdTp2R * risk
-                    w_TD := Setup.new(state = 5, dir = d, srcTF = K.nE, srcKind = "AMD range " + f_p(w_AD.lo) + "–" + f_p(w_AD.hi), level = d == 1 ? w_AD.lo : w_AD.hi, ext = w_AD.mExt, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(K.amdTp1R) + "R", tp2Src = str.tostring(K.amdTp2R) + "R", cfTxt = cfTd, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
+                    float t1 = eRef + d * K3.amdTp1R * risk
+                    float t2 = eRef + d * K3.amdTp2R * risk
+                    w_TD := Setup.new(state = 5, dir = d, srcTF = K3.nE, srcKind = "AMD range " + f_p(w_AD.lo) + "–" + f_p(w_AD.hi), level = d == 1 ? w_AD.lo : w_AD.hi, ext = w_AD.mExt, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(K3.amdTp1R) + "R", tp2Src = str.tostring(K3.amdTp2R) + "R", cfTxt = cfTd, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
                     f_tradeDraw(w_TD, "AMD ")
                     f_log(f_desc(w_TD), "SIGNAL", "AMD qualifies · confluence " + cfTd)
                     dTrades.push(w_TD)
-                    if dTrades.size() > K.keepTrades
+                    if dTrades.size() > K1.keepTrades
                         f_tradeDelete(dTrades.shift())
-                    f_evLabel(evLabels, bar_index, d == 1 ? low : high, (d == 1 ? "AMD · BUY\n" : "AMD · SELL\n") + f_p(eRef), d == 1 ? K.cBull : K.cBear, color.white, d == 1 ? label.style_label_up : label.style_label_down, size.small, "AMD: accumulation " + f_p(w_AD.lo) + "–" + f_p(w_AD.hi) + " · manipulation extreme " + f_p(w_AD.mExt) + " · distribution close " + f_p(eRef) + " · fill = next bar open (simulated) · confluence " + cfTd, d == 1 ? yloc.belowbar : yloc.abovebar)
+                    f_evLabel(evLabels, bar_index, d == 1 ? low : high, (d == 1 ? "AMD · BUY\n" : "AMD · SELL\n") + f_p(eRef), d == 1 ? K1.cBull : K1.cBear, color.white, d == 1 ? label.style_label_up : label.style_label_down, size.small, "AMD: accumulation " + f_p(w_AD.lo) + "–" + f_p(w_AD.hi) + " · manipulation extreme " + f_p(w_AD.mExt) + " · distribution close " + f_p(eRef) + " · fill = next bar open (simulated) · confluence " + cfTd, d == 1 ? yloc.belowbar : yloc.abovebar)
                     f_amdEnd(w_AD, 7, "Distribution confirmed → " + (d == 1 ? "LONG" : "SHORT") + ".", evLabels)
                     if d == 1
                         e.evDBuy := true
                     else
                         e.evDSell := true
-                    if K.alSig
+                    if K1.alSig
                         f_alert(d == 1 ? "AMD_BUY_CONFIRMED" : "AMD_SELL_CONFIRMED", d, lvl, eRef, stp, t1, t2, "fill assumed at next bar open")
-            else if bar_index - w_AD.confBar > K.amdDistExp
-                f_amdEnd(w_AD, 10, "No distribution within " + str.tostring(K.amdDistExp) + " bars of the manipulation.", evLabels)
+            else if bar_index - w_AD.confBar > K3.amdDistExp
+                f_amdEnd(w_AD, 10, "No distribution within " + str.tostring(K3.amdDistExp) + " bars of the manipulation.", evLabels)
                 e.evDExp := true
         // ── D4. Accumulation detection (never overlaps the previous AMD range)
         if w_AD.state == 0 or w_AD.state >= 7
-            int wStart = bar_index - K.amdLen + 1
+            int wStart = bar_index - K2.amdLen + 1
             bool fresh = (na(w_amdLastEnd) or wStart > w_amdLastEnd) and (w_AD.state < 7 or wStart > w_AD.endBar)
-            bool okRoll = not asiaMode and fresh and not na(atrSlow) and amdHiN - amdLoN <= K.amdRangeATR * atrSlow and atrE <= K.amdCompress * atrSlow
+            bool okRoll = not asiaMode and fresh and not na(atrSlow) and amdHiN - amdLoN <= K2.amdRangeATR * atrSlow and atrE <= K2.amdCompress * atrSlow
             // Asia mode: lock the COMPLETED Asia range on the first bar after Asia ends
-            bool okAsia = asiaMode and asEnd and not na(asDH) and not na(Q.h1ATR) and asDH - asDL <= K.amdAsiaH1 * Q.h1ATR and asDH > asDL
+            bool okAsia = asiaMode and asEnd and not na(asDH) and not na(Q.h1ATR) and asDH - asDL <= K2.amdAsiaH1 * Q.h1ATR and asDH > asDL
             if asiaMode and asEnd and not na(asDH) and not okAsia and not na(Q.h1ATR)
-                f_log("AMD · Asia " + f_p(asDL) + " – " + f_p(asDH), "SKIPPED", "Asia range " + f_r((asDH - asDL) / Q.h1ATR) + " × 1H ATR is wider than " + f_r(K.amdAsiaH1) + " — not a consolidation.")
+                f_log("AMD · Asia " + f_p(asDL) + " – " + f_p(asDH), "SKIPPED", "Asia range " + f_r((asDH - asDL) / Q.h1ATR) + " × 1H ATR is wider than " + f_r(K2.amdAsiaH1) + " — not a consolidation.")
             if okRoll or okAsia
-                w_AD := okAsia ? AMD.new(state = 1, hi = asDH, lo = asDL, t0 = asDT, lockBar = bar_index) : AMD.new(state = 1, hi = amdHiN, lo = amdLoN, t0 = time[K.amdLen - 1], lockBar = bar_index)
+                w_AD := okAsia ? AMD.new(state = 1, hi = asDH, lo = asDL, t0 = asDT, lockBar = bar_index) : AMD.new(state = 1, hi = amdHiN, lo = amdLoN, t0 = time[K2.amdLen - 1], lockBar = bar_index)
                 w_amdLastEnd := bar_index
-                if K.amdShowBox
-                    w_AD.bx := box.new(w_AD.t0, w_AD.hi, time, w_AD.lo, xloc = xloc.bar_time, border_color = color.new(K.amdCol, 30), border_width = 1, bgcolor = color.new(K.amdCol, 96), text = asiaMode ? "ASIA ACCUMULATION" : "ACCUMULATION", text_size = size.tiny, text_color = color.new(K.amdCol, 30), text_halign = text.align_left, text_valign = text.align_top)
+                if K3.amdShowBox
+                    w_AD.bx := box.new(w_AD.t0, w_AD.hi, time, w_AD.lo, xloc = xloc.bar_time, border_color = color.new(K3.amdCol, 30), border_width = 1, bgcolor = color.new(K3.amdCol, 96), text = asiaMode ? "ASIA ACCUMULATION" : "ACCUMULATION", text_size = size.tiny, text_color = color.new(K3.amdCol, 30), text_halign = text.align_left, text_valign = text.align_top)
                     amdBoxes.push(w_AD.bx)
                     if amdBoxes.size() > 3
                         box.delete(amdBoxes.shift())
                 e.evDLock := true
-                if K.alMgmt
+                if K1.alMgmt
                     f_alert("AMD_ACCUMULATION_LOCKED", 0, na, na, na, na, na, "range " + f_p(w_AD.lo) + " – " + f_p(w_AD.hi))
         if w_AD.state >= 1 and w_AD.state <= 3 and not na(w_AD.bx)
             box.set_right(w_AD.bx, time)
@@ -3076,8 +3084,8 @@ f_engFVG(bool go, EV e, Setup p_TF) =>
         int fbi = -1
         if fvgs.size() > 0
             for [i, g] in fvgs
-                if not g.used and not g.inv and g.state == 1 and not na(g.tapBar) and (not K.fmStrong or g.strong) and (not K.fmBos or g.bos)
-                    if g.tapBar - g.bar > K.fmMaxWait or bar_index - g.tapBar >= K.fmTrigWin
+                if not g.used and not g.inv and g.state == 1 and not na(g.tapBar) and (not K3.fmStrong or g.strong) and (not K3.fmBos or g.bos)
+                    if g.tapBar - g.bar > K3.fmMaxWait or bar_index - g.tapBar >= K3.fmTrigWin
                         g.used := true
                     else
                         float ce = (g.top + g.bot) / 2
@@ -3089,14 +3097,14 @@ f_engFVG(bool go, EV e, Setup p_TF) =>
             gq.used := true
             int dF = gq.dir
             float eRef = close
-            float stp = dF == 1 ? gq.bot - K.fmStopTk * syminfo.mintick : gq.top + K.fmStopTk * syminfo.mintick
+            float stp = dF == 1 ? gq.bot - K3.fmStopTk * syminfo.mintick : gq.top + K3.fmStopTk * syminfo.mintick
             float risk = dF * (eRef - stp)
-            float capF = math.min(K.fmMaxRisk * atrE, K.maxStopPts > 0 ? K.maxStopPts : 1e12)
-            float t1 = eRef + dF * K.fmTp1R * risk
-            float t2 = eRef + dF * K.fmTp2R * risk
+            float capF = math.min(K3.fmMaxRisk * atrE, K1.maxStopPts > 0 ? K1.maxStopPts : 1e12)
+            float t1 = eRef + dF * K3.fmTp1R * risk
+            float t2 = eRef + dF * K3.fmTp2R * risk
             [effF, cnfF, btF] = f_cBias()
             string why = ""
-            if K.fmBias != "Off" and K.cBiasMode != "Off" and ((K.cBiasMode == "4H + 1H" and cnfF and K.cConflict == "Block trade") or effF != dF)
+            if K3.fmBias != "Off" and K2.cBiasMode != "Off" and ((K2.cBiasMode == "4H + 1H" and cnfF and K2.cConflict == "Block trade") or effF != dF)
                 why := "against the directional bias (" + btF + ")"
             else if not entryAllowed
                 why := "entries are OFF outside the entry windows"
@@ -3106,8 +3114,8 @@ f_engFVG(bool go, EV e, Setup p_TF) =>
                 why := "price is already beyond the planned stop"
             else if risk > capF
                 why := "stop " + f_p(risk) + " pts is wider than the " + f_p(capF) + " pts maximum"
-            else if K.fmTp2R < K.fmMinRR
-                why := "TP2 " + f_r(K.fmTp2R) + "R is below the minimum R:R"
+            else if K3.fmTp2R < K3.fmMinRR
+                why := "TP2 " + f_r(K3.fmTp2R) + "R is below the minimum R:R"
             string cfTf = ""
             if why == ""
                 [cPf, cNf, cTf, cBf, cCf] = f_conf(dF, eRef, t1, "FVG")
@@ -3119,21 +3127,21 @@ f_engFVG(bool go, EV e, Setup p_TF) =>
             if why != ""
                 f_log(gDesc, "NOT TRADABLE", "FVG retest confirmed but NOT TRADABLE: " + why + ".")
                 e.evFMiss := true
-                if K.alMgmt
+                if K1.alMgmt
                     f_alert("FVG_NOT_TRADABLE", dF, dF == 1 ? gq.top : gq.bot, na, na, na, na, why)
             else
-                w_TF := Setup.new(state = 5, dir = dF, srcTF = K.nE, srcKind = "FVG " + f_p(gq.bot) + "–" + f_p(gq.top), level = dF == 1 ? gq.bot : gq.top, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(K.fmTp1R) + "R", tp2Src = str.tostring(K.fmTp2R) + "R", cfTxt = cfTf, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
+                w_TF := Setup.new(state = 5, dir = dF, srcTF = K3.nE, srcKind = "FVG " + f_p(gq.bot) + "–" + f_p(gq.top), level = dF == 1 ? gq.bot : gq.top, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(K3.fmTp1R) + "R", tp2Src = str.tostring(K3.fmTp2R) + "R", cfTxt = cfTf, lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
                 f_tradeDraw(w_TF, "FVG ")
                 fTrades.push(w_TF)
-                if fTrades.size() > K.keepTrades
+                if fTrades.size() > K1.keepTrades
                     f_tradeDelete(fTrades.shift())
-                f_evLabel(evLabels, bar_index, dF == 1 ? low : high, (dF == 1 ? "FVG · BUY\n" : "FVG · SELL\n") + f_p(eRef), dF == 1 ? K.cBull : K.cBear, color.white, dF == 1 ? label.style_label_up : label.style_label_down, size.small, "Strong FVG " + f_p(gq.bot) + "–" + f_p(gq.top) + (gq.bos ? " with BOS" : "") + " · first retest + rejection close · fill = next bar open (simulated) · confluence " + cfTf, dF == 1 ? yloc.belowbar : yloc.abovebar)
+                f_evLabel(evLabels, bar_index, dF == 1 ? low : high, (dF == 1 ? "FVG · BUY\n" : "FVG · SELL\n") + f_p(eRef), dF == 1 ? K1.cBull : K1.cBear, color.white, dF == 1 ? label.style_label_up : label.style_label_down, size.small, "Strong FVG " + f_p(gq.bot) + "–" + f_p(gq.top) + (gq.bos ? " with BOS" : "") + " · first retest + rejection close · fill = next bar open (simulated) · confluence " + cfTf, dF == 1 ? yloc.belowbar : yloc.abovebar)
                 f_log(gDesc, "SIGNAL", "FVG qualifies · confluence " + cfTf)
                 if dF == 1
                     e.evFBuy := true
                 else
                     e.evFSell := true
-                if K.alSig
+                if K1.alSig
                     f_alert(dF == 1 ? "FVG_BUY_CONFIRMED" : "FVG_SELL_CONFIRMED", dF, dF == 1 ? gq.top : gq.bot, eRef, stp, t1, t2, "fill assumed at next bar open")
     w_TF
 
@@ -3207,8 +3215,8 @@ string dashPos = switch dashPosIn
 var table dash = table.new(dashPos, 2, 22, bgcolor = color.new(#0B0F17, 6), frame_color = color.new(C_GOLD, 45), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
 
 f_row(table t, int rw, string k, string v, color vc) =>
-    table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_valign = text.align_top, text_size = K.dashSz)
-    table.cell(t, 1, rw, v, text_color = vc, text_halign = text.align_left, text_size = K.dashSz)
+    table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_valign = text.align_top, text_size = K3.dashSz)
+    table.cell(t, 1, rw, v, text_color = vc, text_halign = text.align_left, text_size = K3.dashSz)
 
 if barstate.isfirst and showDash and dashStyle != "Compact"
     table.cell(dash, 0, 0, "MEKA CRT PRO  ·  " + nE, text_color = C_GOLD, text_halign = text.align_center, text_size = dashSz, bgcolor = color.new(#141A24, 0))
@@ -3217,23 +3225,23 @@ if barstate.isfirst and showDash and dashStyle != "Compact"
 f_blkDashFull(bool go) =>
     if go
         table.clear(dash, 0, 1, 1, 21)
-        CRTRange prD = K.primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
+        CRTRange prD = K3.primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
         string dW = S.dir == 1 ? "LONG" : "SHORT"
-        color dC = S.dir == 1 ? K.cBull : K.cBear
+        color dC = S.dir == 1 ? K1.cBull : K1.cBear
         int row = 1
 
         // Market
-        string mTxt = K.mkt + " · " + syminfo.type + (syminfo.type == "futures" ? " (" + syminfo.root + ")" : "") + " · tick " + str.tostring(syminfo.mintick)
+        string mTxt = K3.mkt + " · " + syminfo.type + (syminfo.type == "futures" ? " (" + syminfo.root + ")" : "") + " · tick " + str.tostring(syminfo.mintick)
         f_row(dash, row, "Market", mTxt, color.white)
         row += 1
 
         // 4H / 1H
-        string t4 = f_rangeRow(r4, K.n4) + (h4Bias == 1 ? "  · bias ↑" : h4Bias == -1 ? "  · bias ↓" : "")
-        f_row(dash, row, K.n4 + " CRT", t4, h4Bias == 1 ? K.cBull : h4Bias == -1 ? K.cBear : color.white)
+        string t4 = f_rangeRow(r4, K3.n4) + (h4Bias == 1 ? "  · bias ↑" : h4Bias == -1 ? "  · bias ↓" : "")
+        f_row(dash, row, K3.n4 + " CRT", t4, h4Bias == 1 ? K1.cBull : h4Bias == -1 ? K1.cBear : color.white)
         row += 1
-        string t1r = f_rangeRow(r1, K.n1) + (r1.active and r4.active ? (r1.mid < r4.mid ? "  · in " + K.n4 + " discount" : "  · in " + K.n4 + " premium") : "")
-        color c1r = r1.active and r1.loLiq.state == 2 ? K.cBull : r1.active and r1.hiLiq.state == 2 ? K.cBear : color.white
-        f_row(dash, row, K.n1 + " CRT", t1r, c1r)
+        string t1r = f_rangeRow(r1, K3.n1) + (r1.active and r4.active ? (r1.mid < r4.mid ? "  · in " + K3.n4 + " discount" : "  · in " + K3.n4 + " premium") : "")
+        color c1r = r1.active and r1.loLiq.state == 2 ? K1.cBull : r1.active and r1.hiLiq.state == 2 ? K1.cBear : color.white
+        f_row(dash, row, K3.n1 + " CRT", t1r, c1r)
         row += 1
 
         // 15M
@@ -3241,31 +3249,31 @@ f_blkDashFull(bool go) =>
         color c15 = color.white
         if S.state == 3
             float lv = S.dir == 1 ? (Q.c15SwHB ? na : Q.c15SwH) : (Q.c15SwLB ? na : Q.c15SwL)
-            t15 := "Waiting: " + (na(lv) ? "new swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(lv) + " (MSS)") + (K.confMode == "MSS or Displacement" ? " or displacement" : K.confMode == "MSS + Displacement" ? " with displacement" : "")
+            t15 := "Waiting: " + (na(lv) ? "new swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(lv) + " (MSS)") + (K1.confMode == "MSS or Displacement" ? " or displacement" : K1.confMode == "MSS + Displacement" ? " with displacement" : "")
             c15 := C_GOLD
         else if S.state >= 4 and S.state <= 6
             t15 := (S.dir == 1 ? "Bullish confirmed · " : "Bearish confirmed · ") + S.confText
             c15 := dC
         else
             t15 := "Structure " + (Q.c15Trend == 1 ? "bullish" : Q.c15Trend == -1 ? "bearish" : "neutral") + (Q.c15Trend == 1 and not na(Q.c15BullLvl) ? " (last break ↑ " + f_p(Q.c15BullLvl) + ")" : Q.c15Trend == -1 and not na(Q.c15BearLvl) ? " (last break ↓ " + f_p(Q.c15BearLvl) + ")" : "")
-            c15 := Q.c15Trend == 1 ? color.new(K.cBull, 30) : Q.c15Trend == -1 ? color.new(K.cBear, 30) : color.white
-        f_row(dash, row, K.nC, t15, c15)
+            c15 := Q.c15Trend == 1 ? color.new(K1.cBull, 30) : Q.c15Trend == -1 ? color.new(K1.cBear, 30) : color.white
+        f_row(dash, row, K3.nC, t15, c15)
         row += 1
 
         // 5M
-        bool useBrk = K.trigMode == "Break or Retest" or K.trigMode == "5M structure break"
-        bool useRt  = K.trigMode == "Break or Retest" or K.trigMode == "Retest of 15M break"
+        bool useBrk = K1.trigMode == "Break or Retest" or K1.trigMode == "5M structure break"
+        bool useRt  = K1.trigMode == "Break or Retest" or K1.trigMode == "Retest of 15M break"
         string trigTxt = ""
         if S.state == 4
             if useBrk
                 float sv = S.dir == 1 ? (sw5HB ? na : sw5H) : (sw5LB ? na : sw5L)
-                trigTxt := na(sv) ? "new " + K.nE + " swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(sv)
+                trigTxt := na(sv) ? "new " + K3.nE + " swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(sv)
             if useRt
                 trigTxt := trigTxt + (trigTxt != "" ? " or " : "") + "retest of " + f_p(S.rtLvl)
-            if K.trigMode == "Momentum candle"
+            if K1.trigMode == "Momentum candle"
                 trigTxt := S.dir == 1 ? "bullish close > prior high" : "bearish close < prior low"
-        string t5 = S.state == 4 ? "Waiting: " + trigTxt + (S.reject != "" ? "\nLast trigger rejected: " + S.reject : "") : S.state == 5 ? "Entry confirmed — fill at next open" : S.state == 6 ? "In trade · filled " + f_p(S.entry) : S.state == 3 ? "Waiting for " + K.nC + " first" : "No active setup"
-        f_row(dash, row, K.nE, t5, S.state == 4 ? C_GOLD : S.state == 5 or S.state == 6 ? dC : color.white)
+        string t5 = S.state == 4 ? "Waiting: " + trigTxt + (S.reject != "" ? "\nLast trigger rejected: " + S.reject : "") : S.state == 5 ? "Entry confirmed — fill at next open" : S.state == 6 ? "In trade · filled " + f_p(S.entry) : S.state == 3 ? "Waiting for " + K3.nC + " first" : "No active setup"
+        f_row(dash, row, K3.nE, t5, S.state == 4 ? C_GOLD : S.state == 5 or S.state == 6 ? dC : color.white)
         row += 1
 
         // Liquidity
@@ -3283,31 +3291,31 @@ f_blkDashFull(bool go) =>
         // Session
         string sNow = (inAsia ? "Asia " : "") + (inLon ? "London " : "") + (inNy ? "New York " : "")
         sNow := sNow == "" ? "Off-session" : sNow
-        f_row(dash, row, "Session", sNow + "· " + (entryAllowed ? "entries ON" : "entries OFF (tracking)"), entryAllowed ? K.cBull : C_MUTED)
+        f_row(dash, row, "Session", sNow + "· " + (entryAllowed ? "entries ON" : "entries OFF (tracking)"), entryAllowed ? K1.cBull : C_MUTED)
         row += 1
 
         // Status + precise next requirement
         Liq brL = na
         for l in pools
-            if l.state == 1 and ((l.isCRT and l.external and (l.hiTF ? K.src4 : K.src1)) or (not l.isCRT and K.usePools and prD.active and (l.side == 1 ? l.price >= prD.mid : l.price <= prD.mid)))
+            if l.state == 1 and ((l.isCRT and l.external and (l.hiTF ? K3.src4 : K3.src1)) or (not l.isCRT and K1.usePools and prD.active and (l.side == 1 ? l.price >= prD.mid : l.price <= prD.mid)))
                 if na(brL) or (l.isCRT and not brL.isCRT)
                     brL := l
         bool recentDone = (S.state == 8 or S.state == 9) and bar_index - S.doneBar <= 6
         string st = "WATCHING RANGE"
         color stc = C_GOLD
         string nx = ""
-        if not K.tfOK
+        if not K3.tfOK
             st := "CHECK TIMEFRAMES"
-            stc := K.cBear
-            nx := "Need chart ≤ " + K.nC + " and " + K.nC + " < " + K.n1 + " < " + K.n4
+            stc := K1.cBear
+            nx := "Need chart ≤ " + K3.nC + " and " + K3.nC + " < " + K3.n1 + " < " + K3.n4
         else if S.state == 3
             st := "SWEEP CONFIRMED & RECLAIMED · WATCH " + dW
             stc := dC
-            nx := "Need " + K.nC + " " + (S.dir == 1 ? "bullish" : "bearish") + " confirmation (" + t15 + ") · expires in " + str.tostring(math.max(0, K.confExpiry - (bar_index - S.reclaimBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
+            nx := "Need " + K3.nC + " " + (S.dir == 1 ? "bullish" : "bearish") + " confirmation (" + t15 + ") · expires in " + str.tostring(math.max(0, K1.confExpiry - (bar_index - S.reclaimBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
         else if S.state == 4
-            st := K.nC + " CONFIRMED · WATCH " + dW
+            st := K3.nC + " CONFIRMED · WATCH " + dW
             stc := dC
-            nx := "Need " + K.nE + " " + trigTxt + " · in discount/premium · ≥ " + f_r(K.minRR) + "R · " + (entryAllowed ? "window OPEN" : "window CLOSED") + " · expires in " + str.tostring(math.max(0, K.entryExpiry - (bar_index - S.confBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
+            nx := "Need " + K3.nE + " " + trigTxt + " · in discount/premium · ≥ " + f_r(K1.minRR) + "R · " + (entryAllowed ? "window OPEN" : "window CLOSED") + " · expires in " + str.tostring(math.max(0, K1.entryExpiry - (bar_index - S.confBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
         else if S.state == 5
             st := S.dir == 1 ? "BUY CONFIRMED" : "SELL CONFIRMED"
             stc := dC
@@ -3318,18 +3326,18 @@ f_blkDashFull(bool go) =>
             nx := S.tp1Done ? "Managing runner to TP2 " + f_p(S.tp2) : "Managing to TP1 " + f_p(S.tp1) + " / SL " + f_p(S.stop)
         else if recentDone
             st := S.state == 9 ? (S.cat == "STRUCTURAL" ? "SETUP INVALIDATED" : S.cat == "CONFLICT" ? "SETUP CANCELLED · CONFLICT" : S.cat == "MISSED" ? "MISSED ENTRY" : S.cat == "SESSION" ? "EXPIRED · SESSION CLOSED" : S.cat == "REPLACED" ? "SETUP REPLACED" : "SETUP EXPIRED") : S.outcome
-            stc := S.state == 9 ? C_GREY : S.resultR > 0 ? K.cTP : K.cSL
+            stc := S.state == 9 ? C_GREY : S.resultR > 0 ? K1.cTP : K1.cSL
             nx := S.state == 9 ? S.reason : "Result " + (S.resultR >= 0 ? "+" : "") + f_r(S.resultR) + "R · watching for the next sweep"
         else if not na(brL)
             st := "SWEEP IN PROGRESS"
             stc := C_GOLD
-            string rcName = brL.rcTF == 0 ? K.nE : brL.rcTF == 1 ? K.nC : brL.rcTF == 2 ? K.n1 : K.n4
-            string leftTxt = brL.rcTF == 0 ? str.tostring(math.max(0, K.reclaimBars - (bar_index - brL.breachBar + 1))) + " bars" : str.tostring(math.max(0, (brL.rcTF == 1 ? K.reclaimWin15 : 1) - brL.tfCnt)) + " " + rcName + " close(s)"
-            nx := brL.kind + " " + f_p(brL.price) + " breached (extreme " + f_p(brL.ext) + ") · need a completed " + rcName + " close " + (brL.side == 1 ? "< " : "> ") + f_p(brL.price) + " within " + leftTxt + (brL.pend ? " · " + K.nE + " already back inside (reclaim pending)" : "")
+            string rcName = brL.rcTF == 0 ? K3.nE : brL.rcTF == 1 ? K3.nC : brL.rcTF == 2 ? K3.n1 : K3.n4
+            string leftTxt = brL.rcTF == 0 ? str.tostring(math.max(0, K1.reclaimBars - (bar_index - brL.breachBar + 1))) + " bars" : str.tostring(math.max(0, (brL.rcTF == 1 ? K1.reclaimWin15 : 1) - brL.tfCnt)) + " " + rcName + " close(s)"
+            nx := brL.kind + " " + f_p(brL.price) + " breached (extreme " + f_p(brL.ext) + ") · need a completed " + rcName + " close " + (brL.side == 1 ? "< " : "> ") + f_p(brL.price) + " within " + leftTxt + (brL.pend ? " · " + K3.nE + " already back inside (reclaim pending)" : "")
         else if not r4.active and not r1.active
             st := "IDLE · NO VALID RANGE"
             stc := C_MUTED
-            nx := "Waiting for a valid " + K.n1 + " / " + K.n4 + " reference candle"
+            nx := "Waiting for a valid " + K3.n1 + " / " + K3.n4 + " reference candle"
         else
             string wl = prD.loLiq.state == 0 ? "L " + f_p(prD.lo) : ""
             string wh = prD.hiLiq.state == 0 ? "H " + f_p(prD.hi) : ""
@@ -3342,45 +3350,45 @@ f_blkDashFull(bool go) =>
         f_row(dash, row, "Next", nx, color.new(color.white, 10))
         row += 1
         if S.state >= 3 and S.state <= 6
-            f_row(dash, row, "Locked", S.srcKind + " " + f_p(S.level) + " · ext " + f_p(S.ext) + " · " + S.srcTF + " range H " + f_p(S.rHi) + " / 50% " + f_p(S.rMid) + " / L " + f_p(S.rLo) + (not na(S.rT0) and ((S.srcTF == K.n1 and r1.active and r1.t0 != S.rT0) or (S.srcTF == K.n4 and r4.active and r4.t0 != S.rT0)) ? "\n(reference candle has rolled — setup keeps its own levels)" : ""), C_MUTED)
+            f_row(dash, row, "Locked", S.srcKind + " " + f_p(S.level) + " · ext " + f_p(S.ext) + " · " + S.srcTF + " range H " + f_p(S.rHi) + " / 50% " + f_p(S.rMid) + " / L " + f_p(S.rLo) + (not na(S.rT0) and ((S.srcTF == K3.n1 and r1.active and r1.t0 != S.rT0) or (S.srcTF == K3.n4 and r4.active and r4.t0 != S.rT0)) ? "\n(reference candle has rolled — setup keeps its own levels)" : ""), C_MUTED)
             row += 1
         if diagT.size() > 0
             int lk = diagT.size() - 1
             string lc = diagC.get(lk)
-            f_row(dash, row, "Last setup", diagT.get(lk) + " · " + diagS.get(lk) + " → " + lc + "\n" + diagR.get(lk), lc == "TRADE" ? K.cTP : lc == "SKIPPED" ? C_MUTED : C_GREY)
+            f_row(dash, row, "Last setup", diagT.get(lk) + " · " + diagS.get(lk) + " → " + lc + "\n" + diagR.get(lk), lc == "TRADE" ? K1.cTP : lc == "SKIPPED" ? C_MUTED : C_GREY)
             row += 1
 
         // ── Model C (independent state machine)
-        if K.cOn
+        if K2.cOn
             [cEff, cCnf, cBTxt] = f_cBias()
-            float cb = K.cBufTk * syminfo.mintick
-            string cst = CR.state == 0 ? "WAITING FOR REFERENCE · " + K.cRefMode : CR.state == 1 ? "REFERENCE · 1st candle " + f_fmtT(CR.t1) + " captured, waiting for the 2nd" : CR.state == 2 ? "REFERENCE LOCKED · WATCHING BREAKOUT (" + str.tostring(CR.nSeen) + "/" + str.tostring(K.cExpiry) + ")\nU " + f_p(CR.up) + " / L " + f_p(CR.lo) + " · " + CR.src + "\nShort: " + (CR.bearDQ ? "✕ " + CR.bearWhy : "needs 15M close < " + f_p(CR.lo - cb)) + "\nLong: " + (CR.bullDQ ? "✕ " + CR.bullWhy : "needs 15M close > " + f_p(CR.up + cb)) : CR.state == 7 ? (TC.dir == 1 ? "CONFIRMED LONG" : "CONFIRMED SHORT") + " · " + CR.endWhy : (CR.state == 9 ? "INVALIDATED — " : CR.state == 10 ? "EXPIRED — " : "MISSED ENTRY — ") + CR.endWhy
-            color cstc = CR.state == 2 ? K.cCol : CR.state == 7 ? (TC.dir == 1 ? K.cBull : K.cBear) : CR.state >= 9 ? C_GREY : C_MUTED
+            float cb = K2.cBufTk * syminfo.mintick
+            string cst = CR.state == 0 ? "WAITING FOR REFERENCE · " + K2.cRefMode : CR.state == 1 ? "REFERENCE · 1st candle " + f_fmtT(CR.t1) + " captured, waiting for the 2nd" : CR.state == 2 ? "REFERENCE LOCKED · WATCHING BREAKOUT (" + str.tostring(CR.nSeen) + "/" + str.tostring(K2.cExpiry) + ")\nU " + f_p(CR.up) + " / L " + f_p(CR.lo) + " · " + CR.src + "\nShort: " + (CR.bearDQ ? "✕ " + CR.bearWhy : "needs 15M close < " + f_p(CR.lo - cb)) + "\nLong: " + (CR.bullDQ ? "✕ " + CR.bullWhy : "needs 15M close > " + f_p(CR.up + cb)) : CR.state == 7 ? (TC.dir == 1 ? "CONFIRMED LONG" : "CONFIRMED SHORT") + " · " + CR.endWhy : (CR.state == 9 ? "INVALIDATED — " : CR.state == 10 ? "EXPIRED — " : "MISSED ENTRY — ") + CR.endWhy
+            color cstc = CR.state == 2 ? K2.cCol : CR.state == 7 ? (TC.dir == 1 ? K1.cBull : K1.cBear) : CR.state >= 9 ? C_GREY : C_MUTED
             f_row(dash, row, "Model C", cst, cstc)
             row += 1
-            f_row(dash, row, "C bias", cBTxt, cCnf and K.cBiasMode == "4H + 1H" ? C_GOLD : C_MUTED)
+            f_row(dash, row, "C bias", cBTxt, cCnf and K2.cBiasMode == "4H + 1H" ? C_GOLD : C_MUTED)
             row += 1
             if TC.state == 5 or TC.state == 6
                 float cRisk = math.abs((TC.state == 5 ? TC.entryRef : TC.entry) - TC.stopInit)
                 float perU = cRisk * syminfo.pointvalue
-                float qty = perU > 0 ? (syminfo.type == "futures" ? math.floor(K.cRiskCash / perU) : math.floor(K.cRiskCash / perU * 100) / 100) : na
-                f_row(dash, row, "C trade", (TC.dir == 1 ? "LONG" : "SHORT") + " · E " + (TC.state == 5 ? "next open (signal " + f_p(TC.entryRef) + ")" : f_p(TC.entry)) + " · SL " + f_p(TC.stop) + "\nTP1 " + f_p(TC.tp1) + (TC.tp1Done ? " ✓" : "") + " · TP2 " + f_p(TC.tp2) + " (" + TC.tp2Src + ") · " + f_r(math.abs(TC.tp2 - TC.entryRef) / TC.riskRef) + "R\nSize " + str.tostring(qty) + (syminfo.type == "futures" ? " contracts" : " units") + " for " + str.tostring(K.cRiskCash) + " " + syminfo.currency + " risk (" + f_p(cRisk) + " pts × " + str.tostring(syminfo.pointvalue) + "/pt)", TC.dir == 1 ? K.cBull : K.cBear)
+                float qty = perU > 0 ? (syminfo.type == "futures" ? math.floor(K2.cRiskCash / perU) : math.floor(K2.cRiskCash / perU * 100) / 100) : na
+                f_row(dash, row, "C trade", (TC.dir == 1 ? "LONG" : "SHORT") + " · E " + (TC.state == 5 ? "next open (signal " + f_p(TC.entryRef) + ")" : f_p(TC.entry)) + " · SL " + f_p(TC.stop) + "\nTP1 " + f_p(TC.tp1) + (TC.tp1Done ? " ✓" : "") + " · TP2 " + f_p(TC.tp2) + " (" + TC.tp2Src + ") · " + f_r(math.abs(TC.tp2 - TC.entryRef) / TC.riskRef) + "R\nSize " + str.tostring(qty) + (syminfo.type == "futures" ? " contracts" : " units") + " for " + str.tostring(K2.cRiskCash) + " " + syminfo.currency + " risk (" + f_p(cRisk) + " pts × " + str.tostring(syminfo.pointvalue) + "/pt)", TC.dir == 1 ? K1.cBull : K1.cBear)
                 row += 1
 
         // Trade levels (actual calculated values only)
         if S.state == 5 or S.state == 6 or (recentDone and S.state == 8)
-            f_row(dash, row, "A entry", S.state == 5 ? "next open (signal " + f_p(S.entryRef) + ")" : f_p(S.entry), K.cEntry)
+            f_row(dash, row, "A entry", S.state == 5 ? "next open (signal " + f_p(S.entryRef) + ")" : f_p(S.entry), K1.cEntry)
             row += 1
-            f_row(dash, row, "SL", f_p(S.stop) + (S.beOn ? " (breakeven)" : ""), K.cSL)
+            f_row(dash, row, "SL", f_p(S.stop) + (S.beOn ? " (breakeven)" : ""), K1.cSL)
             row += 1
-            f_row(dash, row, "TP1", f_p(S.tp1) + " · " + S.tp1Src + (S.tp1Done ? " ✓" : ""), K.cTP)
+            f_row(dash, row, "TP1", f_p(S.tp1) + " · " + S.tp1Src + (S.tp1Done ? " ✓" : ""), K1.cTP)
             row += 1
-            f_row(dash, row, "TP2", f_p(S.tp2) + " · " + S.tp2Src + " · " + f_r(math.abs(S.tp2 - S.entryRef) / S.riskRef) + "R", K.cTP)
+            f_row(dash, row, "TP2", f_p(S.tp2) + " · " + S.tp2Src + " · " + f_r(math.abs(S.tp2 - S.entryRef) / S.riskRef) + "R", K1.cTP)
             row += 1
             float riskPts = math.abs((S.state == 5 ? S.entryRef : S.entry) - S.stopInit)
             f_row(dash, row, "Risk", f_p(riskPts) + " pts ≈ " + str.tostring(riskPts * syminfo.pointvalue, "#,##0.00") + " " + syminfo.currency + " per 1 " + (syminfo.type == "futures" ? "contract" : "unit"), color.white)
             row += 1
-        if K.showSim
+        if K1.showSim
             f_row(dash, row, "Sim tally", str.tostring(simN) + " trades · " + str.tostring(simW) + "W / " + str.tostring(simN - simW) + "L · " + (simR >= 0 ? "+" : "") + f_r(simR) + "R", C_MUTED)
             row += 1
     true
@@ -3395,17 +3403,17 @@ f_blkDashFull(barstate.islast and showDash and dashStyle != "Compact")
 var table dashC = table.new(dashPos, 2, 9, bgcolor = color.new(#0B0F17, 4), frame_color = color.new(C_GOLD, 55), frame_width = 1, border_color = color.new(#0B0F17, 0), border_width = 2)
 
 f_cRow(table t, int rw, string k, string v, color vc, string tip) =>
-    table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_size = K.dashSz)
-    table.cell(t, 1, rw, v, text_color = vc, text_halign = text.align_right, text_size = K.dashSz, tooltip = tip)
+    table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_size = K3.dashSz)
+    table.cell(t, 1, rw, v, text_color = vc, text_halign = text.align_right, text_size = K3.dashSz, tooltip = tip)
 
 f_blkDashCompact(bool go) =>
     if go
-        table.cell(dashC, 0, 0, "MEKA CRT PRO", text_color = C_GOLD, text_halign = text.align_left, text_size = K.dashSz)
-        table.cell(dashC, 1, 0, syminfo.ticker + " · " + K.nE, text_color = C_MUTED, text_halign = text.align_right, text_size = K.dashSz)
+        table.cell(dashC, 0, 0, "MEKA CRT PRO", text_color = C_GOLD, text_halign = text.align_left, text_size = K3.dashSz)
+        table.cell(dashC, 1, 0, syminfo.ticker + " · " + K3.nE, text_color = C_MUTED, text_halign = text.align_right, text_size = K3.dashSz)
         bool aLive = S.state == 5 or S.state == 6
-        bool cLive = K.cOn and (TC.state == 5 or TC.state == 6)
-        bool dLive = K.amdOn and (TD.state == 5 or TD.state == 6)
-        bool fLive = K.fmOn and (TF.state == 5 or TF.state == 6)
+        bool cLive = K2.cOn and (TC.state == 5 or TC.state == 6)
+        bool dLive = K2.amdOn and (TD.state == 5 or TD.state == 6)
+        bool fLive = K3.fmOn and (TF.state == 5 or TF.state == 6)
         // newest actionable trade wins the panel
         int sA = aLive ? S.sigBar : -1
         int sC = cLive ? TC.sigBar : -1
@@ -3422,7 +3430,7 @@ f_blkDashCompact(bool go) =>
         string a1 = Q.cBias1 == 1 ? "↑" : Q.cBias1 == -1 ? "↓" : "–"
         bool bConf = Q.cBias4 != Q.cBias1
         string biasTxt = not bConf and Q.cBias4 == 1 ? "BULLISH" : not bConf and Q.cBias4 == -1 ? "BEARISH" : "NEUTRAL"
-        f_cRow(dashC, 1, "BIAS", biasTxt, biasTxt == "BULLISH" ? K.cBull : biasTxt == "BEARISH" ? K.cBear : C_GOLD, K.n4 + " " + a4 + " · " + K.n1 + " " + a1 + " (last completed close vs EMA " + str.tostring(K.cEmaLen) + ")" + (bConf ? " — they disagree, so NEUTRAL. Model C conflict policy: " + K.cConflict : ""))
+        f_cRow(dashC, 1, "BIAS", biasTxt, biasTxt == "BULLISH" ? K1.cBull : biasTxt == "BEARISH" ? K1.cBear : C_GOLD, K3.n4 + " " + a4 + " · " + K3.n1 + " " + a1 + " (last completed close vs EMA " + str.tostring(K2.cEmaLen) + ")" + (bConf ? " — they disagree, so NEUTRAL. Model C conflict policy: " + K2.cConflict : ""))
         // 2 · Current setup
         string stp = "No active setup"
         color stpc = C_MUTED
@@ -3431,32 +3439,32 @@ f_blkDashCompact(bool go) =>
             stpc := color.white
         else if S.state == 3 or S.state == 4
             stp := "CRT · " + (S.dir == 1 ? "LONG" : "SHORT") + " forming"
-            stpc := S.dir == 1 ? K.cBull : K.cBear
-        else if K.amdOn and AD.state == 3
+            stpc := S.dir == 1 ? K1.cBull : K1.cBear
+        else if K2.amdOn and AD.state == 3
             stp := "AMD · " + (AD.dir == 1 ? "LONG" : "SHORT") + " forming"
-            stpc := AD.dir == 1 ? K.cBull : K.cBear
-        else if K.cOn and CR.state == 2
+            stpc := AD.dir == 1 ? K1.cBull : K1.cBear
+        else if K2.cOn and CR.state == 2
             stp := "RANGE BREAK · watching"
-            stpc := K.cCol
-        else if K.cOn and CR.state == 1
+            stpc := K2.cCol
+        else if K2.cOn and CR.state == 1
             stp := "RANGE BREAK · forming"
-            stpc := K.cCol
-        else if K.amdOn and (AD.state == 1 or AD.state == 2)
+            stpc := K2.cCol
+        else if K2.amdOn and (AD.state == 1 or AD.state == 2)
             stp := AD.state == 1 ? "AMD · accumulation" : "AMD · sweep in progress"
-            stpc := K.amdCol
-        string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) + (Ts.cfTxt != "" ? "\nConfluence " + Ts.cfTxt : "") : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + K.nC + " confirmation" : " · needs " + K.nE + " entry") : (K.amdOn and AD.state == 3) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · needs a displacement close beyond " + (K.amdDistLvl == "Range midpoint" ? "the midpoint" : AD.dir == 1 ? f_p(AD.hi) : f_p(AD.lo)) : (K.cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : (K.amdOn and AD.state >= 1 and AD.state <= 2) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + (AD.state == 1 ? (AD.preOut > 0 ? " · " + str.tostring(AD.preOut) + " 15M close(s) outside — " + str.tostring(K.amdAccept) + " = accepted breakout" : AD.preSwept ? " · swept before London, reclaimed (range kept)" : " · intact") : "") : ""
+            stpc := K3.amdCol
+        string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) + (Ts.cfTxt != "" ? "\nConfluence " + Ts.cfTxt : "") : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + K3.nC + " confirmation" : " · needs " + K3.nE + " entry") : (K2.amdOn and AD.state == 3) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · needs a displacement close beyond " + (K3.amdDistLvl == "Range midpoint" ? "the midpoint" : AD.dir == 1 ? f_p(AD.hi) : f_p(AD.lo)) : (K2.cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : (K2.amdOn and AD.state >= 1 and AD.state <= 2) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + (AD.state == 1 ? (AD.preOut > 0 ? " · " + str.tostring(AD.preOut) + " 15M close(s) outside — " + str.tostring(K3.amdAccept) + " = accepted breakout" : AD.preSwept ? " · swept before London, reclaimed (range kept)" : " · intact") : "") : ""
         f_cRow(dashC, 2, "SETUP", stp == "No active setup" ? "—" : stp, stpc, stpTip)
         // 3 · Signal: BUY / SELL only when actionable
         string sig = "WAIT"
         color sigc = C_MUTED
         string sigTip = ""
-        bool dRecentNA = K.amdOn and AD.state == 11 and bar_index - AD.endBar <= 3
-        bool cRecentNA = (K.cOn and CR.state == 11 and time - CR.endT <= 2 * K.c15Ms) or dRecentNA
+        bool dRecentNA = K2.amdOn and AD.state == 11 and bar_index - AD.endBar <= 3
+        bool cRecentNA = (K2.cOn and CR.state == 11 and time - CR.endT <= 2 * K3.c15Ms) or dRecentNA
         bool doneRecent = (S.state == 8 and bar_index - S.doneBar <= 6) or (TC.state == 8 and bar_index - TC.doneBar <= 6) or (TD.state == 8 and bar_index - TD.doneBar <= 6) or (TF.state == 8 and bar_index - TF.doneBar <= 6)
         if live
             string dw = Ts.dir == 1 ? "BUY" : "SELL"
             sig := Ts.state == 5 ? dw + " · fill next open" : Ts.tp1Done ? dw + " ACTIVE · TP1 ✓" : dw + " ACTIVE"
-            sigc := Ts.dir == 1 ? K.cBull : K.cBear
+            sigc := Ts.dir == 1 ? K1.cBull : K1.cBear
         else if cRecentNA
             sig := "WAIT · not tradable"
             sigc := C_GOLD
@@ -3468,23 +3476,23 @@ f_blkDashCompact(bool go) =>
             int dbF = TF.state == 8 ? TF.doneBar : -1
             Setup Td = dbF >= dbD and dbF >= dbC and dbF >= dbA ? TF : dbD >= dbC and dbD >= dbA ? TD : dbC >= dbA ? TC : S
             sig := Td.outcome + " " + (Td.resultR >= 0 ? "+" : "") + f_r(Td.resultR) + "R"
-            sigc := Td.resultR > 0 ? K.cTP : K.cSL
+            sigc := Td.resultR > 0 ? K1.cTP : K1.cSL
         else if (S.state == 3 or S.state == 4) and not entryAllowed
             sig := "WAIT · entries off"
         else if S.state == 4
-            sig := "WAIT · " + K.nE + " trigger"
+            sig := "WAIT · " + K3.nE + " trigger"
             sigTip := S.reject != "" ? "Last trigger rejected: " + S.reject : ""
         f_cRow(dashC, 3, "SIGNAL", sig, sigc, sigTip)
         // 4–7 · Levels (actual values of the actionable trade only)
         float ent = live ? (Ts.state == 6 ? Ts.entry : Ts.entryRef) : na
         float rk  = live ? math.abs(ent - Ts.stop) : na
-        f_cRow(dashC, 4, "ENTRY", live ? f_p(ent) + (Ts.state == 5 ? " (signal)" : "") : "—", live ? K.cEntry : C_MUTED, "")
-        f_cRow(dashC, 5, "SL", live ? f_p(Ts.stop) + "  (" + f_p(rk) + " pts)" : "—", live ? K.cSL : C_MUTED, live ? "Initial risk " + f_p(Ts.riskRef) + " pts" : "")
-        f_cRow(dashC, 6, "TP1", live ? f_p(Ts.tp1) + (Ts.tp1Done ? " ✓" : "") : "—", live ? K.cTP : C_MUTED, live ? Ts.tp1Src : "")
-        f_cRow(dashC, 7, "TP2", live ? f_p(Ts.tp2) + "  (" + f_r(math.abs(Ts.tp2 - Ts.entryRef) / Ts.riskRef) + "R)" : "—", live ? K.cTP : C_MUTED, live ? Ts.tp2Src : "")
+        f_cRow(dashC, 4, "ENTRY", live ? f_p(ent) + (Ts.state == 5 ? " (signal)" : "") : "—", live ? K1.cEntry : C_MUTED, "")
+        f_cRow(dashC, 5, "SL", live ? f_p(Ts.stop) + "  (" + f_p(rk) + " pts)" : "—", live ? K1.cSL : C_MUTED, live ? "Initial risk " + f_p(Ts.riskRef) + " pts" : "")
+        f_cRow(dashC, 6, "TP1", live ? f_p(Ts.tp1) + (Ts.tp1Done ? " ✓" : "") : "—", live ? K1.cTP : C_MUTED, live ? Ts.tp1Src : "")
+        f_cRow(dashC, 7, "TP2", live ? f_p(Ts.tp2) + "  (" + f_r(math.abs(Ts.tp2 - Ts.entryRef) / Ts.riskRef) + "R)" : "—", live ? K1.cTP : C_MUTED, live ? Ts.tp2Src : "")
         // 8 · Session
         string sn = inNy ? "New York" : inLon ? "London" : inAsia ? "Asia" : "Off-session"
-        f_cRow(dashC, 8, "SESSION", sn + " · " + (entryAllowed ? "entries ON" : live ? "entries OFF · managing trade" : "entries OFF"), entryAllowed ? K.cBull : C_MUTED, "New entries are allowed only inside the entry windows (input group ⑨). Ranges, liquidity and setups keep updating outside them.")
+        f_cRow(dashC, 8, "SESSION", sn + " · " + (entryAllowed ? "entries ON" : live ? "entries OFF · managing trade" : "entries OFF"), entryAllowed ? K1.cBull : C_MUTED, "New entries are allowed only inside the entry windows (input group ⑨). Ranges, liquidity and setups keep updating outside them.")
     true
 
 f_blkDashCompact(barstate.islast and showDash and dashStyle == "Compact")
@@ -3506,7 +3514,7 @@ f_blkDiag(bool go) =>
             for k = 0 to nD - 1
                 int src = nD - 1 - k
                 string cg = diagC.get(src)
-                color cc = cg == "TRADE" or cg == "SIGNAL" ? K.cTP : cg == "STRUCTURAL" or cg == "CONFLICT" ? K.cSL : cg == "SKIPPED" ? C_MUTED : C_GOLD
+                color cc = cg == "TRADE" or cg == "SIGNAL" ? K1.cTP : cg == "STRUCTURAL" or cg == "CONFLICT" ? K1.cSL : cg == "SKIPPED" ? C_MUTED : C_GOLD
                 table.cell(diag, 0, k + 1, diagT.get(src), text_color = C_MUTED, text_size = size.tiny, text_halign = text.align_left)
                 table.cell(diag, 1, k + 1, diagS.get(src), text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
                 table.cell(diag, 2, k + 1, cg, text_color = cc, text_size = size.tiny, text_halign = text.align_left)
