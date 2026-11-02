@@ -49,7 +49,7 @@ bool   showPools   = input.bool(true, "Detailed: show BSL / SSL liquidity levels
 bool   showMSS     = input.bool(true, "Detailed: show 15M MSS / CHoCH", group = G_DSP)
 int    keepTrades  = input.int(2, "Trades kept on chart", minval = 1, maxval = 30, group = G_DSP)
 bool   showDash    = input.bool(true, "Show dashboard", group = G_DSP)
-string dashStyle   = input.string("Compact", "Dashboard style", options = ["Compact", "Full (all diagnostics)"], group = G_DSP)
+string dashStyle   = input.string("Compact", "Dashboard style", options = ["Compact", "Full (all diagnostics)"], group = G_DSP, tooltip = "Compact = the 8 decision rows. Full = the debug dashboard (every engine's state). The Diagnostic log below shows the last 20 setup outcomes.")
 string dashPosIn   = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_DSP)
 string dashSizeIn  = input.string("Small", "Dashboard text size", options = ["Tiny", "Small", "Normal"], group = G_DSP)
 bool   showSim     = input.bool(false, "Dashboard: simulated trade tally (R)", group = G_DSP, tooltip = "Counts only trades the indicator simulated on this chart. Not a backtest — use the companion strategy for measured results.")
@@ -199,6 +199,37 @@ float  cMinRR     = input.float(1.5, "Minimum R:R to TP2", minval = 0.5, step = 
 float  cRiskCash  = input.float(500, "Risk budget per trade (sizing shown on dashboard)", minval = 1, group = G_MC)
 bool   cShowBnd   = input.bool(true, "Show combined upper / lower boundaries", group = G_MC)
 color  cCol       = input.color(#B388FF, "Model C colour", group = G_MC)
+
+string G_FVG = "⑮ Fair Value Gaps (context overlay)"
+bool   fvgOn       = input.bool(true, "Detect FVGs", group = G_FVG)
+bool   fvgShow     = input.bool(true, "Show nearest FVG zones", group = G_FVG)
+bool   fvgShowInv  = input.bool(true, "Show inverse FVGs (gap closed through → flipped)", group = G_FVG)
+float  fvgMinATR   = input.float(0.15, "Min gap size (× chart ATR14)", minval = 0.0, step = 0.05, group = G_FVG)
+float  fvgStrongATR = input.float(1.0, "Strong displacement: middle-candle body ≥ × ATR", minval = 0.1, step = 0.1, group = G_FVG)
+bool   fvgStrongOnly = input.bool(false, "Show only strong-displacement gaps", group = G_FVG)
+int    fvgShowN    = input.int(2, "Zones shown per side (above / below price)", minval = 1, maxval = 5, group = G_FVG)
+float  fvgMaxDist  = input.float(8.0, "Only show zones within × ATR of price", minval = 1.0, step = 0.5, group = G_FVG)
+int    fvgMaxAge   = input.int(288, "Forget gaps older than N chart bars", minval = 20, maxval = 3000, group = G_FVG)
+color  fvgBullC    = input.color(color.new(#26A69A, 86), "Bullish FVG", inline = "fc", group = G_FVG)
+color  fvgBearC    = input.color(color.new(#EF5350, 86), "Bearish FVG", inline = "fc", group = G_FVG)
+color  fvgInvC     = input.color(color.new(#9E9E9E, 86), "Inverse", inline = "fc", group = G_FVG)
+
+string G_SD = "⑯ Supply & Demand / order blocks (context overlay)"
+bool   sdOn        = input.bool(true, "Detect supply & demand zones", group = G_SD)
+bool   sdShow      = input.bool(true, "Show nearest zones", group = G_SD)
+bool   sdShowDead  = input.bool(true, "Fade recently invalidated zones (last 2)", group = G_SD)
+float  sdDispATR   = input.float(1.2, "Displacement candle: body ≥ × chart ATR14", minval = 0.3, step = 0.1, group = G_SD)
+int    sdLook      = input.int(3, "Order-block search: candles before the displacement", minval = 1, maxval = 10, group = G_SD)
+int    sdMaxTouch  = input.int(3, "Retire a zone after N retests", minval = 1, maxval = 10, group = G_SD)
+int    sdShowN     = input.int(2, "Zones shown per side", minval = 1, maxval = 5, group = G_SD)
+float  sdMaxDist   = input.float(10.0, "Only show zones within × ATR of price", minval = 1.0, step = 0.5, group = G_SD)
+int    sdMaxAge    = input.int(576, "Forget zones older than N chart bars", minval = 20, maxval = 5000, group = G_SD)
+color  sdDemC      = input.color(color.new(#00C176, 88), "Demand", inline = "sc", group = G_SD)
+color  sdSupC      = input.color(color.new(#FF3D57, 88), "Supply", inline = "sc", group = G_SD)
+
+string G_MS = "⑰ Structure & liquidity overlays"
+string msShow      = input.string("Detailed mode only", "15M BOS / CHoCH / MSS markers", options = ["Detailed mode only", "Always", "Off"], group = G_MS, tooltip = "BOS = break in the direction of the prior 15M structure. CHoCH = first break against it. MSS = a CHoCH whose breaking candle is a displacement candle. All are drawn only after the breaking 15M candle has closed.")
+bool   liqAlways   = input.bool(false, "Show liquidity levels (PDH/PDL, sessions, swings) in Clean mode too", group = G_MS)
 
 color C_CLEAR = color.new(color.black, 100)
 color C_GOLD  = #E6B422
@@ -394,6 +425,35 @@ type CRef
     label  lbU
     label  lbL
 
+// Fair value gap. Created at the CLOSE of the third candle; never earlier.
+// state: 0 fresh · 1 partially filled · 2 fully mitigated · 3 invalidated (inverse gap closed through)
+type FVG
+    int    dir             // +1 bullish (support) · -1 bearish (resistance); flips when inverted
+    float  top
+    float  bot
+    int    t0              // open time of the middle (displacement) candle
+    int    bar             // bar it became known
+    float  disp            // middle-candle body ÷ ATR
+    bool   strong = false
+    bool   inv = false     // inverse FVG
+    int    state = 0
+    float  fill = 0.0      // deepest fill fraction 0..1
+
+// Supply / demand zone = last opposite candle (order block) before a displacement candle.
+// state: 0 active · 1 invalidated (closed through) · 2 retired (retested too often)
+type Zone
+    int    dir             // +1 demand · -1 supply
+    float  top
+    float  bot
+    int    t0
+    int    bar
+    float  disp
+    bool   bos = false     // displacement candle broke the last confirmed swing
+    int    touches = 0
+    bool   inside = false
+    int    state = 0
+    int    endBar
+
 // ───────────────────────────── LIQUIDITY HELPERS ─────────────────────────────
 f_tag(Liq l) =>
     na(l) ? "" : l.state == 1 ? " · BREACHED" : l.state == 2 ? " · SWEPT ✓" : l.state == 3 ? " · BROKEN" : not l.external ? " · internal" : ""
@@ -451,7 +511,7 @@ f_addPool(array<Liq> arr, float p, int side, string kind, float tol, int expT, i
                 break
     if not na(p) and not done
         Liq n = Liq.new(price = p, side = side, kind = kind, created = time, expires = expT, rcTF = rcPool)
-        if isDet and showPools
+        if (isDet or liqAlways) and showPools
             f_poolDraw(n, na(x0) ? time : x0)
         arr.push(n)
         f_trimPools(arr, side)
@@ -1548,13 +1608,13 @@ if barstate.isconfirmed
                 pools.remove(i)
 
     // ── 13. Detailed-mode 15M structure markers
-    if isDet and showMSS
+    if msShow == "Always" or (msShow == "Detailed mode only" and isDet and showMSS)
         if mBullNew and not na(c15BullPT)
             mssQ.push(line.new(c15BullPT, c15BullLvl, time, c15BullLvl, xloc = xloc.bar_time, color = color.new(cBull, 30), style = line.style_dashed, width = 1))
-            f_evLabel(evLabels, bar_index, c15BullLvl, nC + (c15BullCh ? " CHoCH ↑" : " BOS ↑"), C_CLEAR, color.new(cBull, 0), label.style_label_down, size.tiny, "Confirmed on a closed " + nC + " candle", yloc.price)
+            f_evLabel(evLabels, bar_index, c15BullLvl, nC + (c15BullCh and c15BullDs ? " MSS ↑" : c15BullCh ? " CHoCH ↑" : " BOS ↑"), C_CLEAR, color.new(cBull, 0), label.style_label_down, size.tiny, "Confirmed on a closed " + nC + " candle", yloc.price)
         if mBearNew and not na(c15BearPT)
             mssQ.push(line.new(c15BearPT, c15BearLvl, time, c15BearLvl, xloc = xloc.bar_time, color = color.new(cBear, 30), style = line.style_dashed, width = 1))
-            f_evLabel(evLabels, bar_index, c15BearLvl, nC + (c15BearCh ? " CHoCH ↓" : " BOS ↓"), C_CLEAR, color.new(cBear, 0), label.style_label_up, size.tiny, "Confirmed on a closed " + nC + " candle", yloc.price)
+            f_evLabel(evLabels, bar_index, c15BearLvl, nC + (c15BearCh and c15BearDs ? " MSS ↓" : c15BearCh ? " CHoCH ↓" : " BOS ↓"), C_CLEAR, color.new(cBear, 0), label.style_label_up, size.tiny, "Confirmed on a closed " + nC + " candle", yloc.price)
         while mssQ.size() > 30
             line.delete(mssQ.shift())
 
@@ -1827,6 +1887,168 @@ if barstate.isconfirmed and cOn and tfOK
         cPrevL := kL
         cPrevT := kT
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FVG + SUPPLY / DEMAND ENGINES — context only (they never create trades by themselves).
+//  Everything is evaluated on CLOSED chart bars; a gap / zone exists only from the bar on
+//  which its last candle closed. Only the nearest zones are drawn, on the last bar.
+// ═══════════════════════════════════════════════════════════════════════════════
+var array<FVG>  fvgs   = array.new<FVG>()
+var array<Zone> zones  = array.new<Zone>()
+var array<box>  ctxBox = array.new<box>()
+
+f_zRank(Zone z) =>
+    (z.touches == 0 ? 2 : z.touches == 1 ? 1 : 0) + (z.bos ? 1 : 0) + (z.disp >= 2 * sdDispATR ? 2 : 1)
+
+if barstate.isconfirmed
+    // ── FVG update (gaps created on an earlier bar only)
+    if fvgOn and fvgs.size() > 0
+        for i = fvgs.size() - 1 to 0
+            FVG g = fvgs.get(i)
+            if g.bar < bar_index and g.state < 2
+                if g.dir == 1
+                    if close < g.bot
+                        if g.inv
+                            g.state := 3
+                        else
+                            g.inv := true
+                            g.dir := -1
+                            g.state := 0
+                            g.fill := 0.0
+                            g.bar := bar_index
+                    else if low <= g.bot
+                        g.state := 2
+                    else if low < g.top
+                        g.state := 1
+                        g.fill := math.max(g.fill, (g.top - low) / (g.top - g.bot))
+                else
+                    if close > g.top
+                        if g.inv
+                            g.state := 3
+                        else
+                            g.inv := true
+                            g.dir := 1
+                            g.state := 0
+                            g.fill := 0.0
+                            g.bar := bar_index
+                    else if high >= g.top
+                        g.state := 2
+                    else if high > g.bot
+                        g.state := 1
+                        g.fill := math.max(g.fill, (high - g.bot) / (g.top - g.bot))
+            if g.state >= 2 or bar_index - g.bar > fvgMaxAge
+                fvgs.remove(i)
+    // ── FVG detection: three CLOSED candles [2], [1], [0]
+    if fvgOn and bar_index >= 2 and not na(atrE)
+        float body1 = math.abs(close[1] - open[1])
+        float gUp = low - high[2]
+        float gDn = low[2] - high
+        if gUp > 0 and gUp >= fvgMinATR * atrE
+            fvgs.push(FVG.new(dir = 1, top = low, bot = high[2], t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] > open[1] and body1 >= fvgStrongATR * atrE))
+        if gDn > 0 and gDn >= fvgMinATR * atrE
+            fvgs.push(FVG.new(dir = -1, top = low[2], bot = high, t0 = time[1], bar = bar_index, disp = body1 / atrE, strong = close[1] < open[1] and body1 >= fvgStrongATR * atrE))
+        while fvgs.size() > 40
+            fvgs.shift()
+
+    // ── Supply / demand update
+    if sdOn and zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            if z.state == 0 and z.bar < bar_index
+                bool thru = z.dir == 1 ? close < z.bot : close > z.top
+                bool touch = z.dir == 1 ? low <= z.top : high >= z.bot
+                if thru
+                    z.state := 1
+                    z.endBar := bar_index
+                else if touch
+                    if not z.inside
+                        z.touches := z.touches + 1
+                        z.inside := true
+                        if z.touches > sdMaxTouch
+                            z.state := 2
+                            z.endBar := bar_index
+                else
+                    z.inside := false
+            if bar_index - z.bar > sdMaxAge or (z.state != 0 and bar_index - z.endBar > 48)
+                zones.remove(i)
+    // ── Supply / demand detection: this CLOSED bar is a displacement candle
+    if sdOn and bar_index > sdLook and not na(atrE)
+        bool bullD = close > open and close - open >= sdDispATR * atrE and close > high[1]
+        bool bearD = close < open and open - close >= sdDispATR * atrE and close < low[1]
+        if bullD or bearD
+            int dZ = bullD ? 1 : -1
+            int k = 1
+            for j = 1 to sdLook
+                if dZ == 1 ? close[j] < open[j] : close[j] > open[j]
+                    k := j
+                    break
+            float zt = high[k]
+            float zb = low[k]
+            bool zBos = dZ == 1 ? bull5Brk : bear5Brk
+            float zDisp = math.abs(close - open) / atrE
+            bool merged = false
+            for z in zones
+                if z.state == 0 and z.dir == dZ and zb <= z.top and zt >= z.bot
+                    z.disp := math.max(z.disp, zDisp)
+                    z.bos := z.bos or zBos
+                    merged := true
+                    break
+            if not merged
+                zones.push(Zone.new(dir = dZ, top = zt, bot = zb, t0 = time[k], bar = bar_index, disp = zDisp, bos = zBos))
+            while zones.size() > 30
+                zones.shift()
+
+// ── Draw only the nearest relevant zones (redrawn on the last bar; no history clutter)
+if barstate.islast
+    for b in ctxBox
+        box.delete(b)
+    ctxBox.clear()
+    int xR = time + labOff * 2
+    if fvgOn and fvgShow and fvgs.size() > 0
+        for side in array.from(1, -1)
+            array<int> used = array.new<int>()
+            for n = 1 to fvgShowN
+                int bi = -1
+                float bd = na
+                bool bs = false
+                for [i, g] in fvgs
+                    bool okSide = side == 1 ? g.bot < close : g.top > close
+                    if g.dir == side and okSide and (fvgShowInv or not g.inv) and (not fvgStrongOnly or g.strong or g.inv) and not used.includes(i)
+                        float dist = math.max(0.0, side == 1 ? close - g.top : g.bot - close)
+                        if dist <= fvgMaxDist * atrE and (bi < 0 or (g.strong and not bs) or (g.strong == bs and dist < bd))
+                            bi := i
+                            bd := dist
+                            bs := g.strong
+                if bi >= 0
+                    used.push(bi)
+                    FVG g = fvgs.get(bi)
+                    string tx = (g.inv ? "IFVG" : "FVG") + (g.strong ? " ★" : "") + (g.state == 1 ? " ◐" : "")
+                    ctxBox.push(box.new(g.t0, g.top, xR, g.bot, xloc = xloc.bar_time, border_color = g.inv ? color.new(#9E9E9E, 40) : C_CLEAR, border_style = line.style_dashed, bgcolor = g.inv ? fvgInvC : side == 1 ? fvgBullC : fvgBearC, text = tx, text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_right))
+    if sdOn and sdShow and zones.size() > 0
+        for side in array.from(1, -1)
+            array<int> used = array.new<int>()
+            for n = 1 to sdShowN
+                int bi = -1
+                float bd = na
+                for [i, z] in zones
+                    bool okSide = side == 1 ? z.bot < close : z.top > close
+                    if z.state == 0 and z.dir == side and okSide and not used.includes(i)
+                        float dist = math.max(0.0, side == 1 ? close - z.top : z.bot - close)
+                        if dist <= sdMaxDist * atrE and (bi < 0 or dist < bd)
+                            bi := i
+                            bd := dist
+                if bi >= 0
+                    used.push(bi)
+                    Zone z = zones.get(bi)
+                    ctxBox.push(box.new(z.t0, z.top, xR, z.bot, xloc = xloc.bar_time, border_color = color.new(side == 1 ? sdDemC : sdSupC, 40), border_width = 1, bgcolor = side == 1 ? sdDemC : sdSupC, text = (side == 1 ? "DEMAND " : "SUPPLY ") + str.tostring(f_zRank(z)) + "/5" + (z.bos ? " · BOS" : ""), text_size = size.tiny, text_color = color.new(#B0BEC5, 10), text_halign = text.align_left))
+        if sdShowDead
+            int nDead = 0
+            if zones.size() > 0
+                for i = zones.size() - 1 to 0
+                    Zone z = zones.get(i)
+                    if z.state == 1 and nDead < 2 and math.abs((z.top + z.bot) / 2 - close) <= sdMaxDist * atrE
+                        nDead += 1
+                        ctxBox.push(box.new(z.t0, z.top, time + labOff, z.bot, xloc = xloc.bar_time, border_color = color.new(#607D8B, 70), border_style = line.style_dotted, bgcolor = color.new(#607D8B, 95), text = (z.dir == 1 ? "demand" : "supply") + " invalid", text_size = size.tiny, text_color = color.new(#607D8B, 30), text_halign = text.align_left))
+
 // Keep labels of untouched pools at the right edge
 if barstate.islast and pools.size() > 0
     for l in pools
@@ -2044,23 +2266,25 @@ if barstate.islast and showDash and dashStyle == "Compact"
     string a4 = cBias4 == 1 ? "↑" : cBias4 == -1 ? "↓" : "–"
     string a1 = cBias1 == 1 ? "↑" : cBias1 == -1 ? "↓" : "–"
     bool bConf = cBias4 != cBias1
-    f_cRow(dashC, 1, "Bias", n4 + " " + a4 + "   " + n1 + " " + a1 + (bConf ? "   CONFLICT" : cBias4 == 1 ? "   BULLISH" : cBias4 == -1 ? "   BEARISH" : ""), bConf ? C_GOLD : cBias4 == 1 ? cBull : cBias4 == -1 ? cBear : color.white, "Last completed " + n4 + " / " + n1 + " close vs EMA " + str.tostring(cEmaLen) + (bConf ? ". Model C conflict policy: " + cConflict : ""))
+    string biasTxt = not bConf and cBias4 == 1 ? "BULLISH" : not bConf and cBias4 == -1 ? "BEARISH" : "NEUTRAL"
+    f_cRow(dashC, 1, "BIAS", biasTxt, biasTxt == "BULLISH" ? cBull : biasTxt == "BEARISH" ? cBear : C_GOLD, n4 + " " + a4 + " · " + n1 + " " + a1 + " (last completed close vs EMA " + str.tostring(cEmaLen) + ")" + (bConf ? " — they disagree, so NEUTRAL. Model C conflict policy: " + cConflict : ""))
     // 2 · Current setup
     string stp = "No active setup"
     color stpc = C_MUTED
     if live
-        stp := "Model " + mdl + " · " + str.replace_all(Ts.srcKind, "C ", "")
+        stp := (mdl == "C" ? "RANGE BREAK" : "CRT") + " · " + (Ts.dir == 1 ? "LONG" : "SHORT")
         stpc := color.white
     else if S.state == 3 or S.state == 4
-        stp := "Model A · " + S.srcKind + " → " + (S.dir == 1 ? "LONG" : "SHORT") + (S.state == 3 ? " (needs " + nC + ")" : " (needs " + nE + " entry)")
+        stp := "CRT · " + (S.dir == 1 ? "LONG" : "SHORT") + " forming"
         stpc := S.dir == 1 ? cBull : cBear
     else if cOn and CR.state == 2
-        stp := "Model C · " + CR.src + " · " + f_p(CR.lo) + " – " + f_p(CR.up)
+        stp := "RANGE BREAK · watching"
         stpc := cCol
     else if cOn and CR.state == 1
-        stp := "Model C · reference forming (" + CR.src + ")"
+        stp := "RANGE BREAK · forming"
         stpc := cCol
-    f_cRow(dashC, 2, "Setup", stp, stpc, "")
+    string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + nC + " confirmation" : " · needs " + nE + " entry") : (cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : ""
+    f_cRow(dashC, 2, "SETUP", stp == "No active setup" ? "—" : stp, stpc, stpTip)
     // 3 · Signal: BUY / SELL only when actionable
     string sig = "WAIT"
     color sigc = C_MUTED
@@ -2072,7 +2296,7 @@ if barstate.islast and showDash and dashStyle == "Compact"
         sig := Ts.state == 5 ? dw + " · fill next open" : Ts.tp1Done ? dw + " ACTIVE · TP1 ✓" : dw + " ACTIVE"
         sigc := Ts.dir == 1 ? cBull : cBear
     else if cRecentNA
-        sig := "SETUP · NOT TRADABLE"
+        sig := "WAIT · not tradable"
         sigc := C_GOLD
         sigTip := CR.endWhy
     else if doneRecent
@@ -2084,17 +2308,17 @@ if barstate.islast and showDash and dashStyle == "Compact"
     else if S.state == 4
         sig := "WAIT · " + nE + " trigger"
         sigTip := S.reject != "" ? "Last trigger rejected: " + S.reject : ""
-    f_cRow(dashC, 3, "Signal", sig, sigc, sigTip)
+    f_cRow(dashC, 3, "SIGNAL", sig, sigc, sigTip)
     // 4–7 · Levels (actual values of the actionable trade only)
     float ent = live ? (Ts.state == 6 ? Ts.entry : Ts.entryRef) : na
     float rk  = live ? math.abs(ent - Ts.stop) : na
-    f_cRow(dashC, 4, "Entry", live ? f_p(ent) + (Ts.state == 5 ? " (signal)" : "") : "—", live ? cEntry : C_MUTED, "")
-    f_cRow(dashC, 5, "Stop", live ? f_p(Ts.stop) + "  (" + f_p(rk) + " pts)" : "—", live ? cSL : C_MUTED, live ? "Initial risk " + f_p(Ts.riskRef) + " pts" : "")
+    f_cRow(dashC, 4, "ENTRY", live ? f_p(ent) + (Ts.state == 5 ? " (signal)" : "") : "—", live ? cEntry : C_MUTED, "")
+    f_cRow(dashC, 5, "SL", live ? f_p(Ts.stop) + "  (" + f_p(rk) + " pts)" : "—", live ? cSL : C_MUTED, live ? "Initial risk " + f_p(Ts.riskRef) + " pts" : "")
     f_cRow(dashC, 6, "TP1", live ? f_p(Ts.tp1) + (Ts.tp1Done ? " ✓" : "") : "—", live ? cTP : C_MUTED, live ? Ts.tp1Src : "")
     f_cRow(dashC, 7, "TP2", live ? f_p(Ts.tp2) + "  (" + f_r(math.abs(Ts.tp2 - Ts.entryRef) / Ts.riskRef) + "R)" : "—", live ? cTP : C_MUTED, live ? Ts.tp2Src : "")
     // 8 · Session
     string sn = inNy ? "New York" : inLon ? "London" : inAsia ? "Asia" : "Off-session"
-    f_cRow(dashC, 8, "Session", sn + " · " + (entryAllowed ? "entries ON" : live ? "entries OFF · managing trade" : "entries OFF"), entryAllowed ? cBull : C_MUTED, "New entries are allowed only inside the entry windows (input group ⑨). Ranges, liquidity and setups keep updating outside them.")
+    f_cRow(dashC, 8, "SESSION", sn + " · " + (entryAllowed ? "entries ON" : live ? "entries OFF · managing trade" : "entries OFF"), entryAllowed ? cBull : C_MUTED, "New entries are allowed only inside the entry windows (input group ⑨). Ranges, liquidity and setups keep updating outside them.")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DIAGNOSTIC LOG — last 20 setup outcomes (tiny, bottom of chart, optional)
