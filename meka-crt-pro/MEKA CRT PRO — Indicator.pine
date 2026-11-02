@@ -1614,6 +1614,7 @@ type EV
     bool evDTP2 = false
     bool evDEarly = false
     bool evDDone = false
+    bool evFill = false
 
 // ───────────────────────────── STATE ─────────────────────────────
 var array<Liq>   pools     = array.new<Liq>()
