@@ -349,33 +349,33 @@ string dashSz    = dashSizeIn == "Tiny" ? size.tiny : dashSizeIn == "Normal" ? s
 //    function far below Pine's 254 "external elements" limit — one object instead of ~200 values)
 type CFG
     int histCount
-    bool showPD
-    bool showPools
-    bool showMSS
+    bool showPD = false
+    bool showPools = false
+    bool showMSS = false
     int keepTrades
-    bool showSim
+    bool showSim = false
     float minRangeATR
     float maxRangeATR
     int rangeMaxAge
-    bool usePools
+    bool usePools = false
     int extLook
     int reclaimWin15
     int reclaimBars
     int acceptBars
     float maxSweepATR
-    bool roomCheck
+    bool roomCheck = false
     string confMode
-    bool reqChoch
+    bool reqChoch = false
     int confExpiry
-    bool conflictInval
-    bool pairedConf
+    bool conflictInval = false
+    bool pairedConf = false
     int pairBars
     string trigMode
     float retestTol
     int entryExpiry
     float maxRiskATR
-    bool reqDiscount
-    bool htfFilter
+    bool reqDiscount = false
+    bool htfFilter = false
     float stopBufATR
     int stopBufTk
     float minRR
@@ -385,15 +385,15 @@ type CFG
     string tp2Mode
     float tp2R
     float tp1Pct
-    bool useBE
+    bool useBE = false
     int maxBars
     float maxStopPts
     float tp2MaxR
-    bool wickInval
-    bool trackPD
-    bool trackPW
-    bool trackSess
-    bool trackSw
+    bool wickInval = false
+    bool trackPD = false
+    bool trackPW = false
+    bool trackSess = false
+    bool trackSw = false
     float eqTolATR
     int poolMax
     int poolDays
@@ -403,11 +403,11 @@ type CFG
     string lonTZ
     string nySess
     string nyTZ
-    bool alJSON
-    bool alSweep
-    bool alConf
-    bool alSig
-    bool alMgmt
+    bool alJSON = false
+    bool alSweep = false
+    bool alConf = false
+    bool alSig = false
+    bool alMgmt = false
     color cHi
     color cLo
     color cMid
@@ -418,13 +418,13 @@ type CFG
     color cEntry
     color cTP
     color cSL
-    bool cOn
+    bool cOn = false
     string cRefMode
-    bool cOpenAsia
+    bool cOpenAsia = false
     string cOpenAsiaT
-    bool cOpenLon
+    bool cOpenLon = false
     string cOpenLonT
-    bool cOpenNy
+    bool cOpenNy = false
     string cOpenNyT
     int cBufTk
     string cSweepRule
@@ -433,11 +433,11 @@ type CFG
     string cBiasMode
     string cConflict
     int cEmaLen
-    bool cStructF
-    bool cSesAsia
-    bool cSesLon
-    bool cSesNy
-    bool cSesAny
+    bool cStructF = false
+    bool cSesAsia = false
+    bool cSesLon = false
+    bool cSesNy = false
+    bool cSesAny = false
     float cDispMin
     float cVolMult
     string cStopMode
@@ -449,26 +449,26 @@ type CFG
     float cTp2R
     string cTpMode
     float cTp2MaxR
-    bool cNeedWin
+    bool cNeedWin = false
     float cMinRR
     float cRiskCash
-    bool cShowBnd
+    bool cShowBnd = false
     color cCol
-    bool fvgOn
-    bool fvgShow
-    bool fvgShowInv
+    bool fvgOn = false
+    bool fvgShow = false
+    bool fvgShowInv = false
     float fvgMinATR
     float fvgStrongATR
-    bool fvgStrongOnly
+    bool fvgStrongOnly = false
     int fvgShowN
     float fvgMaxDist
     int fvgMaxAge
     color fvgBullC
     color fvgBearC
     color fvgInvC
-    bool sdOn
-    bool sdShow
-    bool sdShowDead
+    bool sdOn = false
+    bool sdShow = false
+    bool sdShowDead = false
     float sdDispATR
     int sdLook
     int sdMaxTouch
@@ -478,8 +478,8 @@ type CFG
     color sdDemC
     color sdSupC
     string msShow
-    bool liqAlways
-    bool amdOn
+    bool liqAlways = false
+    bool amdOn = false
     string amdAccMode
     float amdAsiaH1
     int amdLen
@@ -493,7 +493,7 @@ type CFG
     int amdDistExp
     float amdDispATR
     string amdDistLvl
-    bool amdStruct
+    bool amdStruct = false
     string amdBias
     string amdStopMode
     int amdStopTk
@@ -502,18 +502,18 @@ type CFG
     float amdTp1R
     float amdTp2R
     float amdMinRR
-    bool amdShowBox
-    bool amdShowMark
+    bool amdShowBox = false
+    bool amdShowMark = false
     color amdCol
     string cfMode
     int cfMinPro
     int cfMaxCon
-    bool cfReqBias
-    bool cfReqClear
+    bool cfReqBias = false
+    bool cfReqClear = false
     string cfModels
-    bool fmOn
-    bool fmStrong
-    bool fmBos
+    bool fmOn = false
+    bool fmStrong = false
+    bool fmBos = false
     int fmMaxWait
     int fmTrigWin
     int fmStopTk
@@ -523,18 +523,18 @@ type CFG
     float fmMinRR
     string fmBias
     string mkt
-    bool isDet
-    bool primHigh
-    bool vis4
-    bool vis1
-    bool keepHist
+    bool isDet = false
+    bool primHigh = false
+    bool vis4 = false
+    bool vis1 = false
+    bool keepHist = false
     string n4
     string n1
     string nC
     string nE
-    bool tfOK
-    bool src4
-    bool src1
+    bool tfOK = false
+    bool src4 = false
+    bool src1 = false
     float minPen
     float w1
     int rcPool
@@ -547,31 +547,222 @@ type CFG
     int keepResolved
     string dashSz
 
-var CFG K = CFG.new(histCount = histCount, showPD = showPD, showPools = showPools, showMSS = showMSS, keepTrades = keepTrades, showSim = showSim, minRangeATR = minRangeATR, maxRangeATR = maxRangeATR,
-     rangeMaxAge = rangeMaxAge, usePools = usePools, extLook = extLook, reclaimWin15 = reclaimWin15, reclaimBars = reclaimBars, acceptBars = acceptBars, maxSweepATR = maxSweepATR, roomCheck = roomCheck,
-     confMode = confMode, reqChoch = reqChoch, confExpiry = confExpiry, conflictInval = conflictInval, pairedConf = pairedConf, pairBars = pairBars, trigMode = trigMode, retestTol = retestTol,
-     entryExpiry = entryExpiry, maxRiskATR = maxRiskATR, reqDiscount = reqDiscount, htfFilter = htfFilter, stopBufATR = stopBufATR, stopBufTk = stopBufTk, minRR = minRR, tp1Mode = tp1Mode,
-     tp1MinR = tp1MinR, tp1R = tp1R, tp2Mode = tp2Mode, tp2R = tp2R, tp1Pct = tp1Pct, useBE = useBE, maxBars = maxBars, maxStopPts = maxStopPts,
-     tp2MaxR = tp2MaxR, wickInval = wickInval, trackPD = trackPD, trackPW = trackPW, trackSess = trackSess, trackSw = trackSw, eqTolATR = eqTolATR, poolMax = poolMax,
-     poolDays = poolDays, asiaSess = asiaSess, asiaTZ = asiaTZ, lonSess = lonSess, lonTZ = lonTZ, nySess = nySess, nyTZ = nyTZ, alJSON = alJSON,
-     alSweep = alSweep, alConf = alConf, alSig = alSig, alMgmt = alMgmt, cHi = cHi, cLo = cLo, cMid = cMid, cBull = cBull,
-     cBear = cBear, cBSL = cBSL, cSSL = cSSL, cEntry = cEntry, cTP = cTP, cSL = cSL, cOn = cOn, cRefMode = cRefMode,
-     cOpenAsia = cOpenAsia, cOpenAsiaT = cOpenAsiaT, cOpenLon = cOpenLon, cOpenLonT = cOpenLonT, cOpenNy = cOpenNy, cOpenNyT = cOpenNyT, cBufTk = cBufTk, cSweepRule = cSweepRule,
-     cSweepWin = cSweepWin, cExpiry = cExpiry, cBiasMode = cBiasMode, cConflict = cConflict, cEmaLen = cEmaLen, cStructF = cStructF, cSesAsia = cSesAsia, cSesLon = cSesLon,
-     cSesNy = cSesNy, cSesAny = cSesAny, cDispMin = cDispMin, cVolMult = cVolMult, cStopMode = cStopMode, cMinStopATR = cMinStopATR, cStopATR = cStopATR, cStopTk = cStopTk,
-     cMaxRiskATR = cMaxRiskATR, cTp1R = cTp1R, cTp2R = cTp2R, cTpMode = cTpMode, cTp2MaxR = cTp2MaxR, cNeedWin = cNeedWin, cMinRR = cMinRR, cRiskCash = cRiskCash,
-     cShowBnd = cShowBnd, cCol = cCol, fvgOn = fvgOn, fvgShow = fvgShow, fvgShowInv = fvgShowInv, fvgMinATR = fvgMinATR, fvgStrongATR = fvgStrongATR, fvgStrongOnly = fvgStrongOnly,
-     fvgShowN = fvgShowN, fvgMaxDist = fvgMaxDist, fvgMaxAge = fvgMaxAge, fvgBullC = fvgBullC, fvgBearC = fvgBearC, fvgInvC = fvgInvC, sdOn = sdOn, sdShow = sdShow,
-     sdShowDead = sdShowDead, sdDispATR = sdDispATR, sdLook = sdLook, sdMaxTouch = sdMaxTouch, sdShowN = sdShowN, sdMaxDist = sdMaxDist, sdMaxAge = sdMaxAge, sdDemC = sdDemC,
-     sdSupC = sdSupC, msShow = msShow, liqAlways = liqAlways, amdOn = amdOn, amdAccMode = amdAccMode, amdAsiaH1 = amdAsiaH1, amdLen = amdLen, amdRangeATR = amdRangeATR,
-     amdCompress = amdCompress, amdAccExp = amdAccExp, amdRclTF = amdRclTF, amdReclaim = amdReclaim, amdAccept = amdAccept, amdMaxSweep = amdMaxSweep, amdDistExp = amdDistExp, amdDispATR = amdDispATR,
-     amdDistLvl = amdDistLvl, amdStruct = amdStruct, amdBias = amdBias, amdStopMode = amdStopMode, amdStopTk = amdStopTk, amdCapMode = amdCapMode, amdMaxRisk = amdMaxRisk, amdTp1R = amdTp1R,
-     amdTp2R = amdTp2R, amdMinRR = amdMinRR, amdShowBox = amdShowBox, amdShowMark = amdShowMark, amdCol = amdCol, cfMode = cfMode, cfMinPro = cfMinPro, cfMaxCon = cfMaxCon,
-     cfReqBias = cfReqBias, cfReqClear = cfReqClear, cfModels = cfModels, fmOn = fmOn, fmStrong = fmStrong, fmBos = fmBos, fmMaxWait = fmMaxWait, fmTrigWin = fmTrigWin,
-     fmStopTk = fmStopTk, fmMaxRisk = fmMaxRisk, fmTp1R = fmTp1R, fmTp2R = fmTp2R, fmMinRR = fmMinRR, fmBias = fmBias, mkt = mkt, isDet = isDet,
-     primHigh = primHigh, vis4 = vis4, vis1 = vis1, keepHist = keepHist, n4 = n4, n1 = n1, nC = nC, nE = nE,
-     tfOK = tfOK, src4 = src4, src1 = src1, minPen = minPen, w1 = w1, rcPool = rcPool, rcCRT1 = rcCRT1, rcCRT4 = rcCRT4,
-     c15Ms = c15Ms, c15Bars = c15Bars, labOff = labOff, dayMs = dayMs, keepResolved = keepResolved, dashSz = dashSz)
+var CFG K = CFG.new()
+
+// fills part of K (each setup function stays far below the 254 external-element limit)
+f_initK1(CFG k) =>
+    k.histCount := histCount
+    k.showPD := showPD
+    k.showPools := showPools
+    k.showMSS := showMSS
+    k.keepTrades := keepTrades
+    k.showSim := showSim
+    k.minRangeATR := minRangeATR
+    k.maxRangeATR := maxRangeATR
+    k.rangeMaxAge := rangeMaxAge
+    k.usePools := usePools
+    k.extLook := extLook
+    k.reclaimWin15 := reclaimWin15
+    k.reclaimBars := reclaimBars
+    k.acceptBars := acceptBars
+    k.maxSweepATR := maxSweepATR
+    k.roomCheck := roomCheck
+    k.confMode := confMode
+    k.reqChoch := reqChoch
+    k.confExpiry := confExpiry
+    k.conflictInval := conflictInval
+    k.pairedConf := pairedConf
+    k.pairBars := pairBars
+    k.trigMode := trigMode
+    k.retestTol := retestTol
+    k.entryExpiry := entryExpiry
+    k.maxRiskATR := maxRiskATR
+    k.reqDiscount := reqDiscount
+    k.htfFilter := htfFilter
+    k.stopBufATR := stopBufATR
+    k.stopBufTk := stopBufTk
+    k.minRR := minRR
+    k.tp1Mode := tp1Mode
+    k.tp1MinR := tp1MinR
+    k.tp1R := tp1R
+    k.tp2Mode := tp2Mode
+    k.tp2R := tp2R
+    k.tp1Pct := tp1Pct
+    k.useBE := useBE
+    k.maxBars := maxBars
+    k.maxStopPts := maxStopPts
+    k.tp2MaxR := tp2MaxR
+    k.wickInval := wickInval
+    k.trackPD := trackPD
+    k.trackPW := trackPW
+    k.trackSess := trackSess
+    k.trackSw := trackSw
+    k.eqTolATR := eqTolATR
+    k.poolMax := poolMax
+    k.poolDays := poolDays
+    k.asiaSess := asiaSess
+    k.asiaTZ := asiaTZ
+    k.lonSess := lonSess
+    k.lonTZ := lonTZ
+    k.nySess := nySess
+    k.nyTZ := nyTZ
+    k.alJSON := alJSON
+    k.alSweep := alSweep
+    k.alConf := alConf
+    k.alSig := alSig
+    k.alMgmt := alMgmt
+    k.cHi := cHi
+    k.cLo := cLo
+    k.cMid := cMid
+    k.cBull := cBull
+    k.cBear := cBear
+    k.cBSL := cBSL
+    k.cSSL := cSSL
+    k.cEntry := cEntry
+    k.cTP := cTP
+    k.cSL := cSL
+    k.cOn := cOn
+    k.cRefMode := cRefMode
+    k.cOpenAsia := cOpenAsia
+    k.cOpenAsiaT := cOpenAsiaT
+    k.cOpenLon := cOpenLon
+    k.cOpenLonT := cOpenLonT
+    k.cOpenNy := cOpenNy
+    k.cOpenNyT := cOpenNyT
+    k.cBufTk := cBufTk
+    k.cSweepRule := cSweepRule
+    k.cSweepWin := cSweepWin
+    k.cExpiry := cExpiry
+    k.cBiasMode := cBiasMode
+    true
+
+// fills part of K (each setup function stays far below the 254 external-element limit)
+f_initK2(CFG k) =>
+    k.cConflict := cConflict
+    k.cEmaLen := cEmaLen
+    k.cStructF := cStructF
+    k.cSesAsia := cSesAsia
+    k.cSesLon := cSesLon
+    k.cSesNy := cSesNy
+    k.cSesAny := cSesAny
+    k.cDispMin := cDispMin
+    k.cVolMult := cVolMult
+    k.cStopMode := cStopMode
+    k.cMinStopATR := cMinStopATR
+    k.cStopATR := cStopATR
+    k.cStopTk := cStopTk
+    k.cMaxRiskATR := cMaxRiskATR
+    k.cTp1R := cTp1R
+    k.cTp2R := cTp2R
+    k.cTpMode := cTpMode
+    k.cTp2MaxR := cTp2MaxR
+    k.cNeedWin := cNeedWin
+    k.cMinRR := cMinRR
+    k.cRiskCash := cRiskCash
+    k.cShowBnd := cShowBnd
+    k.cCol := cCol
+    k.fvgOn := fvgOn
+    k.fvgShow := fvgShow
+    k.fvgShowInv := fvgShowInv
+    k.fvgMinATR := fvgMinATR
+    k.fvgStrongATR := fvgStrongATR
+    k.fvgStrongOnly := fvgStrongOnly
+    k.fvgShowN := fvgShowN
+    k.fvgMaxDist := fvgMaxDist
+    k.fvgMaxAge := fvgMaxAge
+    k.fvgBullC := fvgBullC
+    k.fvgBearC := fvgBearC
+    k.fvgInvC := fvgInvC
+    k.sdOn := sdOn
+    k.sdShow := sdShow
+    k.sdShowDead := sdShowDead
+    k.sdDispATR := sdDispATR
+    k.sdLook := sdLook
+    k.sdMaxTouch := sdMaxTouch
+    k.sdShowN := sdShowN
+    k.sdMaxDist := sdMaxDist
+    k.sdMaxAge := sdMaxAge
+    k.sdDemC := sdDemC
+    k.sdSupC := sdSupC
+    k.msShow := msShow
+    k.liqAlways := liqAlways
+    k.amdOn := amdOn
+    k.amdAccMode := amdAccMode
+    k.amdAsiaH1 := amdAsiaH1
+    k.amdLen := amdLen
+    k.amdRangeATR := amdRangeATR
+    k.amdCompress := amdCompress
+    k.amdAccExp := amdAccExp
+    k.amdRclTF := amdRclTF
+    k.amdReclaim := amdReclaim
+    k.amdAccept := amdAccept
+    k.amdMaxSweep := amdMaxSweep
+    k.amdDistExp := amdDistExp
+    k.amdDispATR := amdDispATR
+    k.amdDistLvl := amdDistLvl
+    k.amdStruct := amdStruct
+    k.amdBias := amdBias
+    k.amdStopMode := amdStopMode
+    k.amdStopTk := amdStopTk
+    k.amdCapMode := amdCapMode
+    k.amdMaxRisk := amdMaxRisk
+    k.amdTp1R := amdTp1R
+    k.amdTp2R := amdTp2R
+    k.amdMinRR := amdMinRR
+    k.amdShowBox := amdShowBox
+    k.amdShowMark := amdShowMark
+    k.amdCol := amdCol
+    k.cfMode := cfMode
+    k.cfMinPro := cfMinPro
+    k.cfMaxCon := cfMaxCon
+    k.cfReqBias := cfReqBias
+    k.cfReqClear := cfReqClear
+    true
+
+// fills part of K (each setup function stays far below the 254 external-element limit)
+f_initK3(CFG k) =>
+    k.cfModels := cfModels
+    k.fmOn := fmOn
+    k.fmStrong := fmStrong
+    k.fmBos := fmBos
+    k.fmMaxWait := fmMaxWait
+    k.fmTrigWin := fmTrigWin
+    k.fmStopTk := fmStopTk
+    k.fmMaxRisk := fmMaxRisk
+    k.fmTp1R := fmTp1R
+    k.fmTp2R := fmTp2R
+    k.fmMinRR := fmMinRR
+    k.fmBias := fmBias
+    k.mkt := mkt
+    k.isDet := isDet
+    k.primHigh := primHigh
+    k.vis4 := vis4
+    k.vis1 := vis1
+    k.keepHist := keepHist
+    k.n4 := n4
+    k.n1 := n1
+    k.nC := nC
+    k.nE := nE
+    k.tfOK := tfOK
+    k.src4 := src4
+    k.src1 := src1
+    k.minPen := minPen
+    k.w1 := w1
+    k.rcPool := rcPool
+    k.rcCRT1 := rcCRT1
+    k.rcCRT4 := rcCRT4
+    k.c15Ms := c15Ms
+    k.c15Bars := c15Bars
+    k.labOff := labOff
+    k.dayMs := dayMs
+    k.keepResolved := keepResolved
+    k.dashSz := dashSz
+    true
+
+if barstate.isfirst
+    f_initK1(K)
+    f_initK2(K)
+    f_initK3(K)
 
 // ───────────────────────────── TYPES ─────────────────────────────
 // A tracked liquidity level (CRT boundaries are liquidity levels too).
