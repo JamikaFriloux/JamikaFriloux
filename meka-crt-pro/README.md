@@ -20,6 +20,7 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 * **Model A: CRT sweep/reclaim.** A 4H/1H CRT sweep and reclaim, confirmed on 15M, entered on 5M. Labels: `A · BUY` / `A · SELL`.
 * **Model C: 15M double-range confirmation.** Two completed 15M candles are frozen as a range, and a later 15M close beyond it triggers the trade. It is drawn in purple, with labels `C · BUY` / `C · SELL`. Settings are in input group ⑭; see `docs/MODEL_C.md`.
 * There is no Model B in the code (see `docs/MODEL_C.md`, decisions).
+* **Model AMD: Power of Three (Stage 2, optional).** Accumulation range → confirmed manipulation sweep → displacement distribution. Labels: `AMD · BUY` / `AMD · SELL`, M/D markers. Settings are in input group ⑱; see `docs/UPGRADE_STAGES.md`.
 * **Context overlays (Stage 1):** FVG / inverse FVG (group ⑮), supply & demand / order blocks (group ⑯), BOS / CHoCH / MSS and liquidity lines (group ⑰). They inform; they do not create trades.
 
 The strategy trades **one model per run** (*Model traded by this strategy*), so each model is tested independently.

@@ -3,8 +3,8 @@
 | Stage | Contents | Status |
 |---|---|---|
 | **1** | Fair Value Gaps + inverse FVGs, Supply & Demand / order blocks, structure refinements (MSS), independent overlay toggles, minimal dashboard format | **Done** (this commit) |
-| 2 | AMD / Power of Three as a separate optional setup model (accumulation → manipulation → distribution) | Next |
-| 3 | Confluence engine (optional filter/ranking with "why it qualifies / why rejected"), FVG setup model, strategy support for the new models, cost-inclusive in/out-of-sample tests on MNQ, MGC/gold, ES | After 2 |
+| **2** | AMD / Power of Three as a separate optional setup model (accumulation → manipulation → distribution) | **Done** |
+| 3 (next) | Confluence engine (optional filter/ranking with "why it qualifies / why rejected"), FVG setup model, strategy support for the new models, cost-inclusive in/out-of-sample tests on MNQ, MGC/gold, ES | After 2 |
 
 **There is no "Model B" in the code.** The script contains **Model A** (CRT sweep/reclaim) and **Model C** (15M double range = "RANGE BREAK"). Both are unchanged in Stage 1: only display lines were edited, and no entry/stop/target/state logic changed.
 
@@ -83,3 +83,43 @@ All FVG / zone sizes are **ATR multiples**, so the same defaults apply to MNQ an
 3. Demand/supply boxes appear on the close of the displacement candle, merge instead of stacking, fade when closed through, and show a rank of x/5.
 4. Toggle each overlay (FVG, IFVG, S&D, faded zones, structure markers, liquidity lines) independently.
 5. Confirm Model A / Model C signals are unchanged on the same chart range as before the upgrade.
+
+## Stage 2: Model AMD / Power of Three (input group ⑱)
+
+A separate, **optional** model with its own state machine, trade, alerts, dashboard entry (`SETUP: AMD`) and strategy option (*Model AMD — Power of Three*). It is not required by any other model.
+
+| Phase | Exact rule (defaults) |
+|---|---|
+| **Accumulation** | Over the last 24 chart bars, high − low ≤ 3.0 × ATR(100) **and** ATR(14) ≤ 0.8 × ATR(100) (compression). The range is frozen at that bar. It never overlaps the previous AMD range. It expires if there is no manipulation within 48 bars. Drawn as a thin outline. |
+| **Manipulation** | Price trades ≥ 1 tick beyond one side, then a **completed 15M candle closes back inside** within 2 × 15M candles. The **M** marker appears only on that confirming bar. Two 15M closes outside = **accepted breakout** (invalid). A sweep deeper than 2 × ATR = **expansion** (invalid). Both sides broken on one candle = invalid. |
+| **Distribution** | Within 24 bars: a displacement candle (body ≥ 1.0 × ATR) in the direction **away from the sweep** closes beyond the **opposite** range boundary (or the midpoint, optional). Optional: require a chart-TF swing break after the manipulation. **D** marker. Breaking the manipulation extreme first = invalid. |
+| **Trade** | Signal at the distribution close; fill at the next bar open. Stop beyond the manipulation extreme + 2 ticks (or midpoint / displacement candle). Max stop = range height + max sweep (range-based) and the global points cap; wider = NOT TRADABLE. TP1/TP2 = 1R/2R, min R:R 1.5. Entry windows apply. Optional bias filter (same settings as Model C). |
+
+Every ending is logged with a plain-English reason (Diagnostic log): *accepted breakout*, *expansion*, *manipulation extreme broken*, *no distribution*, *not tradable: …*.
+
+### What the replay showed (`tools/replay/amd.py`, costs included, nothing tuned for profit)
+
+Per year on XAUUSD, with the final defaults:
+* About 590 accumulations, about 370 confirmed manipulations, about 270 of which **broke the manipulation extreme again** before distribution.
+* About 35 distributions in total, and only **0–5 inside the entry windows**.
+* With a 5M-close reclaim (the first draft), the extreme was broken again 81% of the time. That is why the 15M close is the default.
+* The first draft's ATR stop cap made almost every manipulation-extreme stop "too wide". The range-based cap fixes that contradiction.
+
+| Variant (15M reclaim, range cap) | Gold 2023 | Gold 2024 | NQ 2008 |
+|---|---|---|---|
+| Default (entry windows) | 3 trades, −0.73R | 1 trade, −0.03R | 0 trades |
+| Any time of day | 36 trades, −0.29R | 35 trades, −0.29R | 13 trades, −0.54R |
+| Any time + 4H/1H bias | 14 trades, +0.17R | 16 trades, +0.17R | 3 trades, −1.12R |
+
+**Conclusion: AMD as specified is rare and showed no reliable edge.** The bias-filtered cells are positive in both gold years but rest on about 15 trades a year and fail on NQ. That is not evidence. The model is implemented faithfully for your own testing in TradingView.
+
+The no-future test passes: 12 of 12 truncation cuts are identical.
+
+### Stage 2 testing checklist
+- [ ] Compile indicator + strategy, and send any error with its line number.
+- [ ] Bar Replay:
+  - [ ] An orange ACCUMULATION outline appears only once the compression rule holds, and it never moves.
+  - [ ] The **M** marker appears on the 5M bar that closes a 15M candle back inside.
+  - [ ] **D** and **AMD · BUY/SELL** appear on the displacement close, and the fill is on the next bar.
+- [ ] Diagnostic log: every AMD ending has a reason.
+- [ ] Strategy: *Model traded* = AMD. Test with entry windows on and off, then add the bias filter.

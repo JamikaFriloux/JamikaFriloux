@@ -231,6 +231,32 @@ string G_MS = "⑰ Structure & liquidity overlays"
 string msShow      = input.string("Detailed mode only", "15M BOS / CHoCH / MSS markers", options = ["Detailed mode only", "Always", "Off"], group = G_MS, tooltip = "BOS = break in the direction of the prior 15M structure. CHoCH = first break against it. MSS = a CHoCH whose breaking candle is a displacement candle. All are drawn only after the breaking 15M candle has closed.")
 bool   liqAlways   = input.bool(false, "Show liquidity levels (PDH/PDL, sessions, swings) in Clean mode too", group = G_MS)
 
+string G_AMD = "⑱ Model AMD — Power of Three (optional setup model)"
+bool   amdOn       = input.bool(true, "Enable AMD model", group = G_AMD)
+int    amdLen      = input.int(24, "Accumulation window (chart bars)", minval = 8, maxval = 200, group = G_AMD)
+float  amdRangeATR = input.float(3.0, "Accumulation: range ≤ × slow ATR(100)", minval = 0.5, step = 0.25, group = G_AMD)
+float  amdCompress = input.float(0.8, "Accumulation: ATR(14) ≤ × slow ATR(100) (compression)", minval = 0.2, maxval = 1.5, step = 0.05, group = G_AMD)
+int    amdAccExp   = input.int(48, "Accumulation expires after N bars without manipulation", minval = 4, maxval = 500, group = G_AMD)
+string amdRclTF    = input.string("15M candle close", "Manipulation reclaim confirmed by", options = ["15M candle close", "Chart candle close"], group = G_AMD, tooltip = "15M (default): the sweep counts only when a COMPLETED 15M candle closes back inside the range. In the replay, the chart-close version saw price break the manipulation extreme again 81% of the time.")
+int    amdReclaim  = input.int(2, "Manipulation: close back inside within N candles (of the reclaim TF)", minval = 1, maxval = 20, group = G_AMD)
+int    amdAccept   = input.int(2, "Accepted breakout: N consecutive reclaim-TF closes outside", minval = 1, maxval = 20, group = G_AMD)
+float  amdMaxSweep = input.float(2.0, "Max sweep depth beyond the range (× ATR14)", minval = 0.2, step = 0.1, group = G_AMD)
+int    amdDistExp  = input.int(24, "Distribution must confirm within N bars of manipulation", minval = 2, maxval = 300, group = G_AMD)
+float  amdDispATR  = input.float(1.0, "Distribution displacement: body ≥ × ATR14", minval = 0.2, step = 0.1, group = G_AMD)
+string amdDistLvl  = input.string("Opposite range boundary", "Distribution candle must close beyond", options = ["Opposite range boundary", "Range midpoint"], group = G_AMD)
+bool   amdStruct   = input.bool(false, "Require market-structure confirmation (chart-TF swing break after manipulation)", group = G_AMD)
+string amdBias     = input.string("Off", "Directional bias filter", options = ["Off", "Use Model C bias settings"], group = G_AMD)
+string amdStopMode = input.string("Manipulation extreme", "Stop", options = ["Manipulation extreme", "Range midpoint", "Displacement candle"], group = G_AMD)
+int    amdStopTk   = input.int(2, "Stop buffer (ticks)", minval = 0, group = G_AMD)
+string amdCapMode  = input.string("Range-based", "Max stop distance rule", options = ["Range-based", "ATR multiple"], group = G_AMD, tooltip = "Range-based (default): the stop may be at most range height + max sweep depth + buffer. That is the distance a manipulation-extreme stop can legitimately need. ATR multiple: at most N × ATR14. Wider = NOT TRADABLE. The global max-stop-in-points limit always applies too.")
+float  amdMaxRisk  = input.float(4.0, "ATR-multiple rule: max stop (× ATR14)", minval = 0.5, step = 0.25, group = G_AMD)
+float  amdTp1R     = input.float(1.0, "TP1 (R)", minval = 0.2, step = 0.1, group = G_AMD)
+float  amdTp2R     = input.float(2.0, "TP2 (R)", minval = 0.5, step = 0.1, group = G_AMD)
+float  amdMinRR    = input.float(1.5, "Minimum R:R to TP2", minval = 0.5, step = 0.1, group = G_AMD)
+bool   amdShowBox  = input.bool(true, "Show accumulation ranges (thin outline)", group = G_AMD)
+bool   amdShowMark = input.bool(true, "Show manipulation / distribution markers", group = G_AMD)
+color  amdCol      = input.color(#FFB74D, "AMD colour", group = G_AMD)
+
 color C_CLEAR = color.new(color.black, 100)
 color C_GOLD  = #E6B422
 color C_MUTED = #8B95A5
@@ -453,6 +479,27 @@ type Zone
     bool   inside = false
     int    state = 0
     int    endBar
+
+// AMD / Power of Three setup. Range frozen at lock; nothing is confirmed before its candle closes.
+// state: 0 scanning · 1 accumulation locked · 2 manipulation in progress (breached, unconfirmed)
+//        3 manipulation confirmed (awaiting distribution) · 7 distribution confirmed (trade)
+//        9 invalidated · 10 expired · 11 not tradable
+type AMD
+    int    state = 0
+    float  hi
+    float  lo
+    int    t0
+    int    lockBar
+    int    side = 0            // side that was swept: +1 above, -1 below
+    int    dir = 0             // trade direction = -side
+    float  mExt                // manipulation extreme
+    int    mBar
+    int    confBar
+    int    outCnt = 0
+    bool   structOK = false
+    string why = ""
+    int    endBar
+    box    bx
 
 // ───────────────────────────── LIQUIDITY HELPERS ─────────────────────────────
 f_tag(Liq l) =>
@@ -719,7 +766,7 @@ f_sweepLabel(array<label> q, Liq l, bool star) =>
 
 f_alert(string ev, int d, float lvl, float en, float sl, float t1, float t2, string note) =>
     string ds = d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE"
-    string mdl = str.startswith(ev, "C_") ? "C" : "A"
+    string mdl = str.startswith(ev, "C_") ? "C" : str.startswith(ev, "AMD_") ? "AMD" : "A"
     string msg = ""
     if alJSON
         msg := "{\"source\":\"MEKA CRT PRO\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"timeframe\":\"" + timeframe.period + "\",\"model\":\"" + mdl + "\",\"event\":\"" + ev + "\",\"direction\":\"" + ds + "\",\"close\":" + str.tostring(close, format.mintick) + ",\"level\":" + (na(lvl) ? "null" : str.tostring(lvl, format.mintick)) + ",\"entry\":" + (na(en) ? "null" : str.tostring(en, format.mintick)) + ",\"sl\":" + (na(sl) ? "null" : str.tostring(sl, format.mintick)) + ",\"tp1\":" + (na(t1) ? "null" : str.tostring(t1, format.mintick)) + ",\"tp2\":" + (na(t2) ? "null" : str.tostring(t2, format.mintick)) + ",\"note\":\"" + note + "\",\"bar_time\":" + str.tostring(time) + "}"
@@ -857,6 +904,7 @@ f_invalidate(Setup s, string cat, string why, array<label> q) =>
 // mdl = "A" or "C". Event names for Model A are unchanged; Model C events get a "C_" prefix.
 f_fill(Setup s, array<label> q, string mdl) =>
     string pfx = mdl == "A" ? "" : mdl + " "
+    string epf = mdl == "A" ? "" : mdl + "_"
     s.entry := open
     s.fillBar := bar_index
     s.state := 6
@@ -874,12 +922,12 @@ f_fill(Setup s, array<label> q, string mdl) =>
     if isDet
         f_evLabel(q, bar_index, open, pfx + "FILL " + f_p(open), color.new(cEntry, 25), color.white, label.style_label_left, size.tiny, "Simulated fill at this bar's open (signal was on the previous closed bar)", yloc.price)
     if alSig
-        f_alert((mdl == "A" ? "" : "C_") + "ENTRY_FILLED_SIM", s.dir, na, open, s.stop, s.tp1, s.tp2, "Model " + mdl + " simulated fill at bar open")
+        f_alert(epf + "ENTRY_FILLED_SIM", s.dir, na, open, s.stop, s.tp1, s.tp2, "Model " + mdl + " simulated fill at bar open")
 
 // Conservative intrabar order: STOP first. Returns [outcome ("" while open), tp1 hit this bar, stop hit].
 f_manage(Setup s, array<label> q, string mdl) =>
     string pfx = mdl == "A" ? "" : mdl + " "
-    string epf = mdl == "A" ? "" : "C_"
+    string epf = mdl == "A" ? "" : mdl + "_"
     int dP = s.dir
     string outc = ""
     bool hitT1 = false
@@ -2049,6 +2097,183 @@ if barstate.islast
                         nDead += 1
                         ctxBox.push(box.new(z.t0, z.top, time + labOff, z.bot, xloc = xloc.bar_time, border_color = color.new(#607D8B, 70), border_style = line.style_dotted, bgcolor = color.new(#607D8B, 95), text = (z.dir == 1 ? "demand" : "supply") + " invalid", text_size = size.tiny, text_color = color.new(#607D8B, 30), text_halign = text.align_left))
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MODEL AMD — ACCUMULATION → MANIPULATION → DISTRIBUTION (independent, optional)
+//  All decisions on CLOSED chart bars. Signal at the distribution candle close,
+//  simulated fill at the next bar open (shared trade routine with Models A and C).
+// ═══════════════════════════════════════════════════════════════════════════════
+float atrSlow = ta.atr(100)
+float amdHiN  = ta.highest(high, amdLen)
+float amdLoN  = ta.lowest(low, amdLen)
+
+var AMD          AD       = AMD.new()
+var Setup        TD       = Setup.new()
+var array<Setup> dTrades  = array.new<Setup>()
+var array<box>   amdBoxes = array.new<box>()
+var int          amdLastEnd = na
+
+bool evDLock  = false
+bool evDManip = false
+bool evDBuy   = false
+bool evDSell  = false
+bool evDInval = false
+bool evDExp   = false
+bool evDMiss  = false
+bool evDFill  = false
+bool evDTP1   = false
+bool evDStop  = false
+bool evDTP2   = false
+bool evDEarly = false
+bool evDDone  = false
+
+f_amdEnd(AMD a, int st, string why, array<label> q) =>
+    a.state := st
+    a.why := why
+    a.endBar := bar_index
+    if not na(a.bx)
+        box.set_right(a.bx, time)
+        if st != 7
+            box.set_border_color(a.bx, color.new(amdCol, 75))
+    if st != 7
+        string cat = st == 9 ? "INVALIDATED" : st == 10 ? "EXPIRED" : "NOT TRADABLE"
+        f_log("AMD · range " + f_p(a.lo) + " – " + f_p(a.hi) + (a.dir != 0 ? (a.dir == 1 ? " → LONG" : " → SHORT") : ""), cat, why)
+        if alMgmt
+            f_alert(st == 9 ? "AMD_INVALIDATED" : st == 10 ? "AMD_EXPIRED" : "AMD_NOT_TRADABLE", a.dir, na, na, na, na, na, why)
+
+if barstate.isconfirmed and amdOn and tfOK
+    // ── D1. Trade lifecycle (shared rules)
+    if TD.state == 5 and bar_index > TD.sigBar
+        f_fill(TD, evLabels, "AMD")
+        evDFill := true
+    if TD.state == 6
+        [oD, t1D, stD] = f_manage(TD, evLabels, "AMD")
+        evDTP1 := t1D
+        evDStop := stD
+        evDTP2 := oD == "TP2 HIT"
+        evDEarly := oD == "EARLY EXIT"
+        if oD != ""
+            evDDone := true
+
+    float bufD = amdStopTk * syminfo.mintick
+    // ── D2. Manipulation watch on a locked accumulation range
+    if AD.state == 1 and bar_index > AD.lockBar
+        bool upB = high - AD.hi >= minPen
+        bool dnB = AD.lo - low >= minPen
+        if upB and dnB
+            f_amdEnd(AD, 9, "Both sides of the accumulation range were broken on the same candle — no clear manipulation.", evLabels)
+            evDInval := true
+        else if upB or dnB
+            AD.state := 2
+            AD.side := upB ? 1 : -1
+            AD.mExt := upB ? high : low
+            AD.mBar := bar_index
+            AD.outCnt := 0
+        else if bar_index - AD.lockBar > amdAccExp
+            f_amdEnd(AD, 10, "No manipulation within " + str.tostring(amdAccExp) + " bars of the accumulation lock.", evLabels)
+            evDExp := true
+    if AD.state == 2
+        AD.mExt := AD.side == 1 ? math.max(AD.mExt, high) : math.min(AD.mExt, low)
+        float depth = AD.side == 1 ? AD.mExt - AD.hi : AD.lo - AD.mExt
+        // 15M mode: judge the reclaim only on the chart bar whose close IS the completed 15M close
+        bool evalNow = amdRclTF == "Chart candle close" or c15Last
+        int  rclWin = amdRclTF == "Chart candle close" ? amdReclaim : amdReclaim * math.max(1, int(timeframe.in_seconds(tfConf) / timeframe.in_seconds()))
+        bool backIn = evalNow and (AD.side == 1 ? close < AD.hi : close > AD.lo)
+        bool outC = evalNow and (AD.side == 1 ? close > AD.hi : close < AD.lo)
+        if depth > amdMaxSweep * atrE
+            f_amdEnd(AD, 9, "Move beyond the range was " + f_r(depth / atrE) + " ATR deep — expansion, not a manipulation sweep.", evLabels)
+            evDInval := true
+        else if backIn
+            AD.state := 3
+            AD.dir := -AD.side
+            AD.confBar := bar_index
+            AD.structOK := false
+            evDManip := true
+            if amdShowMark
+                f_evLabel(evLabels, bar_index, AD.mExt, "M", color.new(amdCol, 20), color.black, AD.side == 1 ? label.style_triangledown : label.style_triangleup, size.tiny, "Manipulation confirmed: swept " + (AD.side == 1 ? "above " + f_p(AD.hi) : "below " + f_p(AD.lo)) + " (extreme " + f_p(AD.mExt) + ") and closed back inside", AD.side == 1 ? yloc.abovebar : yloc.belowbar)
+            if alSweep
+                f_alert("AMD_MANIPULATION_CONFIRMED", AD.dir, AD.side == 1 ? AD.hi : AD.lo, na, na, na, na, "range " + f_p(AD.lo) + " – " + f_p(AD.hi) + ", extreme " + f_p(AD.mExt))
+        else
+            if outC
+                AD.outCnt := AD.outCnt + 1
+            if AD.outCnt >= amdAccept or bar_index - AD.mBar + 1 >= rclWin
+                f_amdEnd(AD, 9, "Price " + (AD.outCnt >= amdAccept ? "accepted outside the range (" + str.tostring(AD.outCnt) + " closes)" : "did not close back inside within " + str.tostring(amdReclaim) + (amdRclTF == "Chart candle close" ? " bars" : " " + nC + " candles")) + " — breakout, not manipulation.", evLabels)
+                evDInval := true
+    // ── D3. Distribution
+    if AD.state == 3 and bar_index > AD.confBar
+        int d = AD.dir
+        float mid = (AD.hi + AD.lo) / 2
+        if d == 1 ? bull5Brk : bear5Brk
+            AD.structOK := true
+        bool lost = d == 1 ? low < AD.mExt : high > AD.mExt
+        bool dispC = d == 1 ? (close > open and close - open >= amdDispATR * atrE) : (close < open and open - close >= amdDispATR * atrE)
+        float lvl = amdDistLvl == "Range midpoint" ? mid : d == 1 ? AD.hi : AD.lo
+        bool beyond = d == 1 ? close > lvl : close < lvl
+        if lost
+            f_amdEnd(AD, 9, "Price broke the manipulation extreme " + f_p(AD.mExt) + " before distribution.", evLabels)
+            evDInval := true
+        else if dispC and beyond and (not amdStruct or AD.structOK)
+            if amdShowMark
+                f_evLabel(evLabels, bar_index, d == 1 ? low : high, "D", color.new(d == 1 ? cBull : cBear, 30), color.white, d == 1 ? label.style_triangleup : label.style_triangledown, size.tiny, "Distribution confirmed: displacement close " + (d == 1 ? "above " : "below ") + f_p(lvl), d == 1 ? yloc.belowbar : yloc.abovebar)
+            [effD, cnfD, btD] = f_cBias()
+            string why = ""
+            if amdBias != "Off" and cBiasMode != "Off" and ((cBiasMode == "4H + 1H" and cnfD and cConflict == "Block trade") or effD != d)
+                why := "against the directional bias (" + btD + ")"
+            else if not entryAllowed
+                why := "entries are OFF outside the entry windows"
+            else if TD.state == 5 or TD.state == 6
+                why := "an AMD trade is already open"
+            float eRef = close
+            float stp = amdStopMode == "Range midpoint" ? mid - d * bufD : amdStopMode == "Displacement candle" ? (d == 1 ? low - bufD : high + bufD) : (d == 1 ? AD.mExt - bufD : AD.mExt + bufD)
+            float risk = d * (eRef - stp)
+            float capD = math.min(amdCapMode == "Range-based" ? (AD.hi - AD.lo) + amdMaxSweep * atrE + bufD : amdMaxRisk * atrE, maxStopPts > 0 ? maxStopPts : 1e12)
+            if why == "" and risk <= 0
+                why := "price is already beyond the planned stop"
+            else if why == "" and risk > capD
+                why := "stop " + f_p(risk) + " pts is wider than the " + f_p(capD) + " pts maximum"
+            else if why == "" and amdTp2R < amdMinRR
+                why := "TP2 " + f_r(amdTp2R) + "R is below the minimum R:R"
+            if why != ""
+                f_amdEnd(AD, 11, "Distribution confirmed but NOT TRADABLE: " + why + ".", evLabels)
+                evDMiss := true
+            else
+                float t1 = eRef + d * amdTp1R * risk
+                float t2 = eRef + d * amdTp2R * risk
+                TD := Setup.new(state = 5, dir = d, srcTF = nE, srcKind = "AMD range " + f_p(AD.lo) + "–" + f_p(AD.hi), level = d == 1 ? AD.lo : AD.hi, ext = AD.mExt, sigBar = bar_index, entryRef = eRef, stop = stp, stopInit = stp, riskRef = risk, tp1 = t1, tp2 = t2, tp1Src = str.tostring(amdTp1R) + "R", tp2Src = str.tostring(amdTp2R) + "R", lines = array.new<line>(), labels = array.new<label>(), boxes = array.new<box>())
+                f_tradeDraw(TD, "AMD ")
+                dTrades.push(TD)
+                if dTrades.size() > keepTrades
+                    f_tradeDelete(dTrades.shift())
+                f_evLabel(evLabels, bar_index, d == 1 ? low : high, (d == 1 ? "AMD · BUY\n" : "AMD · SELL\n") + f_p(eRef), d == 1 ? cBull : cBear, color.white, d == 1 ? label.style_label_up : label.style_label_down, size.small, "AMD: accumulation " + f_p(AD.lo) + "–" + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · distribution close " + f_p(eRef) + " · fill = next bar open (simulated)", d == 1 ? yloc.belowbar : yloc.abovebar)
+                f_amdEnd(AD, 7, "Distribution confirmed → " + (d == 1 ? "LONG" : "SHORT") + ".", evLabels)
+                if d == 1
+                    evDBuy := true
+                else
+                    evDSell := true
+                if alSig
+                    f_alert(d == 1 ? "AMD_BUY_CONFIRMED" : "AMD_SELL_CONFIRMED", d, lvl, eRef, stp, t1, t2, "fill assumed at next bar open")
+        else if bar_index - AD.confBar > amdDistExp
+            f_amdEnd(AD, 10, "No distribution within " + str.tostring(amdDistExp) + " bars of the manipulation.", evLabels)
+            evDExp := true
+    // ── D4. Accumulation detection (never overlaps the previous AMD range)
+    if AD.state == 0 or AD.state >= 7
+        int wStart = bar_index - amdLen + 1
+        bool fresh = (na(amdLastEnd) or wStart > amdLastEnd) and (AD.state < 7 or wStart > AD.endBar)
+        if fresh and not na(atrSlow) and amdHiN - amdLoN <= amdRangeATR * atrSlow and atrE <= amdCompress * atrSlow
+            AD := AMD.new(state = 1, hi = amdHiN, lo = amdLoN, t0 = time[amdLen - 1], lockBar = bar_index)
+            amdLastEnd := bar_index
+            if amdShowBox
+                AD.bx := box.new(AD.t0, AD.hi, time, AD.lo, xloc = xloc.bar_time, border_color = color.new(amdCol, 30), border_width = 1, bgcolor = color.new(amdCol, 96), text = "ACCUMULATION", text_size = size.tiny, text_color = color.new(amdCol, 30), text_halign = text.align_left, text_valign = text.align_top)
+                amdBoxes.push(AD.bx)
+                if amdBoxes.size() > 3
+                    box.delete(amdBoxes.shift())
+            evDLock := true
+            if alMgmt
+                f_alert("AMD_ACCUMULATION_LOCKED", 0, na, na, na, na, na, "range " + f_p(AD.lo) + " – " + f_p(AD.hi))
+    if AD.state >= 1 and AD.state <= 3 and not na(AD.bx)
+        box.set_right(AD.bx, time)
+    if AD.state >= 7 and not na(AD.endBar)
+        amdLastEnd := math.max(nz(amdLastEnd), AD.endBar)
+
 // Keep labels of untouched pools at the right edge
 if barstate.islast and pools.size() > 0
     for l in pools
@@ -2258,10 +2483,13 @@ if barstate.islast and showDash and dashStyle == "Compact"
     table.cell(dashC, 1, 0, syminfo.ticker + " · " + nE, text_color = C_MUTED, text_halign = text.align_right, text_size = dashSz)
     bool aLive = S.state == 5 or S.state == 6
     bool cLive = cOn and (TC.state == 5 or TC.state == 6)
-    bool useCt = cLive and (not aLive or TC.sigBar > S.sigBar)
-    bool live  = aLive or cLive
-    Setup Ts   = useCt ? TC : S
-    string mdl = useCt ? "C" : "A"
+    bool dLive = amdOn and (TD.state == 5 or TD.state == 6)
+    // newest actionable trade wins the panel
+    int  pick  = dLive and (not cLive or TD.sigBar >= TC.sigBar) and (not aLive or TD.sigBar >= S.sigBar) ? 3 : cLive and (not aLive or TC.sigBar > S.sigBar) ? 2 : 1
+    bool useCt = pick == 2
+    bool live  = aLive or cLive or dLive
+    Setup Ts   = pick == 3 ? TD : useCt ? TC : S
+    string mdl = pick == 3 ? "AMD" : useCt ? "C" : "A"
     // 1 · Bias (last completed 4H / 1H close vs EMA)
     string a4 = cBias4 == 1 ? "↑" : cBias4 == -1 ? "↓" : "–"
     string a1 = cBias1 == 1 ? "↑" : cBias1 == -1 ? "↓" : "–"
@@ -2272,25 +2500,32 @@ if barstate.islast and showDash and dashStyle == "Compact"
     string stp = "No active setup"
     color stpc = C_MUTED
     if live
-        stp := (mdl == "C" ? "RANGE BREAK" : "CRT") + " · " + (Ts.dir == 1 ? "LONG" : "SHORT")
+        stp := (mdl == "AMD" ? "AMD" : mdl == "C" ? "RANGE BREAK" : "CRT") + " · " + (Ts.dir == 1 ? "LONG" : "SHORT")
         stpc := color.white
     else if S.state == 3 or S.state == 4
         stp := "CRT · " + (S.dir == 1 ? "LONG" : "SHORT") + " forming"
         stpc := S.dir == 1 ? cBull : cBear
+    else if amdOn and AD.state == 3
+        stp := "AMD · " + (AD.dir == 1 ? "LONG" : "SHORT") + " forming"
+        stpc := AD.dir == 1 ? cBull : cBear
     else if cOn and CR.state == 2
         stp := "RANGE BREAK · watching"
         stpc := cCol
     else if cOn and CR.state == 1
         stp := "RANGE BREAK · forming"
         stpc := cCol
-    string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + nC + " confirmation" : " · needs " + nE + " entry") : (cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : ""
+    else if amdOn and (AD.state == 1 or AD.state == 2)
+        stp := AD.state == 1 ? "AMD · accumulation" : "AMD · sweep in progress"
+        stpc := amdCol
+    string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + nC + " confirmation" : " · needs " + nE + " entry") : (amdOn and AD.state == 3) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · needs a displacement close beyond " + (amdDistLvl == "Range midpoint" ? "the midpoint" : AD.dir == 1 ? f_p(AD.hi) : f_p(AD.lo)) : (cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : (amdOn and AD.state >= 1 and AD.state <= 2) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) : ""
     f_cRow(dashC, 2, "SETUP", stp == "No active setup" ? "—" : stp, stpc, stpTip)
     // 3 · Signal: BUY / SELL only when actionable
     string sig = "WAIT"
     color sigc = C_MUTED
     string sigTip = ""
-    bool cRecentNA = cOn and CR.state == 11 and time - CR.endT <= 2 * c15Ms
-    bool doneRecent = (S.state == 8 and bar_index - S.doneBar <= 6) or (TC.state == 8 and bar_index - TC.doneBar <= 6)
+    bool dRecentNA = amdOn and AD.state == 11 and bar_index - AD.endBar <= 3
+    bool cRecentNA = (cOn and CR.state == 11 and time - CR.endT <= 2 * c15Ms) or dRecentNA
+    bool doneRecent = (S.state == 8 and bar_index - S.doneBar <= 6) or (TC.state == 8 and bar_index - TC.doneBar <= 6) or (TD.state == 8 and bar_index - TD.doneBar <= 6)
     if live
         string dw = Ts.dir == 1 ? "BUY" : "SELL"
         sig := Ts.state == 5 ? dw + " · fill next open" : Ts.tp1Done ? dw + " ACTIVE · TP1 ✓" : dw + " ACTIVE"
@@ -2298,9 +2533,12 @@ if barstate.islast and showDash and dashStyle == "Compact"
     else if cRecentNA
         sig := "WAIT · not tradable"
         sigc := C_GOLD
-        sigTip := CR.endWhy
+        sigTip := dRecentNA ? AD.why : CR.endWhy
     else if doneRecent
-        Setup Td = TC.state == 8 and (S.state != 8 or TC.doneBar >= S.doneBar) ? TC : S
+        int dbA = S.state == 8 ? S.doneBar : -1
+        int dbC = TC.state == 8 ? TC.doneBar : -1
+        int dbD = TD.state == 8 ? TD.doneBar : -1
+        Setup Td = dbD >= dbC and dbD >= dbA ? TD : dbC >= dbA ? TC : S
         sig := Td.outcome + " " + (Td.resultR >= 0 ? "+" : "") + f_r(Td.resultR) + "R"
         sigc := Td.resultR > 0 ? cTP : cSL
     else if (S.state == 3 or S.state == 4) and not entryAllowed
@@ -2358,6 +2596,11 @@ plot(liveC ? TC.stop : na, "C Stop", color = cSL, display = display.data_window)
 plot(liveC ? TC.tp1 : na, "C TP1", color = cTP, display = display.data_window)
 plot(liveC ? TC.tp2 : na, "C TP2", color = cTP, display = display.data_window)
 plot(CR.state == 2 ? CR.up : na, "C Upper", color = cCol, display = display.data_window)
+bool liveD = TD.state == 5 or TD.state == 6
+plot(liveD ? (TD.state == 6 ? TD.entry : TD.entryRef) : na, "AMD Entry", color = amdCol, display = display.data_window)
+plot(liveD ? TD.stop : na, "AMD Stop", color = cSL, display = display.data_window)
+plot(AD.state >= 1 and AD.state <= 3 ? AD.hi : na, "AMD Range High", color = amdCol, display = display.data_window)
+plot(AD.state >= 1 and AD.state <= 3 ? AD.lo : na, "AMD Range Low", color = amdCol, display = display.data_window)
 plot(CR.state == 2 ? CR.lo : na, "C Lower", color = cCol, display = display.data_window)
 
 // (alertcondition() block removed in the strategy build — alert() calls still work)
@@ -2370,7 +2613,7 @@ plot(CR.state == 2 ? CR.lo : na, "C Lower", color = cCol, display = display.data
 //  Exits: native stop / limit orders at the engine's SL / TP1 / TP2.
 // ═══════════════════════════════════════════════════════════════════════════════
 string G_ST = "⑬ Strategy (backtest only)"
-string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range"], group = G_ST)
+string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range", "Model AMD — Power of Three"], group = G_ST)
 string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity", "Risk cash per trade"], group = G_ST)
 float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the TP1 partial is possible.")
 float  riskPct  = input.float(0.5, "Risk % of equity per trade", minval = 0.01, maxval = 10, step = 0.05, group = G_ST)
@@ -2384,13 +2627,14 @@ bool   showStats = input.bool(true, "Show results table (by direction / session)
 f_floorStep(float q, float st) => math.floor(q / st + 1e-9) * st
 
 bool useC   = stModel == "Model C — 15M double-range"
-Setup T     = useC ? TC : S
-bool sigL   = useC ? evCBuy : evBuy
-bool sigS   = useC ? evCSell : evSell
-bool mTP1   = useC ? evCTP1 : evTP1
-bool mEarly = useC ? evCEarly : evEarly
-bool mDone  = useC ? evCDone : evDone
-string mTag = useC ? "C" : "A"
+bool useD   = stModel == "Model AMD — Power of Three"
+Setup T     = useD ? TD : useC ? TC : S
+bool sigL   = useD ? evDBuy : useC ? evCBuy : evBuy
+bool sigS   = useD ? evDSell : useC ? evCSell : evSell
+bool mTP1   = useD ? evDTP1 : useC ? evCTP1 : evTP1
+bool mEarly = useD ? evDEarly : useC ? evCEarly : evEarly
+bool mDone  = useD ? evDDone : useC ? evCDone : evDone
+string mTag = useD ? "AMD" : useC ? "C" : "A"
 bool inDates = time >= fromDate and time <= toDate
 
 var array<float> stRisk = array.new<float>()   // planned risk (account currency) per position, in entry order
