@@ -72,59 +72,59 @@ f_sessIdx(int t) =>
     f_inSessT(t, nySess, nyTZ) ? 4 : f_inSessT(t, lonSess, lonTZ) ? 5 : f_inSessT(t, asiaSess, asiaTZ) ? 6 : 7
 
 var table stT = table.new(position.bottom_right, 9, 10, bgcolor = color.new(#0B0F17, 10), frame_color = color.new(C_GOLD, 50), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
-f_stStats() =>
-    // groups: 0 ALL · 1 LONG · 2 SHORT · 3 (unused) · 4 New York · 5 London · 6 Asia · 7 Other
-    array<float> gN  = array.new<float>(8, 0.0)
-    array<float> gW  = array.new<float>(8, 0.0)
-    array<float> gGP = array.new<float>(8, 0.0)
-    array<float> gGL = array.new<float>(8, 0.0)
-    array<float> gR  = array.new<float>(8, 0.0)
-    array<float> gRn = array.new<float>(8, 0.0)
-    int nCT = strategy.closedtrades
-    int pos = -1
-    int lastET = na
-    float pnl = 0.0
-    int pDir = 0
-    int pET = na
-    for i = 0 to nCT
-        bool flush = i == nCT or (i < nCT and strategy.closedtrades.entry_time(i) != lastET)
-        if flush and pos >= 0
-            float rr = pos < stRisk.size() ? pnl / stRisk.get(pos) : na
-            for g in array.from(0, pDir == 1 ? 1 : 2, f_sessIdx(pET))
-                gN.set(g, gN.get(g) + 1)
-                gW.set(g, gW.get(g) + (pnl > 0 ? 1 : 0))
-                gGP.set(g, gGP.get(g) + math.max(pnl, 0))
-                gGL.set(g, gGL.get(g) + math.min(pnl, 0))
-                if not na(rr)
-                    gR.set(g, gR.get(g) + rr)
-                    gRn.set(g, gRn.get(g) + 1)
-        if i < nCT
-            int et = strategy.closedtrades.entry_time(i)
-            if et != lastET
-                pos += 1
-                lastET := et
-                pnl := 0.0
-                pET := et
-                pDir := strategy.closedtrades.size(i) > 0 ? 1 : -1
-            pnl += strategy.closedtrades.profit(i)
-    table.clear(stT, 0, 0, 8, 9)
-    array<string> hdr = array.from("Model " + mTag + " · " + syminfo.ticker, "Trades", "Win %", "PF", "Net", "Avg win", "Avg loss", "Expect.", "Avg R")
-    for [c, h] in hdr
-        table.cell(stT, c, 0, h, text_color = C_GOLD, text_size = size.tiny)
-    array<string> names = array.from("ALL", "LONG", "SHORT", "", "New York", "London", "Asia", "Other")
-    int rw = 1
-    for g = 0 to 7
-        if g != 3 and gN.get(g) > 0
-            float n = gN.get(g)
-            float w = gW.get(g)
-            float gp = gGP.get(g)
-            float gl = gGL.get(g)
-            array<string> vals = array.from(names.get(g), str.tostring(n, "#"), str.tostring(100 * w / n, "#.0"), gl < 0 ? str.tostring(gp / -gl, "#.00") : "—", str.tostring(gp + gl, "#,##0"), w > 0 ? str.tostring(gp / w, "#,##0") : "—", n - w > 0 ? str.tostring(gl / (n - w), "#,##0") : "—", str.tostring((gp + gl) / n, "#,##0.0"), gRn.get(g) > 0 ? str.tostring(gR.get(g) / gRn.get(g), "#.00") : "—")
-            for [c, v] in vals
-                table.cell(stT, c, rw, v, text_color = g == 0 ? color.white : color.new(color.white, 25), text_size = size.tiny)
-            rw += 1
-    table.cell(stT, 0, rw, "Max DD " + str.tostring(strategy.max_drawdown, "#,##0") + " " + syminfo.currency + " · tick " + str.tostring(syminfo.mintick) + " · " + str.tostring(syminfo.pointvalue) + "/pt · commission & slippage = Properties tab", text_color = C_MUTED, text_size = size.tiny)
+f_stStats(bool go) =>
+    if go
+        // groups: 0 ALL · 1 LONG · 2 SHORT · 3 (unused) · 4 New York · 5 London · 6 Asia · 7 Other
+        array<float> gN  = array.new<float>(8, 0.0)
+        array<float> gW  = array.new<float>(8, 0.0)
+        array<float> gGP = array.new<float>(8, 0.0)
+        array<float> gGL = array.new<float>(8, 0.0)
+        array<float> gR  = array.new<float>(8, 0.0)
+        array<float> gRn = array.new<float>(8, 0.0)
+        int nCT = strategy.closedtrades
+        int pos = -1
+        int lastET = na
+        float pnl = 0.0
+        int pDir = 0
+        int pET = na
+        for i = 0 to nCT
+            bool flush = i == nCT or (i < nCT and strategy.closedtrades.entry_time(i) != lastET)
+            if flush and pos >= 0
+                float rr = pos < stRisk.size() ? pnl / stRisk.get(pos) : na
+                for g in array.from(0, pDir == 1 ? 1 : 2, f_sessIdx(pET))
+                    gN.set(g, gN.get(g) + 1)
+                    gW.set(g, gW.get(g) + (pnl > 0 ? 1 : 0))
+                    gGP.set(g, gGP.get(g) + math.max(pnl, 0))
+                    gGL.set(g, gGL.get(g) + math.min(pnl, 0))
+                    if not na(rr)
+                        gR.set(g, gR.get(g) + rr)
+                        gRn.set(g, gRn.get(g) + 1)
+            if i < nCT
+                int et = strategy.closedtrades.entry_time(i)
+                if et != lastET
+                    pos += 1
+                    lastET := et
+                    pnl := 0.0
+                    pET := et
+                    pDir := strategy.closedtrades.size(i) > 0 ? 1 : -1
+                pnl += strategy.closedtrades.profit(i)
+        table.clear(stT, 0, 0, 8, 9)
+        array<string> hdr = array.from("Model " + mTag + " · " + syminfo.ticker, "Trades", "Win %", "PF", "Net", "Avg win", "Avg loss", "Expect.", "Avg R")
+        for [c, h] in hdr
+            table.cell(stT, c, 0, h, text_color = C_GOLD, text_size = size.tiny)
+        array<string> names = array.from("ALL", "LONG", "SHORT", "", "New York", "London", "Asia", "Other")
+        int rw = 1
+        for g = 0 to 7
+            if g != 3 and gN.get(g) > 0
+                float n = gN.get(g)
+                float w = gW.get(g)
+                float gp = gGP.get(g)
+                float gl = gGL.get(g)
+                array<string> vals = array.from(names.get(g), str.tostring(n, "#"), str.tostring(100 * w / n, "#.0"), gl < 0 ? str.tostring(gp / -gl, "#.00") : "—", str.tostring(gp + gl, "#,##0"), w > 0 ? str.tostring(gp / w, "#,##0") : "—", n - w > 0 ? str.tostring(gl / (n - w), "#,##0") : "—", str.tostring((gp + gl) / n, "#,##0.0"), gRn.get(g) > 0 ? str.tostring(gR.get(g) / gRn.get(g), "#.00") : "—")
+                for [c, v] in vals
+                    table.cell(stT, c, rw, v, text_color = g == 0 ? color.white : color.new(color.white, 25), text_size = size.tiny)
+                rw += 1
+        table.cell(stT, 0, rw, "Max DD " + str.tostring(strategy.max_drawdown, "#,##0") + " " + syminfo.currency + " · tick " + str.tostring(syminfo.mintick) + " · " + str.tostring(syminfo.pointvalue) + "/pt · commission & slippage = Properties tab", text_color = C_MUTED, text_size = size.tiny)
     true
 
-if barstate.islastconfirmedhistory and showStats or barstate.islast and showStats
-    f_stStats()
+f_stStats(barstate.islastconfirmedhistory and showStats or barstate.islast and showStats)
