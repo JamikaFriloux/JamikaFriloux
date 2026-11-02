@@ -58,6 +58,20 @@ python3 tools/replay/model_c.py gold XAU_5m.csv
 python3 tools/replay/model_c_repaint_test.py gold XAU_5m.csv
 ```
 
+## B5. Validate on your own TradingView data (MNQ, ES, MGC …)
+
+1. On TradingView, open a **1-minute** (preferred) or 5-minute chart of the continuous contract (e.g. `MNQ1!`).
+2. Scroll back as far as your plan allows, then chart menu → **Export chart data…** → *Time format: UNIX timestamp*. The CSV has `time, open, high, low, close, Volume`.
+3. Run:
+
+```bash
+python3 tools/replay/validate.py --tv MNQ_1m.csv:mnq
+```
+
+Markets are `mnq`, `mes`, `es`, `mgc` and `gc`. The script applies that market's tick size, point value, costs and entry windows, splits the data chronologically into in-sample and out-of-sample, and writes `docs/VALIDATION_RESULTS.md`.
+
+4. Confirm anything interesting with the **companion strategy** in the TradingView Strategy Tester. The replay is not the TradingView broker emulator.
+
 ## C. Backtesting protocol (strategy)
 
 1. **Split the data before you look at results.** Use `Trade from / Trade until` to choose an in-sample period, for example the oldest 60%. Do all tuning there. Keep the most recent 20–40% **untouched** and run it **once** at the end.

@@ -21,7 +21,7 @@ import model_c as C      # noqa: E402
 
 DEF = dict(len=24, rangeATR=3.0, compress=0.8, accExp=48, reclaim=2, accept=2, maxSweep=2.0, distExp=24,
            dispATR=1.0, distLvl="opposite", struct=False, bias="off", stopMode="extreme", stopTk=2, maxRisk=4.0,
-           tp1R=1.0, tp2R=2.0, minRR=1.5, needWin=True, tp1Pct=50.0, sweepTicks=1, rcl15=True, capMode="range")
+           tp1R=1.0, tp2R=2.0, minRR=1.5, needWin=True, tp1Pct=50.0, sweepTicks=1, rcl15=True, capMode="range", accMode="asia", asiaH1=2.5)
 
 
 def run(df, mk, P, D, t_from=None, t_to=None, stop_at=None):
@@ -41,6 +41,17 @@ def run(df, mk, P, D, t_from=None, t_to=None, stop_at=None):
     if t_from is not None:
         ms_ = M.ms(utc.dt.tz_convert("UTC").dt.tz_localize(None).values)
         inR = (ms_ >= t_from) & (ms_ < t_to)
+    # sessions (bar open time, IANA zones) for Asia-mode accumulation and London/NY manipulation
+    def sess(tz, a_, b_):
+        lt = utc.dt.tz_convert(tz)
+        hm = (lt.dt.hour * 100 + lt.dt.minute).values
+        return (hm >= a_) & (hm < b_)
+    inAs = sess("Asia/Tokyo", 900, 1500)
+    inLN = sess("Europe/London", 800, 1630) | sess("America/New_York", 800, 1600)
+    inNY = sess("America/New_York", 800, 1600)
+    h1 = D["h1atr"]
+    asia = P["accMode"] == "asia"
+    aH = aL = np.nan
     swH = swL = np.nan
     swHB = swLB = True
     A = dict(state=0)
@@ -88,14 +99,24 @@ def run(df, mk, P, D, t_from=None, t_to=None, stop_at=None):
                     if T["inR"]:
                         trades.append(T)
         buf = P["stopTk"] * tick
+        asEnd = i > 0 and inAs[i - 1] and not inAs[i]
+        nyEnd = i > 0 and inNY[i - 1] and not inNY[i]
+        if inAs[i] and (i == 0 or not inAs[i - 1]):
+            aH, aL = h[i], l[i]
+        elif inAs[i]:
+            aH, aL = max(aH, h[i]), min(aL, l[i])
+        if asia and 1 <= A["state"] <= 3 and nyEnd:
+            end(10, "NY session ended")
+        if asia and A["state"] == 1 and i > A["lock"] and not inLN[i] and D["last"][i] and (c[i] > A["hi"] or c[i] < A["lo"]):
+            end(9, "15M close outside before London/NY")
         # manipulation watch
-        if A["state"] == 1 and i > A["lock"]:
+        if A["state"] == 1 and i > A["lock"] and (not asia or inLN[i]):
             upB, dnB = h[i] - A["hi"] >= pen, A["lo"] - l[i] >= pen
             if upB and dnB:
                 end(9, "both sides same candle")
             elif upB or dnB:
                 A.update(state=2, side=1 if upB else -1, ext=h[i] if upB else l[i], mBar=i, out=0)
-            elif i - A["lock"] > P["accExp"]:
+            elif not asia and i - A["lock"] > P["accExp"]:
                 end(10, "no manipulation")
         if A["state"] == 2:
             A["ext"] = max(A["ext"], h[i]) if A["side"] == 1 else min(A["ext"], l[i])
@@ -157,8 +178,12 @@ def run(df, mk, P, D, t_from=None, t_to=None, stop_at=None):
         if A["state"] == 0 or A["state"] >= 7:
             ws = i - L + 1
             fresh = (lastEnd is None or ws > lastEnd) and (A["state"] < 7 or ws > A["endBar"])
-            if fresh and not math.isnan(atrS[i]) and not math.isnan(hiN[i]) and hiN[i] - loN[i] <= P["rangeATR"] * atrS[i] and a <= P["compress"] * atrS[i]:
-                A = dict(state=1, hi=hiN[i], lo=loN[i], lock=i, inR=bool(inR[i]))
+            okRoll = (not asia) and fresh and not math.isnan(atrS[i]) and not math.isnan(hiN[i]) and hiN[i] - loN[i] <= P["rangeATR"] * atrS[i] and a <= P["compress"] * atrS[i]
+            okAsia = asia and asEnd and not math.isnan(aH) and not math.isnan(h1[i]) and aH > aL and aH - aL <= P["asiaH1"] * h1[i]
+            if asia and asEnd and not math.isnan(aH) and not okAsia and A.get("inR", True) and bool(inR[i]):
+                ends["asia range too wide"] += 1
+            if okRoll or okAsia:
+                A = dict(state=1, hi=aH if okAsia else hiN[i], lo=aL if okAsia else loN[i], lock=i, inR=bool(inR[i]))
                 lastEnd = i
                 if A["inR"]:
                     ends["accumulation locked"] += 1

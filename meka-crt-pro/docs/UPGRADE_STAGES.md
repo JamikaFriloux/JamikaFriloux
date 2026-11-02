@@ -4,7 +4,7 @@
 |---|---|---|
 | **1** | Fair Value Gaps + inverse FVGs, Supply & Demand / order blocks, structure refinements (MSS), independent overlay toggles, minimal dashboard format | **Done** (this commit) |
 | **2** | AMD / Power of Three as a separate optional setup model (accumulation → manipulation → distribution) | **Done** |
-| 3 (next) | Confluence engine (optional filter/ranking with "why it qualifies / why rejected"), FVG setup model, strategy support for the new models, cost-inclusive in/out-of-sample tests on MNQ, MGC/gold, ES | After 2 |
+| **3** | Confluence engine (optional filter/ranking with "why it qualifies / why rejected"), FVG setup model, strategy support for the new models, cost-inclusive in/out-of-sample tests on MNQ, MGC/gold, ES | **Done** (validation on MGC + MES; MNQ needs your TradingView export) |
 
 **There is no "Model B" in the code.** The script contains **Model A** (CRT sweep/reclaim) and **Model C** (15M double range = "RANGE BREAK"). Both are unchanged in Stage 1: only display lines were edited, and no entry/stop/target/state logic changed.
 
@@ -123,3 +123,80 @@ The no-future test passes: 12 of 12 truncation cuts are identical.
   - [ ] **D** and **AMD · BUY/SELL** appear on the displacement close, and the fill is on the next bar.
 - [ ] Diagnostic log: every AMD ending has a reason.
 - [ ] Strategy: *Model traded* = AMD. Test with entry windows on and off, then add the bias filter.
+
+## Stage 3: Asia carry-forward AMD, confluence engine, FVG model, validation
+
+### AMD: Asia range → London / New York (now the default accumulation source)
+* The **completed Asia session** range (Asia/Tokyo 09:00–15:00) is locked on the first bar after Asia ends, provided it is a consolidation: Asia high − low ≤ **2.5 × 1H ATR** (completed 1H candle). The boundaries never move.
+* **Manipulation counts only during London or New York.** A completed 15M close outside the range *before* London/NY opens = range broken (INVALIDATED, reason logged). The sweep is still confirmed by a completed 15M close back inside.
+* Distribution, stop and target rules are unchanged. Entries happen only inside the entry windows.
+* The setup **expires when the New York session ends**. Expired, invalidated or not-tradable setups can never signal (state ≥ 7 is final).
+* The old any-time detector is still available: *Accumulation source → Rolling compression*.
+
+### Confluence engine (input group ⑲)
+It counts **objective** factors at a model's signal bar. It is **not** a probability, and it never requires all factors.
+
+| Factor | Aligned (✓) | Opposing (✕) |
+|---|---|---|
+| 4H/1H bias | both closes above/below their EMA in the trade direction | both against |
+| 15M structure | last 15M break in the trade direction | against |
+| 1H CRT premium/discount | long in discount / short in premium | the opposite |
+| FVG | an active same-direction gap at or just behind the entry (≤ 1 ATR) | an opposing gap between entry and TP1 |
+| Supply/demand | a demand (long) / supply (short) zone at or just behind the entry | an opposing zone before TP1 |
+| AMD | an AMD setup with confirmed manipulation in the same direction | an opposite one |
+| Liquidity | opposite-side liquidity swept & reclaimed in the last 12 bars | — |
+
+* A model never counts its own trigger: AMD does not count "AMD", and the FVG model does not count "FVG support".
+* **Default = Info only:** every signal records `✓ n (…) · ✕ m (…)`. It appears in the SETUP tooltip, the BUY/SELL tooltip and the Diagnostic log ("SIGNAL" rows).
+* Optional: a filter (min aligned / max opposing), mandatory bias, and a mandatory clear path to TP1, applied to all models or a chosen subset.
+* Rejections are logged as NOT TRADABLE with the exact reason. Each model keeps its own entry rules.
+
+### Model FVG (input group ⑳)
+1. A **strong** (★) gap whose candle 2 or 3 also broke the last confirmed chart-TF swing (BOS) in the gap's direction.
+2. A **first retest** (a later bar trades into the gap) within 36 bars.
+3. A **rejection close** beyond the gap midpoint in the gap's direction within 3 bars of that first tap.
+4. Signal at that close, fill at the next bar open. The stop is beyond the far edge of the gap + 2 ticks (max 2 × ATR and the global points cap). TP 1R/2R.
+* One candidate per gap. Inverse or filled gaps never qualify.
+
+### Strategy
+*Model traded by this strategy* now offers A · C · AMD · **FVG**. The results table (All / Long / Short / sessions) applies to whichever model is selected.
+
+### Validation on recent data (`tools/replay/validate.py` → `docs/VALIDATION_RESULTS.md`)
+* **Data:** MGC 1-minute Jan 2021 – Jul 2025 (back-adjusted continuous contract; in-sample = the first 60%, out-of-sample = the last 40%), MES 1-minute 2020, XAUUSD spot 2023–2025.
+* **Costs:** commission + 1 tick of slippage per side, defaults unchanged between periods.
+* **Not used:** the 2008 NQ sample is not used for any decision.
+* **No MNQ data was available here.** Export it from TradingView (see `TESTING.md` §B5) and run the same script.
+
+**Net R per trade after costs (trades):**
+
+| Model | MGC in-sample | MGC out-of-sample | MES 2020 | XAUUSD IS / OOS |
+|---|---|---|---|---|
+| A · CRT | +0.06 (43) | **−0.25 (32)** | +0.46 (5) | +0.23 (25) / −0.14 (13) |
+| C · Range break, defaults | 0.00 (92) | −0.11 (98) | +0.17 (6) | +0.04 (60) / +0.02 (50) |
+| C · Range break, no bias | +0.05 (213) | +0.01 (201) | −0.14 (8) | −0.02 (130) / +0.02 (108) |
+| AMD · Asia → London/NY | −0.18 (7) | +0.20 (2) | — (0) | — (0) / −1.04 (1) |
+| **FVG · retest** | **−0.18 (416)** | **−0.17 (307)** | −0.25 (59) | −0.26 (221) / −0.12 (168) |
+| FVG + confluence filter | −0.18 (110) | −0.16 (91) | −0.12 (15) | −0.39 (65) / −0.24 (53) |
+
+**What this says, plainly:**
+* **No model shows a validated edge.**
+* **The FVG model is clearly negative** in every sample (−0.12R to −0.26R per trade, hundreds of trades). The confluence filter cuts trades by about 70% but does not change expectancy. That is evidence the FVG-retest rules as specified do not work on these markets. **Do not trade it.**
+* **Model C (Range Break)** is about break-even before and after the split. With 4H/1H bias it is no better.
+* **Model A (CRT)** was mildly positive in-sample and negative out-of-sample on both gold datasets, a classic sign of no stable edge.
+* **AMD (Asia mode)** is extremely rare: 9 trades in 4.4 years of MGC. Funnel: 817 Asia ranges → 382 broken by a 15M close before London → 253 confirmed manipulations → 176 broke the extreme again → 9 trades.
+* All Stage 3 no-future tests pass (FVG, FVG + confluence, AMD Asia: 9 of 9 cuts identical).
+
+### Defaults for MNQ and gold (MGC)
+| Setting | MNQ | MGC |
+|---|---|---|
+| Chart / models | 5M; Model A + C on; AMD on (rare); **FVG model: switch off for live use** (negative in validation) | same |
+| Entry windows (preset) | NY 09:30–11:30 | London 08:00–11:00 + NY 08:30–11:30 |
+| Max stop in points (⑥) | your decision, e.g. 40–60 pts ($80–120) | your decision, e.g. 6–10 pts ($60–100) |
+| Confluence (⑲) | Info only (it did not improve results here) | same |
+| Strategy costs (Properties) | commission ≈ $0.62/side/contract, slippage 1 tick | same |
+| Validation cost model | 1.12 pts per round trip | 0.32 pts per round trip |
+
+### Decisions for you
+1. **Pre-London rule:** should a 15M close outside the Asia range before London invalidate it? It currently does, and it removes 47% of Asia ranges. The alternative is to let the range survive until London.
+2. **FVG model:** keep it in the code for research, or remove it from the strategy options? It is currently enabled but clearly negative.
+3. **MNQ:** please export 1-minute or 5-minute MNQ data from TradingView (as many months as your plan allows). I will run `validate.py` and report MNQ results the same way.

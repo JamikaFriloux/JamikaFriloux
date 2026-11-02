@@ -77,6 +77,12 @@ def prep(df, mk, P):
         out[ok] = b[idx[ok] - 1]
         return out
     b4, b1 = bias(A4, i4), bias(A1, i1)
+    a1 = M.atr(A1.h.values, A1.l.values, A1.c.values)
+    h1atr = np.full(n, np.nan)
+    okp = i1 - 1 >= 0
+    h1atr[okp] = a1[i1[okp] - 1]          # last COMPLETED 1H candle's ATR (Pine: ta.atr(14)[1], lookahead_on)
+    pmid = np.full(n, np.nan)
+    pmid[okp] = ((A1.h.values + A1.l.values) / 2)[i1[okp] - 1]   # last completed 1H candle midpoint (CRT 50%)
     atr15 = M.atr(A15.h.values, A15.l.values, A15.c.values)
     vsma = pd.Series(A15.v.values).rolling(20).mean().values
     s15 = M.struct15(A15, P["pivL15"], P["pivR15"], P["dispMult"])
@@ -93,7 +99,7 @@ def prep(df, mk, P):
         lt = utc.dt.tz_convert(tz)
         hm5 = (lt.dt.hour * 100 + lt.dt.minute).values
         win |= (hm5 >= a) & (hm5 < b)
-    return dict(sw5H=sw5H, sw5L=sw5L, win=win, n=n, i15=i15, A15=A15, b4=b4, b1=b1, atr15=atr15, vsma=vsma, s15=s15, t15=t15, hm=hm, last=last,
+    return dict(h1atr=h1atr, pmid=pmid, sw5H=sw5H, sw5L=sw5L, win=win, n=n, i15=i15, A15=A15, b4=b4, b1=b1, atr15=atr15, vsma=vsma, s15=s15, t15=t15, hm=hm, last=last,
                 o=df.o.values, h=df.h.values, l=df.l.values, c=df.c.values, utc=utc)
 
 

@@ -246,7 +246,7 @@ def run(df, P, version="v2", start=None, log=None, stop_at=None):
         if Sx.created_ms >= start_ms:
             outcomes.append(dict(t=str(t_srv[Sx.reclaimBar]), dir=Sx.dir, src=Sx.srcKind, cat=cat, reason=why,
                                  bars=i - Sx.reclaimBar, conf15=Sx.confBar is not None,
-                                 rolls=Sx.rolls, R=getattr(Sx, "resultR", None), crBar=Sx.reclaimBar,
+                                 rolls=Sx.rolls, R=getattr(Sx, "resultR", None), risk=getattr(Sx, "riskRef", None), sigT=int(tms[getattr(Sx, "sigBar", Sx.reclaimBar) or Sx.reclaimBar]), crBar=Sx.reclaimBar,
                                  inval=Sx.invalLvl, mid=Sx.rMid, lvl=Sx.level, ext=Sx.ext, rng=Sx.rHi - Sx.rLo,
                                  atr=float(atrE[Sx.reclaimBar]), depth=abs(Sx.ext - Sx.level)))
 
