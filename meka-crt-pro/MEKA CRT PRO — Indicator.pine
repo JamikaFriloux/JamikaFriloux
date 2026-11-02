@@ -49,7 +49,6 @@ bool   showPools   = input.bool(true, "Detailed: show BSL / SSL liquidity levels
 bool   showMSS     = input.bool(true, "Detailed: show 15M MSS / CHoCH", group = G_DSP)
 int    keepTrades  = input.int(2, "Trades kept on chart", minval = 1, maxval = 30, group = G_DSP)
 bool   showDash    = input.bool(true, "Show dashboard", group = G_DSP)
-string dashStyle   = input.string("Compact", "Dashboard style", options = ["Compact", "Full (all diagnostics)"], group = G_DSP, tooltip = "Compact = the 8 decision rows. Full = the debug dashboard (every engine's state). The Diagnostic log below shows the last 20 setup outcomes.")
 string dashPosIn   = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_DSP)
 string dashSizeIn  = input.string("Small", "Dashboard text size", options = ["Tiny", "Small", "Normal"], group = G_DSP)
 bool   showSim     = input.bool(false, "Dashboard: simulated trade tally (R)", group = G_DSP, tooltip = "Counts only trades the indicator simulated on this chart. Not a backtest — use the companion strategy for measured results.")
@@ -286,7 +285,7 @@ color C_MUTED = #8B95A5
 color C_GREY  = #607D8B
 
 // ───────────────────────────── HELPERS ─────────────────────────────
-f_p(float x) => na(x) ? "—" : str.tostring(x, format.mintick)
+f_p(float x) => str.tostring(x, format.mintick)
 f_r(float x) => na(x) ? "—" : str.tostring(x, "#.##")
 
 f_tfName(string tf) =>
@@ -959,6 +958,15 @@ type AMD
     int    endBar
     box    bx
 
+// A liquidity level waiting to be added this bar (lets every source share one f_addPool call)
+type PoolReq
+    float  p
+    int    side
+    string kind
+    int    expT
+    int    x0
+    bool   sw = false
+
 // ───────────────────────────── LIQUIDITY HELPERS ─────────────────────────────
 f_tag(Liq l) =>
     na(l) ? "" : l.state == 1 ? " · BREACHED" : l.state == 2 ? " · SWEPT ✓" : l.state == 3 ? " · BROKEN" : not l.external ? " · internal" : ""
@@ -1187,24 +1195,6 @@ method refresh(CRTRange r, bool isLast, bool isHigh) =>
             label.set_text(r.lbHi, r.tf + " CRT HIGH " + f_p(r.hi) + f_tag(r.hiLiq))
             label.set_text(r.lbLo, r.tf + " CRT LOW " + f_p(r.lo) + f_tag(r.loLiq))
 
-f_rangeRow(CRTRange r, string name) =>
-    string s = ""
-    if not r.active
-        s := r.lastFail ? "No valid range (last " + name + " candle failed size filter)" : "Waiting for a completed " + name + " candle"
-    else
-        Liq h = r.hiLiq
-        Liq lo = r.loLiq
-        bool hiEv = h.state > 0
-        bool loEv = lo.state > 0
-        if hiEv or loEv
-            Liq e = hiEv and loEv ? (h.breachTime >= lo.breachTime ? h : lo) : hiEv ? h : lo
-            bool isH = e.side == 1
-            s := e.state == 1 ? (isH ? "High breached — awaiting reclaim" : "Low breached — awaiting reclaim") : e.state == 2 ? (isH ? "High swept & reclaimed → bearish" : "Low swept & reclaimed → bullish") : (isH ? "Broke above high (accepted)" : "Broke below low (accepted)")
-        else
-            s := close >= r.mid ? "Inside range · PREMIUM" : "Inside range · DISCOUNT"
-        s := s + "\nH " + f_p(r.hi) + " · 50% " + f_p(r.mid) + " · L " + f_p(r.lo)
-    s
-
 // ───────────────────────────── EVENT / TRADE DRAWING ─────────────────────────────
 f_evLabel(array<label> q, int x, float y, string txt, color bg, color tc, string st, string sz, string tip, string yl) =>
     label lb = label.new(x, y, txt, xloc = xloc.bar_index, yloc = yl, color = bg, style = st, textcolor = tc, size = sz, tooltip = tip)
@@ -1223,14 +1213,14 @@ f_sweepLabel(array<label> q, Liq l, bool star) =>
     l.labeled := true
 
 f_alert(string ev, int d, float lvl, float en, float sl, float t1, float t2, string note) =>
-    string ds = d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE"
-    string mdl = str.startswith(ev, "C_") ? "C" : str.startswith(ev, "AMD_") ? "AMD" : str.startswith(ev, "FVG_") ? "FVG" : "A"
+    // event names carry the model (no prefix = A, C_ / AMD_ / FVG_); prices are text, missing = "NaN"
+    array<string> v = array.from(ev, d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE", syminfo.ticker, timeframe.period, note)
+    for x in array.from(close, lvl, en, sl, t1, t2)
+        v.push(str.tostring(x, format.mintick))
     string msg = ""
-    if K1.alJSON
-        msg := "{\"source\":\"MEKA CRT PRO\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"timeframe\":\"" + timeframe.period + "\",\"model\":\"" + mdl + "\",\"event\":\"" + ev + "\",\"direction\":\"" + ds + "\",\"close\":" + str.tostring(close, format.mintick) + ",\"level\":" + (na(lvl) ? "null" : str.tostring(lvl, format.mintick)) + ",\"entry\":" + (na(en) ? "null" : str.tostring(en, format.mintick)) + ",\"sl\":" + (na(sl) ? "null" : str.tostring(sl, format.mintick)) + ",\"tp1\":" + (na(t1) ? "null" : str.tostring(t1, format.mintick)) + ",\"tp2\":" + (na(t2) ? "null" : str.tostring(t2, format.mintick)) + ",\"note\":\"" + note + "\",\"bar_time\":" + str.tostring(time) + "}"
-    else
-        msg := "MEKA CRT PRO [" + mdl + "] | " + syminfo.ticker + " " + timeframe.period + " | " + ev + " " + ds + " | close " + f_p(close) + (na(lvl) ? "" : " | level " + f_p(lvl)) + (na(en) ? "" : " | entry " + f_p(en)) + (na(sl) ? "" : " | SL " + f_p(sl)) + (na(t1) ? "" : " | TP1 " + f_p(t1)) + (na(t2) ? "" : " | TP2 " + f_p(t2)) + (note == "" ? "" : " | " + note)
-    alert(msg, alert.freq_once_per_bar_close)
+    for [n, x] in array.from("event", "direction", "symbol", "timeframe", "note", "close", "level", "entry", "sl", "tp1", "tp2")
+        msg += K1.alJSON ? ",\"" + x + "\":\"" + v.get(n) + "\"" : " | " + x + " " + v.get(n)
+    alert(K1.alJSON ? "{\"source\":\"MEKA CRT PRO\"" + msg + "}" : "MEKA CRT PRO" + msg, alert.freq_once_per_bar_close)
 
 f_tradeDraw(Setup s, string tag) =>
     int x1 = bar_index
@@ -2145,27 +2135,29 @@ f_engA(bool go, EV e, Setup p_S, int p_h4Bias, int p_lastBSLBar, string p_lastBl
         // ── 3. Liquidity pools (built only from information that existed before this bar)
         float tol = K1.eqTolATR * atrE
         int expD = time + K1.poolDays * K3.dayMs
+        int expW = time + K1.poolDays * 3 * K3.dayMs
+        array<PoolReq> rq = array.new<PoolReq>()
         if K1.trackPD and Q.pdNew
-            f_addPool(pools, Q.pdH, 1, "PDH", tol, expD, na, false)
-            f_addPool(pools, Q.pdL, -1, "PDL", tol, expD, na, false)
+            rq.push(PoolReq.new(Q.pdH, 1, "PDH", expD, na, false))
+            rq.push(PoolReq.new(Q.pdL, -1, "PDL", expD, na, false))
         if K1.trackPW and Q.pwNew
-            f_addPool(pools, Q.pwH, 1, "PWH", tol, time + K1.poolDays * 3 * K3.dayMs, na, false)
-            f_addPool(pools, Q.pwL, -1, "PWL", tol, time + K1.poolDays * 3 * K3.dayMs, na, false)
-        if K1.trackSess
-            if asEnd
-                f_addPool(pools, asDH, 1, "ASIA H", tol, expD, asDT, false)
-                f_addPool(pools, asDL, -1, "ASIA L", tol, expD, asDT, false)
-            if lnEnd
-                f_addPool(pools, lnDH, 1, "LDN H", tol, expD, lnDT, false)
-                f_addPool(pools, lnDL, -1, "LDN L", tol, expD, lnDT, false)
-            if nyEnd
-                f_addPool(pools, nyDH, 1, "NY H", tol, expD, nyDT, false)
-                f_addPool(pools, nyDL, -1, "NY L", tol, expD, nyDT, false)
-        if K1.trackSw
-            if Q.swHNew and not na(Q.c15SwH)
-                f_addPool(pools, Q.c15SwH, 1, K3.nC + " SWING H", tol, expD, Q.c15SwHT, true)
-            if Q.swLNew and not na(Q.c15SwL)
-                f_addPool(pools, Q.c15SwL, -1, K3.nC + " SWING L", tol, expD, Q.c15SwLT, true)
+            rq.push(PoolReq.new(Q.pwH, 1, "PWH", expW, na, false))
+            rq.push(PoolReq.new(Q.pwL, -1, "PWL", expW, na, false))
+        if K1.trackSess and asEnd
+            rq.push(PoolReq.new(asDH, 1, "ASIA H", expD, asDT, false))
+            rq.push(PoolReq.new(asDL, -1, "ASIA L", expD, asDT, false))
+        if K1.trackSess and lnEnd
+            rq.push(PoolReq.new(lnDH, 1, "LDN H", expD, lnDT, false))
+            rq.push(PoolReq.new(lnDL, -1, "LDN L", expD, lnDT, false))
+        if K1.trackSess and nyEnd
+            rq.push(PoolReq.new(nyDH, 1, "NY H", expD, nyDT, false))
+            rq.push(PoolReq.new(nyDL, -1, "NY L", expD, nyDT, false))
+        if K1.trackSw and Q.swHNew and not na(Q.c15SwH)
+            rq.push(PoolReq.new(Q.c15SwH, 1, K3.nC + " SWING H", expD, Q.c15SwHT, true))
+        if K1.trackSw and Q.swLNew and not na(Q.c15SwL)
+            rq.push(PoolReq.new(Q.c15SwL, -1, K3.nC + " SWING L", expD, Q.c15SwLT, true))
+        for r in rq
+            f_addPool(pools, r.p, r.side, r.kind, tol, r.expT, r.x0, r.sw)
 
         // ── 4. Sweep / breakout classification for every tracked level
         Liq best = na
@@ -3212,188 +3204,6 @@ string dashPos = switch dashPosIn
     "Bottom right" => position.bottom_right
     "Bottom left"  => position.bottom_left
     => position.top_right
-var table dash = table.new(dashPos, 2, 22, bgcolor = color.new(#0B0F17, 6), frame_color = color.new(C_GOLD, 45), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
-
-f_row(table t, int rw, string k, string v, color vc) =>
-    table.cell(t, 0, rw, k, text_color = C_MUTED, text_halign = text.align_left, text_valign = text.align_top, text_size = K3.dashSz)
-    table.cell(t, 1, rw, v, text_color = vc, text_halign = text.align_left, text_size = K3.dashSz)
-
-if barstate.isfirst and showDash and dashStyle != "Compact"
-    table.cell(dash, 0, 0, "MEKA CRT PRO  ·  " + nE, text_color = C_GOLD, text_halign = text.align_center, text_size = dashSz, bgcolor = color.new(#141A24, 0))
-    table.merge_cells(dash, 0, 0, 1, 0)
-
-f_blkDashFull(bool go) =>
-    if go
-        table.clear(dash, 0, 1, 1, 21)
-        CRTRange prD = K3.primHigh ? (r4.active ? r4 : r1) : (r1.active ? r1 : r4)
-        string dW = S.dir == 1 ? "LONG" : "SHORT"
-        color dC = S.dir == 1 ? K1.cBull : K1.cBear
-        int row = 1
-
-        // Market
-        string mTxt = K3.mkt + " · " + syminfo.type + (syminfo.type == "futures" ? " (" + syminfo.root + ")" : "") + " · tick " + str.tostring(syminfo.mintick)
-        f_row(dash, row, "Market", mTxt, color.white)
-        row += 1
-
-        // 4H / 1H
-        string t4 = f_rangeRow(r4, K3.n4) + (h4Bias == 1 ? "  · bias ↑" : h4Bias == -1 ? "  · bias ↓" : "")
-        f_row(dash, row, K3.n4 + " CRT", t4, h4Bias == 1 ? K1.cBull : h4Bias == -1 ? K1.cBear : color.white)
-        row += 1
-        string t1r = f_rangeRow(r1, K3.n1) + (r1.active and r4.active ? (r1.mid < r4.mid ? "  · in " + K3.n4 + " discount" : "  · in " + K3.n4 + " premium") : "")
-        color c1r = r1.active and r1.loLiq.state == 2 ? K1.cBull : r1.active and r1.hiLiq.state == 2 ? K1.cBear : color.white
-        f_row(dash, row, K3.n1 + " CRT", t1r, c1r)
-        row += 1
-
-        // 15M
-        string t15 = ""
-        color c15 = color.white
-        if S.state == 3
-            float lv = S.dir == 1 ? (Q.c15SwHB ? na : Q.c15SwH) : (Q.c15SwLB ? na : Q.c15SwL)
-            t15 := "Waiting: " + (na(lv) ? "new swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(lv) + " (MSS)") + (K1.confMode == "MSS or Displacement" ? " or displacement" : K1.confMode == "MSS + Displacement" ? " with displacement" : "")
-            c15 := C_GOLD
-        else if S.state >= 4 and S.state <= 6
-            t15 := (S.dir == 1 ? "Bullish confirmed · " : "Bearish confirmed · ") + S.confText
-            c15 := dC
-        else
-            t15 := "Structure " + (Q.c15Trend == 1 ? "bullish" : Q.c15Trend == -1 ? "bearish" : "neutral") + (Q.c15Trend == 1 and not na(Q.c15BullLvl) ? " (last break ↑ " + f_p(Q.c15BullLvl) + ")" : Q.c15Trend == -1 and not na(Q.c15BearLvl) ? " (last break ↓ " + f_p(Q.c15BearLvl) + ")" : "")
-            c15 := Q.c15Trend == 1 ? color.new(K1.cBull, 30) : Q.c15Trend == -1 ? color.new(K1.cBear, 30) : color.white
-        f_row(dash, row, K3.nC, t15, c15)
-        row += 1
-
-        // 5M
-        bool useBrk = K1.trigMode == "Break or Retest" or K1.trigMode == "5M structure break"
-        bool useRt  = K1.trigMode == "Break or Retest" or K1.trigMode == "Retest of 15M break"
-        string trigTxt = ""
-        if S.state == 4
-            if useBrk
-                float sv = S.dir == 1 ? (sw5HB ? na : sw5H) : (sw5LB ? na : sw5L)
-                trigTxt := na(sv) ? "new " + K3.nE + " swing + break" : (S.dir == 1 ? "close > " : "close < ") + f_p(sv)
-            if useRt
-                trigTxt := trigTxt + (trigTxt != "" ? " or " : "") + "retest of " + f_p(S.rtLvl)
-            if K1.trigMode == "Momentum candle"
-                trigTxt := S.dir == 1 ? "bullish close > prior high" : "bearish close < prior low"
-        string t5 = S.state == 4 ? "Waiting: " + trigTxt + (S.reject != "" ? "\nLast trigger rejected: " + S.reject : "") : S.state == 5 ? "Entry confirmed — fill at next open" : S.state == 6 ? "In trade · filled " + f_p(S.entry) : S.state == 3 ? "Waiting for " + K3.nC + " first" : "No active setup"
-        f_row(dash, row, K3.nE, t5, S.state == 4 ? C_GOLD : S.state == 5 or S.state == 6 ? dC : color.white)
-        row += 1
-
-        // Liquidity
-        float nb = na
-        float ns = na
-        for l in pools
-            if l.state == 0 and not l.retired
-                if l.side == 1 and l.price > close and (na(nb) or l.price < nb)
-                    nb := l.price
-                if l.side == -1 and l.price < close and (na(ns) or l.price > ns)
-                    ns := l.price
-        f_row(dash, row, "Liquidity", lastLiq + "\nNext BSL " + f_p(nb) + " · SSL " + f_p(ns), color.white)
-        row += 1
-
-        // Session
-        string sNow = (inAsia ? "Asia " : "") + (inLon ? "London " : "") + (inNy ? "New York " : "")
-        sNow := sNow == "" ? "Off-session" : sNow
-        f_row(dash, row, "Session", sNow + "· " + (entryAllowed ? "entries ON" : "entries OFF (tracking)"), entryAllowed ? K1.cBull : C_MUTED)
-        row += 1
-
-        // Status + precise next requirement
-        Liq brL = na
-        for l in pools
-            if l.state == 1 and ((l.isCRT and l.external and (l.hiTF ? K3.src4 : K3.src1)) or (not l.isCRT and K1.usePools and prD.active and (l.side == 1 ? l.price >= prD.mid : l.price <= prD.mid)))
-                if na(brL) or (l.isCRT and not brL.isCRT)
-                    brL := l
-        bool recentDone = (S.state == 8 or S.state == 9) and bar_index - S.doneBar <= 6
-        string st = "WATCHING RANGE"
-        color stc = C_GOLD
-        string nx = ""
-        if not K3.tfOK
-            st := "CHECK TIMEFRAMES"
-            stc := K1.cBear
-            nx := "Need chart ≤ " + K3.nC + " and " + K3.nC + " < " + K3.n1 + " < " + K3.n4
-        else if S.state == 3
-            st := "SWEEP CONFIRMED & RECLAIMED · WATCH " + dW
-            stc := dC
-            nx := "Need " + K3.nC + " " + (S.dir == 1 ? "bullish" : "bearish") + " confirmation (" + t15 + ") · expires in " + str.tostring(math.max(0, K1.confExpiry - (bar_index - S.reclaimBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
-        else if S.state == 4
-            st := K3.nC + " CONFIRMED · WATCH " + dW
-            stc := dC
-            nx := "Need " + K3.nE + " " + trigTxt + " · in discount/premium · ≥ " + f_r(K1.minRR) + "R · " + (entryAllowed ? "window OPEN" : "window CLOSED") + " · expires in " + str.tostring(math.max(0, K1.entryExpiry - (bar_index - S.confBar))) + " bars · invalid " + (S.dir == 1 ? "≤ " : "≥ ") + f_p(S.invalLvl)
-        else if S.state == 5
-            st := S.dir == 1 ? "BUY CONFIRMED" : "SELL CONFIRMED"
-            stc := dC
-            nx := "Simulated fill at next candle open"
-        else if S.state == 6
-            st := S.tp1Done ? "TP1 HIT · RUNNER ACTIVE" : "TRADE ACTIVE · " + dW
-            stc := dC
-            nx := S.tp1Done ? "Managing runner to TP2 " + f_p(S.tp2) : "Managing to TP1 " + f_p(S.tp1) + " / SL " + f_p(S.stop)
-        else if recentDone
-            st := S.state == 9 ? (S.cat == "STRUCTURAL" ? "SETUP INVALIDATED" : S.cat == "CONFLICT" ? "SETUP CANCELLED · CONFLICT" : S.cat == "MISSED" ? "MISSED ENTRY" : S.cat == "SESSION" ? "EXPIRED · SESSION CLOSED" : S.cat == "REPLACED" ? "SETUP REPLACED" : "SETUP EXPIRED") : S.outcome
-            stc := S.state == 9 ? C_GREY : S.resultR > 0 ? K1.cTP : K1.cSL
-            nx := S.state == 9 ? S.reason : "Result " + (S.resultR >= 0 ? "+" : "") + f_r(S.resultR) + "R · watching for the next sweep"
-        else if not na(brL)
-            st := "SWEEP IN PROGRESS"
-            stc := C_GOLD
-            string rcName = brL.rcTF == 0 ? K3.nE : brL.rcTF == 1 ? K3.nC : brL.rcTF == 2 ? K3.n1 : K3.n4
-            string leftTxt = brL.rcTF == 0 ? str.tostring(math.max(0, K1.reclaimBars - (bar_index - brL.breachBar + 1))) + " bars" : str.tostring(math.max(0, (brL.rcTF == 1 ? K1.reclaimWin15 : 1) - brL.tfCnt)) + " " + rcName + " close(s)"
-            nx := brL.kind + " " + f_p(brL.price) + " breached (extreme " + f_p(brL.ext) + ") · need a completed " + rcName + " close " + (brL.side == 1 ? "< " : "> ") + f_p(brL.price) + " within " + leftTxt + (brL.pend ? " · " + K3.nE + " already back inside (reclaim pending)" : "")
-        else if not r4.active and not r1.active
-            st := "IDLE · NO VALID RANGE"
-            stc := C_MUTED
-            nx := "Waiting for a valid " + K3.n1 + " / " + K3.n4 + " reference candle"
-        else
-            string wl = prD.loLiq.state == 0 ? "L " + f_p(prD.lo) : ""
-            string wh = prD.hiLiq.state == 0 ? "H " + f_p(prD.hi) : ""
-            nx := "Watch sweep + reclaim of " + prD.tf + " " + wl + (wl != "" and wh != "" ? " / " : "") + wh + (wl == "" and wh == "" ? "range (both sides used — wait for next candle)" : "")
-            if lastBlock != ""
-                nx := nx + "\n" + lastBlock
-        f_row(dash, row, "Status", st, stc)
-        table.cell_set_bgcolor(dash, 1, row, color.new(stc, 82))
-        row += 1
-        f_row(dash, row, "Next", nx, color.new(color.white, 10))
-        row += 1
-        if S.state >= 3 and S.state <= 6
-            f_row(dash, row, "Locked", S.srcKind + " " + f_p(S.level) + " · ext " + f_p(S.ext) + " · " + S.srcTF + " range H " + f_p(S.rHi) + " / 50% " + f_p(S.rMid) + " / L " + f_p(S.rLo) + (not na(S.rT0) and ((S.srcTF == K3.n1 and r1.active and r1.t0 != S.rT0) or (S.srcTF == K3.n4 and r4.active and r4.t0 != S.rT0)) ? "\n(reference candle has rolled — setup keeps its own levels)" : ""), C_MUTED)
-            row += 1
-        if diagT.size() > 0
-            int lk = diagT.size() - 1
-            string lc = diagC.get(lk)
-            f_row(dash, row, "Last setup", diagT.get(lk) + " · " + diagS.get(lk) + " → " + lc + "\n" + diagR.get(lk), lc == "TRADE" ? K1.cTP : lc == "SKIPPED" ? C_MUTED : C_GREY)
-            row += 1
-
-        // ── Model C (independent state machine)
-        if K2.cOn
-            [cEff, cCnf, cBTxt] = f_cBias()
-            float cb = K2.cBufTk * syminfo.mintick
-            string cst = CR.state == 0 ? "WAITING FOR REFERENCE · " + K2.cRefMode : CR.state == 1 ? "REFERENCE · 1st candle " + f_fmtT(CR.t1) + " captured, waiting for the 2nd" : CR.state == 2 ? "REFERENCE LOCKED · WATCHING BREAKOUT (" + str.tostring(CR.nSeen) + "/" + str.tostring(K2.cExpiry) + ")\nU " + f_p(CR.up) + " / L " + f_p(CR.lo) + " · " + CR.src + "\nShort: " + (CR.bearDQ ? "✕ " + CR.bearWhy : "needs 15M close < " + f_p(CR.lo - cb)) + "\nLong: " + (CR.bullDQ ? "✕ " + CR.bullWhy : "needs 15M close > " + f_p(CR.up + cb)) : CR.state == 7 ? (TC.dir == 1 ? "CONFIRMED LONG" : "CONFIRMED SHORT") + " · " + CR.endWhy : (CR.state == 9 ? "INVALIDATED — " : CR.state == 10 ? "EXPIRED — " : "MISSED ENTRY — ") + CR.endWhy
-            color cstc = CR.state == 2 ? K2.cCol : CR.state == 7 ? (TC.dir == 1 ? K1.cBull : K1.cBear) : CR.state >= 9 ? C_GREY : C_MUTED
-            f_row(dash, row, "Model C", cst, cstc)
-            row += 1
-            f_row(dash, row, "C bias", cBTxt, cCnf and K2.cBiasMode == "4H + 1H" ? C_GOLD : C_MUTED)
-            row += 1
-            if TC.state == 5 or TC.state == 6
-                float cRisk = math.abs((TC.state == 5 ? TC.entryRef : TC.entry) - TC.stopInit)
-                float perU = cRisk * syminfo.pointvalue
-                float qty = perU > 0 ? (syminfo.type == "futures" ? math.floor(K2.cRiskCash / perU) : math.floor(K2.cRiskCash / perU * 100) / 100) : na
-                f_row(dash, row, "C trade", (TC.dir == 1 ? "LONG" : "SHORT") + " · E " + (TC.state == 5 ? "next open (signal " + f_p(TC.entryRef) + ")" : f_p(TC.entry)) + " · SL " + f_p(TC.stop) + "\nTP1 " + f_p(TC.tp1) + (TC.tp1Done ? " ✓" : "") + " · TP2 " + f_p(TC.tp2) + " (" + TC.tp2Src + ") · " + f_r(math.abs(TC.tp2 - TC.entryRef) / TC.riskRef) + "R\nSize " + str.tostring(qty) + (syminfo.type == "futures" ? " contracts" : " units") + " for " + str.tostring(K2.cRiskCash) + " " + syminfo.currency + " risk (" + f_p(cRisk) + " pts × " + str.tostring(syminfo.pointvalue) + "/pt)", TC.dir == 1 ? K1.cBull : K1.cBear)
-                row += 1
-
-        // Trade levels (actual calculated values only)
-        if S.state == 5 or S.state == 6 or (recentDone and S.state == 8)
-            f_row(dash, row, "A entry", S.state == 5 ? "next open (signal " + f_p(S.entryRef) + ")" : f_p(S.entry), K1.cEntry)
-            row += 1
-            f_row(dash, row, "SL", f_p(S.stop) + (S.beOn ? " (breakeven)" : ""), K1.cSL)
-            row += 1
-            f_row(dash, row, "TP1", f_p(S.tp1) + " · " + S.tp1Src + (S.tp1Done ? " ✓" : ""), K1.cTP)
-            row += 1
-            f_row(dash, row, "TP2", f_p(S.tp2) + " · " + S.tp2Src + " · " + f_r(math.abs(S.tp2 - S.entryRef) / S.riskRef) + "R", K1.cTP)
-            row += 1
-            float riskPts = math.abs((S.state == 5 ? S.entryRef : S.entry) - S.stopInit)
-            f_row(dash, row, "Risk", f_p(riskPts) + " pts ≈ " + str.tostring(riskPts * syminfo.pointvalue, "#,##0.00") + " " + syminfo.currency + " per 1 " + (syminfo.type == "futures" ? "contract" : "unit"), color.white)
-            row += 1
-        if K1.showSim
-            f_row(dash, row, "Sim tally", str.tostring(simN) + " trades · " + str.tostring(simW) + "W / " + str.tostring(simN - simW) + "L · " + (simR >= 0 ? "+" : "") + f_r(simR) + "R", C_MUTED)
-            row += 1
-    true
-
-f_blkDashFull(barstate.islast and showDash and dashStyle != "Compact")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  COMPACT DASHBOARD — what to do now. All engines keep running underneath.
@@ -3495,7 +3305,7 @@ f_blkDashCompact(bool go) =>
         f_cRow(dashC, 8, "SESSION", sn + " · " + (entryAllowed ? "entries ON" : live ? "entries OFF · managing trade" : "entries OFF"), entryAllowed ? K1.cBull : C_MUTED, "New entries are allowed only inside the entry windows (input group ⑨). Ranges, liquidity and setups keep updating outside them.")
     true
 
-f_blkDashCompact(barstate.islast and showDash and dashStyle == "Compact")
+f_blkDashCompact(barstate.islast and showDash)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DIAGNOSTIC LOG — last 20 setup outcomes (tiny, bottom of chart, optional)

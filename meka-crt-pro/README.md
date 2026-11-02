@@ -51,7 +51,7 @@ python3 tools/build_strategy.py
 
 **Detailed mode** adds the 4H range (thicker), previous ranges, BSL/SSL pools (PDH/PDL, PWH/PWL, Asia/London/NY, 15M swings, EQH/EQL), all pool sweeps with zones, breakouts, 15M CHoCH/BOS, and optional premium/discount shading.
 
-**Dashboard (Compact, default):** Bias (4H/1H) · Setup (model + what it waits for) · **Signal** (`BUY`/`SELL` only for an actionable trade, otherwise `WAIT` or `SETUP · NOT TRADABLE`, with the reason in the tooltip) · Entry · Stop (pts) · TP1 · TP2 (R) · Session (entries ON/OFF). Hover a value for details. *Dashboard style → Full* restores the diagnostic dashboard.
+**Dashboard (Compact, default):** Bias (4H/1H) · Setup (model + what it waits for) · **Signal** (`BUY`/`SELL` only for an actionable trade, otherwise `WAIT` or `SETUP · NOT TRADABLE`, with the reason in the tooltip) · Entry · Stop (pts) · TP1 · TP2 (R) · Session (entries ON/OFF). Hover a value for details. The old Full debug dashboard was removed to stay under TradingView's compiled-size limit; use the **Diagnostic log** (Display ①), *Detailed* mode and the tooltips for debugging.
 
 **Clean mode** hides minor event labels (fills, TP1 markers, 15M ticks, invalidation tags, every CRT sweep, pending guide lines, reference-candle segments). They are still computed, alerted and logged, and *Detailed* mode shows them.
 
