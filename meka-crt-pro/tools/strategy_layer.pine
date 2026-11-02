@@ -72,7 +72,7 @@ f_sessIdx(int t) =>
     f_inSessT(t, nySess, nyTZ) ? 4 : f_inSessT(t, lonSess, lonTZ) ? 5 : f_inSessT(t, asiaSess, asiaTZ) ? 6 : 7
 
 var table stT = table.new(position.bottom_right, 9, 10, bgcolor = color.new(#0B0F17, 10), frame_color = color.new(C_GOLD, 50), frame_width = 1, border_color = color.new(#1C2430, 0), border_width = 1)
-if barstate.islastconfirmedhistory and showStats or barstate.islast and showStats
+f_stStats() =>
     // groups: 0 ALL · 1 LONG · 2 SHORT · 3 (unused) · 4 New York · 5 London · 6 Asia · 7 Other
     array<float> gN  = array.new<float>(8, 0.0)
     array<float> gW  = array.new<float>(8, 0.0)
@@ -124,3 +124,7 @@ if barstate.islastconfirmedhistory and showStats or barstate.islast and showStat
                 table.cell(stT, c, rw, v, text_color = g == 0 ? color.white : color.new(color.white, 25), text_size = size.tiny)
             rw += 1
     table.cell(stT, 0, rw, "Max DD " + str.tostring(strategy.max_drawdown, "#,##0") + " " + syminfo.currency + " · tick " + str.tostring(syminfo.mintick) + " · " + str.tostring(syminfo.pointvalue) + "/pt · commission & slippage = Properties tab", text_color = C_MUTED, text_size = size.tiny)
+    true
+
+if barstate.islastconfirmedhistory and showStats or barstate.islast and showStats
+    f_stStats()
