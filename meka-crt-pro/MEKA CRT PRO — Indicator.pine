@@ -268,7 +268,7 @@ bool   cfReqClear  = input.bool(false, "Mandatory: no opposing FVG / zone betwee
 string cfModels    = input.string("All models", "Apply the filter to", options = ["All models", "FVG model only", "Models A + C only"], group = G_CF)
 
 string G_FM = "⑳ Model FVG — displacement gap retest (optional setup model)"
-bool   fmOn        = input.bool(true, "Enable FVG model", group = G_FM)
+bool   fmOn        = input.bool(false, "Enable FVG model signals (research — negative in validation so far)", group = G_FM, tooltip = "Off by default. FVG gaps are still detected, drawn and used by the confluence engine; only the standalone FVG BUY/SELL signals are disabled.")
 bool   fmStrong    = input.bool(true, "Only strong-displacement gaps (★)", group = G_FM)
 bool   fmBos       = input.bool(true, "Gap must come with a chart-TF swing break (BOS)", group = G_FM)
 int    fmMaxWait   = input.int(36, "First retest must start within N bars of the gap", minval = 1, maxval = 300, group = G_FM)
@@ -523,6 +523,9 @@ type AMD
     int    mBar
     int    confBar
     int    outCnt = 0
+    int    preOut = 0          // Asia mode: consecutive 15M closes outside the range BEFORE London / NY
+    int    preSide = 0
+    bool   preSwept = false    // traded outside before London but closed back inside (range kept)
     bool   structOK = false
     string why = ""
     int    endBar
@@ -2312,9 +2315,27 @@ if barstate.isconfirmed and amdOn and tfOK
     if AD.state >= 1 and AD.state <= 3 and asiaMode and nyEnd
         f_amdEnd(AD, 10, "The New York session ended — the Asia range is not carried into the next day.", evLabels)
         evDExp := true
-    if AD.state == 1 and bar_index > AD.lockBar and asiaMode and not manipSess and c15Last and (close > AD.hi or close < AD.lo)
-        f_amdEnd(AD, 9, "A 15M candle closed outside the Asia range before London / New York — range broken, no manipulation setup.", evLabels)
-        evDInval := true
+    // Before London / NY the range is carried forward. Three outcomes, judged on completed candles:
+    //  intact · swept & reclaimed (kept, noted) · accepted breakout / expansion (invalidated)
+    if AD.state == 1 and bar_index > AD.lockBar and asiaMode and not manipSess
+        float exMax = math.max(high - AD.hi, AD.lo - low)
+        if exMax > amdMaxSweep * atrE
+            f_amdEnd(AD, 9, "Before London, price moved " + f_r(exMax / atrE) + " ATR beyond the Asia range — expansion, not accumulation.", evLabels)
+            evDInval := true
+        else
+            if exMax > 0
+                AD.preSwept := true
+            if c15Last
+                int sideNow = close > AD.hi ? 1 : close < AD.lo ? -1 : 0
+                if sideNow != 0
+                    AD.preOut := sideNow == AD.preSide ? AD.preOut + 1 : 1
+                    AD.preSide := sideNow
+                    if AD.preOut >= amdAccept
+                        f_amdEnd(AD, 9, "Accepted breakout before London: " + str.tostring(AD.preOut) + " consecutive 15M closes " + (sideNow == 1 ? "above " + f_p(AD.hi) : "below " + f_p(AD.lo)) + ".", evLabels)
+                        evDInval := true
+                else
+                    AD.preOut := 0
+                    AD.preSide := 0
     if AD.state == 1 and bar_index > AD.lockBar and manipSess
         bool upB = high - AD.hi >= minPen
         bool dnB = AD.lo - low >= minPen
@@ -2786,7 +2807,7 @@ if barstate.islast and showDash and dashStyle == "Compact"
     else if amdOn and (AD.state == 1 or AD.state == 2)
         stp := AD.state == 1 ? "AMD · accumulation" : "AMD · sweep in progress"
         stpc := amdCol
-    string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) + (Ts.cfTxt != "" ? "\nConfluence " + Ts.cfTxt : "") : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + nC + " confirmation" : " · needs " + nE + " entry") : (amdOn and AD.state == 3) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · needs a displacement close beyond " + (amdDistLvl == "Range midpoint" ? "the midpoint" : AD.dir == 1 ? f_p(AD.hi) : f_p(AD.lo)) : (cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : (amdOn and AD.state >= 1 and AD.state <= 2) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) : ""
+    string stpTip = live ? Ts.srcKind + " " + f_p(Ts.level) + (Ts.cfTxt != "" ? "\nConfluence " + Ts.cfTxt : "") : (S.state == 3 or S.state == 4) ? "Model A · " + S.srcKind + " " + f_p(S.level) + (S.state == 3 ? " · needs " + nC + " confirmation" : " · needs " + nE + " entry") : (amdOn and AD.state == 3) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + " · manipulation extreme " + f_p(AD.mExt) + " · needs a displacement close beyond " + (amdDistLvl == "Range midpoint" ? "the midpoint" : AD.dir == 1 ? f_p(AD.hi) : f_p(AD.lo)) : (cOn and CR.state == 2) ? "Model C · " + CR.src + " pair · lower " + f_p(CR.lo) + " / upper " + f_p(CR.up) : (amdOn and AD.state >= 1 and AD.state <= 2) ? "AMD · range " + f_p(AD.lo) + " – " + f_p(AD.hi) + (AD.state == 1 ? (AD.preOut > 0 ? " · " + str.tostring(AD.preOut) + " 15M close(s) outside — " + str.tostring(amdAccept) + " = accepted breakout" : AD.preSwept ? " · swept before London, reclaimed (range kept)" : " · intact") : "") : ""
     f_cRow(dashC, 2, "SETUP", stp == "No active setup" ? "—" : stp, stpc, stpTip)
     // 3 · Signal: BUY / SELL only when actionable
     string sig = "WAIT"

@@ -3,110 +3,156 @@
 Logic replay of the Pine rules on real market data, costs included, defaults unchanged between periods. Not a TradingView backtest — confirm every result with the companion strategy before trusting it. R = multiples of the planned stop distance; results are per 1 contract, 50 % closed at TP1.
 
 
-## MGC (micro gold) — 2021-01-03 → 2025-07-16 (321,464 5M bars)
+## MGC (micro gold) — 2021-01-03 → 2025-07-16 (321,464 5M bars, 1410 trading days, ~228 bars/day)
 Costs per round trip: 0.324 pts (= commission + 1 tick slippage per side; point value $10). Entry windows: London 0800-1100, New_York 0830-1130.
 
-### in-sample: 2021-02-17 → 2023-09-23
+### in-sample: 2021-02-17 → 2023-10-11
 
-| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
 |---|---|---|---|---|---|---|---|---|
-| A · CRT (defaults) | 43 | 37.2 | 1.09 | +2.8 | +0.064 | +1.99 / -1.08 | 8.3 | median stop 3.02 pts = $30/contract |
-| C · Range break (defaults) | 92 | 39.1 | 1.00 | -0.1 | -0.001 | +1.44 / -0.92 | 13.1 | median stop 5.45 pts = $55/contract |
-| C · Range break (raw: no bias) | 213 | 39.0 | 1.09 | +10.3 | +0.048 | +1.43 / -0.83 | 12.7 | median stop 4.99 pts = $50/contract |
-| AMD · Asia → London/NY (defaults) | 7 | 28.6 | 0.70 | -1.2 | -0.177 | +1.46 / -0.83 | 4.2 | median stop 8.14 pts = $81/contract |
-| AMD · Asia mode + 4H/1H bias | 2 | 0.0 | 0.00 | -2.1 | -1.055 | +nan / -1.06 | 2.1 | median stop 7.16 pts = $72/contract |
-| FVG · retest (defaults, confluence info only) | 416 | 31.5 | 0.70 | -76.4 | -0.184 | +1.35 / -0.89 | 82.3 | median stop 2.57 pts = $26/contract |
-| FVG · + confluence filter (≥2 aligned, ≤1 opposing) | 110 | 31.8 | 0.71 | -19.3 | -0.176 | +1.36 / -0.89 | 25.4 | median stop 2.70 pts = $27/contract |
+| A · CRT (defaults) | 44 | 36.4 | 1.06 | +1.7 | +0.038 | +1.99 / -1.08 | 8.3 | $+303 / $344 · 3.05 pts ($30) |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 96 | 38.5 | 0.96 | -2.0 | -0.021 | +1.43 / -0.93 | 13.1 | $-193 / $886 · 5.28 pts ($53) |
+| C · Range break (no bias filter) | 218 | 38.5 | 1.06 | +7.3 | +0.033 | +1.43 / -0.84 | 12.7 | $+405 / $872 · 4.77 pts ($48) |
+| AMD · Asia → London/NY (defaults) | 9 | 33.3 | 0.84 | -0.8 | -0.093 | +1.46 / -0.87 | 5.2 | $-115 / $481 · 8.12 pts ($81) |
+| AMD · + 4H/1H bias | 3 | 33.3 | 0.69 | -0.7 | -0.221 | +1.45 / -1.06 | 2.1 | $-33 / $151 · 8.12 pts ($81) |
+| FVG · research only (signals OFF by default) | 423 | 31.4 | 0.70 | -77.7 | -0.184 | +1.35 / -0.89 | 85.9 | $-1,612 / $1,912 · 2.50 pts ($25) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 2154, MISSED: reached CRT 50% before entry (before 15M) 1295, MISSED: reached CRT 50% before entry 147, CONFLICT: opposite 15M structure break after reclaim 135, TRADE 44, EXPIRED: no 15M confirmation 36, REPLACED: opposite sweep 30, EXPIRED: no valid 5M entry (last block: too far from stop) 18
+* **C · Range break:** pairs locked 1367, TRADE 96, invalidated (disqualified / filtered) 811, expired 160, not tradable (window / stop / R:R / trade open) 300
+* **AMD:** accumulation locked 516, manipulation confirmed 202, asia range too wide 168, manipulation extreme broken 129, pre-London expansion 103, expansion (too deep) 91, pre-London accepted breakout 67, no distribution 54, accepted breakout 51, TRADE 9, not tradable: stop too wide 6, not tradable: entries off 3, NY session ended 1, not tradable: trade open 1, both sides same candle 1
+* **FVG (research):** cand 1694, notTradable 155, entriesOff 1116
 
 | Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
 |---|---|---|---|---|---|---|---|---|
 | A · CRT · long | 12 | 33.3 | 1.10 | +0.8 | +0.066 | +2.27 / -1.04 | 5.9 |  |
-| A · CRT · short | 31 | 38.7 | 1.09 | +2.0 | +0.063 | +1.89 / -1.09 | 10.6 |  |
+| A · CRT · short | 32 | 37.5 | 1.04 | +0.9 | +0.028 | +1.89 / -1.09 | 10.6 |  |
 | A · CRT · LDN | 23 | 34.8 | 0.91 | -1.5 | -0.065 | +1.83 / -1.07 | 8.2 |  |
-| A · CRT · NY | 20 | 40.0 | 1.33 | +4.2 | +0.212 | +2.15 / -1.08 | 3.4 |  |
-| C · Range break · long | 44 | 40.9 | 1.18 | +4.0 | +0.092 | +1.44 / -0.84 | 7.3 |  |
-| C · Range break · short | 48 | 37.5 | 0.86 | -4.1 | -0.086 | +1.43 / -0.99 | 13.2 |  |
-| C · Range break · LDN | 46 | 50.0 | 1.61 | +12.5 | +0.271 | +1.43 / -0.89 | 4.8 |  |
+| A · CRT · NY | 21 | 38.1 | 1.23 | +3.2 | +0.151 | +2.15 / -1.08 | 3.4 |  |
+| C · Range break · long | 46 | 39.1 | 1.08 | +1.8 | +0.040 | +1.44 / -0.86 | 7.3 |  |
+| C · Range break · short | 50 | 38.0 | 0.88 | -3.8 | -0.077 | +1.43 / -1.00 | 13.2 |  |
+| C · Range break · LDN | 50 | 48.0 | 1.44 | +10.6 | +0.211 | +1.43 / -0.91 | 5.4 |  |
 | C · Range break · NY | 46 | 28.3 | 0.60 | -12.6 | -0.273 | +1.44 / -0.95 | 16.7 |  |
-| AMD · Asia → London/NY · long | 5 | 20.0 | 0.47 | -1.7 | -0.330 | +1.47 / -0.78 | 3.1 |  |
-| AMD · Asia → London/NY · short | 2 | 50.0 | 1.40 | +0.4 | +0.207 | +1.45 / -1.04 | 1.0 |  |
-| FVG · retest · long | 207 | 30.0 | 0.64 | -47.6 | -0.230 | +1.35 / -0.91 | 48.0 |  |
-| FVG · retest · short | 209 | 33.0 | 0.76 | -28.8 | -0.138 | +1.35 / -0.87 | 36.5 |  |
-| FVG · retest · LDN | 202 | 29.2 | 0.58 | -56.7 | -0.281 | +1.31 / -0.94 | 58.2 |  |
-| FVG · retest · NY | 214 | 33.6 | 0.83 | -19.7 | -0.092 | +1.38 / -0.84 | 31.6 |  |
+| AMD · Asia → London/NY · long | 6 | 16.7 | 0.35 | -2.7 | -0.449 | +1.47 / -0.83 | 4.2 |  |
+| AMD · Asia → London/NY · short | 3 | 66.7 | 2.79 | +1.9 | +0.620 | +1.45 / -1.04 | 1.0 |  |
 
-### out-of-sample: 2023-09-23 → 2025-07-16
+### out-of-sample: 2023-10-11 → 2025-07-16
 
-| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
 |---|---|---|---|---|---|---|---|---|
-| A · CRT (defaults) | 32 | 28.1 | 0.64 | -7.9 | -0.247 | +1.58 / -0.96 | 13.9 | median stop 4.45 pts = $45/contract |
-| C · Range break (defaults) | 98 | 31.6 | 0.80 | -10.8 | -0.110 | +1.43 / -0.82 | 15.6 | median stop 6.06 pts = $61/contract |
-| C · Range break (raw: no bias) | 201 | 35.8 | 1.01 | +1.0 | +0.005 | +1.42 / -0.78 | 15.0 | median stop 6.18 pts = $62/contract |
-| AMD · Asia → London/NY (defaults) | 2 | 50.0 | 1.39 | +0.4 | +0.203 | +1.45 / -1.04 | 1.0 | median stop 8.10 pts = $81/contract |
-| AMD · Asia mode + 4H/1H bias | 2 | 50.0 | 1.39 | +0.4 | +0.203 | +1.45 / -1.04 | 1.0 | median stop 8.10 pts = $81/contract |
-| FVG · retest (defaults, confluence info only) | 307 | 30.9 | 0.72 | -51.0 | -0.166 | +1.38 / -0.86 | 51.4 | median stop 3.36 pts = $34/contract |
-| FVG · + confluence filter (≥2 aligned, ≤1 opposing) | 91 | 30.8 | 0.73 | -14.1 | -0.155 | +1.37 / -0.83 | 18.8 | median stop 3.36 pts = $34/contract |
+| A · CRT (defaults) | 31 | 29.0 | 0.68 | -6.8 | -0.220 | +1.58 / -0.96 | 13.9 | $-435 / $777 · 4.47 pts ($45) |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 94 | 31.9 | 0.83 | -8.9 | -0.094 | +1.44 / -0.81 | 15.6 | $-649 / $1,316 · 6.15 pts ($61) |
+| C · Range break (no bias filter) | 196 | 36.2 | 1.04 | +4.0 | +0.020 | +1.42 / -0.77 | 15.0 | $-368 / $1,668 · 6.26 pts ($63) |
+| AMD · Asia → London/NY (defaults) | 2 | 0.0 | 0.00 | -2.1 | -1.036 | +nan / -1.04 | 2.1 | $-222 / $222 · 10.73 pts ($107) |
+| AMD · + 4H/1H bias | 1 | 0.0 | 0.00 | -1.0 | -1.040 | +nan / -1.04 | 1.0 | $-84 / $84 · 8.09 pts ($81) |
+| FVG · research only (signals OFF by default) | 300 | 31.0 | 0.72 | -49.7 | -0.166 | +1.38 / -0.86 | 50.1 | $-1,202 / $1,309 · 3.37 pts ($34) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 1600, MISSED: reached CRT 50% before entry (before 15M) 887, MISSED: reached CRT 50% before entry 114, CONFLICT: opposite 15M structure break after reclaim 90, TRADE 31, EXPIRED: no valid 5M entry (last block: too far from stop) 26, REPLACED: opposite sweep 18, EXPIRED: no 15M confirmation 14
+* **C · Range break:** pairs locked 907, TRADE 94, invalidated (disqualified / filtered) 510, expired 103, not tradable (window / stop / R:R / trade open) 200
+* **AMD:** accumulation locked 300, asia range too wide 153, manipulation confirmed 102, manipulation extreme broken 82, pre-London expansion 66, expansion (too deep) 55, pre-London accepted breakout 45, accepted breakout 29, no distribution 18, TRADE 2, NY session ended 2, both sides same candle 1
+* **FVG (research):** cand 1264, notTradable 96, entriesOff 868
 
 | Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
 |---|---|---|---|---|---|---|---|---|
 | A · CRT · long | 16 | 31.2 | 0.95 | -0.5 | -0.034 | +2.09 / -1.00 | 5.4 |  |
-| A · CRT · short | 16 | 25.0 | 0.34 | -7.4 | -0.460 | +0.95 / -0.93 | 8.9 |  |
+| A · CRT · short | 15 | 26.7 | 0.38 | -6.3 | -0.420 | +0.95 / -0.92 | 8.9 |  |
 | A · CRT · LDN | 16 | 43.8 | 1.08 | +0.8 | +0.051 | +1.54 / -1.11 | 4.0 |  |
-| A · CRT · NY | 16 | 12.5 | 0.28 | -8.7 | -0.544 | +1.72 / -0.87 | 11.0 |  |
-| C · Range break · long | 56 | 35.7 | 1.02 | +0.6 | +0.011 | +1.43 / -0.78 | 7.7 |  |
-| C · Range break · short | 42 | 26.2 | 0.58 | -11.4 | -0.271 | +1.44 / -0.88 | 17.1 |  |
-| C · Range break · LDN | 62 | 29.0 | 0.76 | -8.2 | -0.133 | +1.42 / -0.77 | 12.3 |  |
+| A · CRT · NY | 15 | 13.3 | 0.31 | -7.6 | -0.509 | +1.72 / -0.85 | 10.0 |  |
+| C · Range break · long | 54 | 37.0 | 1.11 | +2.8 | +0.052 | +1.43 / -0.76 | 7.7 |  |
+| C · Range break · short | 40 | 25.0 | 0.55 | -11.7 | -0.292 | +1.45 / -0.87 | 17.1 |  |
+| C · Range break · LDN | 58 | 29.3 | 0.79 | -6.3 | -0.109 | +1.43 / -0.75 | 9.3 |  |
 | C · Range break · NY | 36 | 36.1 | 0.88 | -2.5 | -0.071 | +1.45 / -0.93 | 8.5 |  |
 | AMD · Asia → London/NY · long | 0 | — | — | — | — | — | — |  |
-| AMD · Asia → London/NY · short | 2 | 50.0 | 1.39 | +0.4 | +0.203 | +1.45 / -1.04 | 1.0 |  |
-| FVG · retest · long | 161 | 30.4 | 0.71 | -27.6 | -0.171 | +1.37 / -0.85 | 29.3 |  |
-| FVG · retest · short | 146 | 31.5 | 0.73 | -23.4 | -0.161 | +1.38 / -0.87 | 25.7 |  |
-| FVG · retest · LDN | 124 | 32.3 | 0.65 | -28.3 | -0.229 | +1.32 / -0.97 | 28.3 |  |
-| FVG · retest · NY | 183 | 30.1 | 0.77 | -22.7 | -0.124 | +1.42 / -0.79 | 25.5 |  |
+| AMD · Asia → London/NY · short | 2 | 0.0 | 0.00 | -2.1 | -1.036 | +nan / -1.04 | 2.1 |  |
 
-## MES (micro S&P) — 2020-01-01 → 2020-12-31 (70,286 5M bars)
+## MES (micro S&P) — 2020-01-01 → 2020-12-31 (70,286 5M bars, 312 trading days, ~225 bars/day)
 Costs per round trip: 0.748 pts (= commission + 1 tick slippage per side; point value $5). Entry windows: New_York 0930-1130.
 
-### single period: 2020-02-15 → 2020-12-31
+### in-sample: 2020-02-15 → 2020-08-25
 
-| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
 |---|---|---|---|---|---|---|---|---|
-| A · CRT (defaults) | 5 | 60.0 | 2.99 | +2.3 | +0.461 | +1.15 / -0.58 | 1.2 | median stop 18.14 pts = $91/contract |
-| C · Range break (defaults) | 6 | 50.0 | 1.29 | +1.0 | +0.165 | +1.46 / -1.13 | 3.4 | median stop 12.13 pts = $61/contract |
-| C · Range break (raw: no bias) | 8 | 37.5 | 0.79 | -1.2 | -0.144 | +1.46 / -1.11 | 4.5 | median stop 12.13 pts = $61/contract |
+| A · CRT (defaults) | 5 | 60.0 | 2.99 | +2.3 | +0.461 | +1.15 / -0.58 | 1.2 | $+165 / $107 · 18.14 pts ($91) |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 5 | 60.0 | 1.95 | +2.1 | +0.428 | +1.46 / -1.12 | 2.2 | $+416 / $86 · 13.89 pts ($69) |
+| C · Range break (no bias filter) | 7 | 42.9 | 1.00 | -0.0 | -0.000 | +1.46 / -1.10 | 3.4 | $+255 / $128 · 13.89 pts ($69) |
 | AMD · Asia → London/NY (defaults) | 0 | — | — | — | — | — | — |  |
-| AMD · Asia mode + 4H/1H bias | 0 | — | — | — | — | — | — |  |
-| FVG · retest (defaults, confluence info only) | 59 | 27.1 | 0.60 | -14.8 | -0.251 | +1.38 / -0.86 | 19.0 | median stop 6.26 pts = $31/contract |
-| FVG · + confluence filter (≥2 aligned, ≤1 opposing) | 15 | 40.0 | 0.82 | -1.8 | -0.119 | +1.38 / -1.12 | 6.7 | median stop 8.15 pts = $41/contract |
+| AMD · + 4H/1H bias | 0 | — | — | — | — | — | — |  |
+| FVG · research only (signals OFF by default) | 35 | 31.4 | 0.71 | -6.2 | -0.178 | +1.39 / -0.90 | 9.1 | $-444 / $514 · 8.15 pts ($41) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 427, MISSED: reached CRT 50% before entry (before 15M) 255, MISSED: reached CRT 50% before entry 29, CONFLICT: opposite 15M structure break after reclaim 22, REPLACED: opposite sweep 9, EXPIRED: no valid 5M entry (last block: too far from stop) 6, TRADE 5, EXPIRED: no 15M confirmation 3
+* **C · Range break:** pairs locked 272, TRADE 5, invalidated (disqualified / filtered) 157, expired 23, not tradable (window / stop / R:R / trade open) 87
+* **AMD:** accumulation locked 104, manipulation confirmed 33, asia range too wide 32, manipulation extreme broken 24, expansion (too deep) 22, pre-London expansion 18, accepted breakout 17, pre-London accepted breakout 14, no distribution 8, not tradable: entries off 1
+* **FVG (research):** cand 445, notTradable 10, entriesOff 400
 
 | Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
 |---|---|---|---|---|---|---|---|---|
 | A · CRT · long | 3 | 33.3 | 1.54 | +0.6 | +0.210 | +1.79 / -0.58 | 1.2 |  |
 | A · CRT · short | 2 | 100.0 | inf | +1.7 | +0.837 | +0.84 / +nan | 0.0 |  |
 | A · CRT · NY | 5 | 60.0 | 2.99 | +2.3 | +0.461 | +1.15 / -0.58 | 1.2 |  |
-| C · Range break · long | 5 | 40.0 | 0.86 | -0.5 | -0.097 | +1.45 / -1.13 | 3.4 |  |
+| C · Range break · long | 4 | 50.0 | 1.30 | +0.7 | +0.166 | +1.45 / -1.12 | 2.2 |  |
 | C · Range break · short | 1 | 100.0 | inf | +1.5 | +1.479 | +1.48 / +nan | 0.0 |  |
-| C · Range break · NY | 6 | 50.0 | 1.29 | +1.0 | +0.165 | +1.46 / -1.13 | 3.4 |  |
+| C · Range break · NY | 5 | 60.0 | 1.95 | +2.1 | +0.428 | +1.46 / -1.12 | 2.2 |  |
 | AMD · Asia → London/NY · long | 0 | — | — | — | — | — | — |  |
 | AMD · Asia → London/NY · short | 0 | — | — | — | — | — | — |  |
-| FVG · retest · long | 28 | 28.6 | 0.65 | -5.9 | -0.209 | +1.38 / -0.85 | 7.2 |  |
-| FVG · retest · short | 31 | 25.8 | 0.55 | -9.0 | -0.289 | +1.37 / -0.87 | 14.1 |  |
-| FVG · retest · NY | 59 | 27.1 | 0.60 | -14.8 | -0.251 | +1.38 / -0.86 | 19.0 |  |
 
-## XAUUSD (spot) — 2023-01-02 → 2025-02-03 (144,727 5M bars)
+### out-of-sample: 2020-08-25 → 2020-12-31
+
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
+|---|---|---|---|---|---|---|---|---|
+| A · CRT (defaults) | 0 | — | — | — | — | — | — |  |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 1 | 0.0 | 0.00 | -1.1 | -1.150 | +nan / -1.15 | 1.1 | $-39 / $39 · 6.83 pts ($34) |
+| C · Range break (no bias filter) | 1 | 0.0 | 0.00 | -1.1 | -1.150 | +nan / -1.15 | 1.1 | $-39 / $39 · 6.83 pts ($34) |
+| AMD · Asia → London/NY (defaults) | 0 | — | — | — | — | — | — |  |
+| AMD · + 4H/1H bias | 0 | — | — | — | — | — | — |  |
+| FVG · research only (signals OFF by default) | 24 | 20.8 | 0.44 | -8.6 | -0.358 | +1.34 / -0.80 | 10.0 | $-374 / $426 · 5.45 pts ($27) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 255, MISSED: reached CRT 50% before entry (before 15M) 155, MISSED: reached CRT 50% before entry 25, CONFLICT: opposite 15M structure break after reclaim 12, EXPIRED: no valid 5M entry (last block: too far from stop) 3, EXPIRED: no 15M confirmation 3, REPLACED: opposite sweep 2, EXPIRED: no valid 5M entry 1
+* **C · Range break:** pairs locked 182, TRADE 1, invalidated (disqualified / filtered) 96, expired 20, not tradable (window / stop / R:R / trade open) 65
+* **AMD:** accumulation locked 79, manipulation confirmed 28, pre-London expansion 22, expansion (too deep) 19, no distribution 14, asia range too wide 12, manipulation extreme broken 11, accepted breakout 8, not tradable: entries off 3, pre-London accepted breakout 2
+* **FVG (research):** cand 283, notTradable 20, entriesOff 239
+
+| Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
+|---|---|---|---|---|---|---|---|---|
+| A · CRT · long | 0 | — | — | — | — | — | — |  |
+| A · CRT · short | 0 | — | — | — | — | — | — |  |
+| C · Range break · long | 1 | 0.0 | 0.00 | -1.1 | -1.150 | +nan / -1.15 | 1.1 |  |
+| C · Range break · short | 0 | — | — | — | — | — | — |  |
+| C · Range break · NY | 1 | 0.0 | 0.00 | -1.1 | -1.150 | +nan / -1.15 | 1.1 |  |
+| AMD · Asia → London/NY · long | 0 | — | — | — | — | — | — |  |
+| AMD · Asia → London/NY · short | 0 | — | — | — | — | — | — |  |
+
+## XAUUSD (spot) — 2023-01-02 → 2025-02-03 (144,727 5M bars, 641 trading days, ~226 bars/day)
 Costs per round trip: 0.300 pts (= commission + 1 tick slippage per side; point value $1). Entry windows: London 0800-1100, New_York 0830-1130.
 
-### in-sample: 2023-02-16 → 2024-04-04
+### in-sample: 2023-02-16 → 2024-04-22
 
-| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
 |---|---|---|---|---|---|---|---|---|
-| A · CRT (defaults) | 25 | 40.0 | 1.44 | +5.8 | +0.233 | +1.92 / -0.89 | 6.8 | median stop 2.55 pts = $3/contract |
-| C · Range break (defaults) | 60 | 41.7 | 1.08 | +2.5 | +0.042 | +1.41 / -0.94 | 10.0 | median stop 3.22 pts = $3/contract |
-| C · Range break (raw: no bias) | 130 | 36.9 | 0.97 | -2.5 | -0.019 | +1.41 / -0.86 | 13.0 | median stop 3.28 pts = $3/contract |
+| A · CRT (defaults) | 25 | 40.0 | 1.44 | +5.8 | +0.233 | +1.92 / -0.89 | 6.8 | $+23 / $25 · 2.55 pts ($3) |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 62 | 40.3 | 1.01 | +0.5 | +0.007 | +1.41 / -0.94 | 10.0 | $+26 / $26 · 3.31 pts ($3) |
+| C · Range break (no bias filter) | 136 | 36.0 | 0.93 | -5.3 | -0.039 | +1.41 / -0.85 | 13.0 | $-0 / $57 · 3.42 pts ($3) |
 | AMD · Asia → London/NY (defaults) | 0 | — | — | — | — | — | — |  |
-| AMD · Asia mode + 4H/1H bias | 0 | — | — | — | — | — | — |  |
-| FVG · retest (defaults, confluence info only) | 221 | 28.5 | 0.59 | -58.0 | -0.263 | +1.32 / -0.90 | 60.0 | median stop 1.85 pts = $2/contract |
-| FVG · + confluence filter (≥2 aligned, ≤1 opposing) | 65 | 21.5 | 0.43 | -25.5 | -0.393 | +1.36 / -0.88 | 27.5 | median stop 2.02 pts = $2/contract |
+| AMD · + 4H/1H bias | 0 | — | — | — | — | — | — |  |
+| FVG · research only (signals OFF by default) | 232 | 29.3 | 0.62 | -55.6 | -0.240 | +1.31 / -0.88 | 60.0 | $-69 / $104 · 1.96 pts ($2) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 1111, MISSED: reached CRT 50% before entry (before 15M) 597, MISSED: reached CRT 50% before entry 67, CONFLICT: opposite 15M structure break after reclaim 59, TRADE 25, REPLACED: opposite sweep 16, EXPIRED: no valid 5M entry (last block: too far from stop) 14, EXPIRED: no 15M confirmation 11
+* **C · Range break:** pairs locked 604, TRADE 62, invalidated (disqualified / filtered) 359, expired 60, not tradable (window / stop / R:R / trade open) 123
+* **AMD:** accumulation locked 234, manipulation confirmed 82, asia range too wide 69, manipulation extreme broken 54, pre-London expansion 48, pre-London accepted breakout 43, expansion (too deep) 34, accepted breakout 26, no distribution 25, not tradable: stop too wide 3, both sides same candle 1
+* **FVG (research):** cand 911, notTradable 70, entriesOff 609
 
 | Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
 |---|---|---|---|---|---|---|---|---|
@@ -114,28 +160,31 @@ Costs per round trip: 0.300 pts (= commission + 1 tick slippage per side; point 
 | A · CRT · short | 13 | 46.2 | 2.10 | +7.0 | +0.537 | +2.22 / -0.90 | 2.4 |  |
 | A · CRT · LDN | 12 | 33.3 | 0.92 | -0.6 | -0.051 | +1.79 / -0.97 | 4.2 |  |
 | A · CRT · NY | 13 | 46.2 | 2.15 | +6.4 | +0.495 | +2.01 / -0.80 | 4.6 |  |
-| C · Range break · long | 35 | 34.3 | 0.88 | -2.2 | -0.063 | +1.41 / -0.83 | 10.1 |  |
+| C · Range break · long | 37 | 32.4 | 0.80 | -4.3 | -0.116 | +1.41 / -0.85 | 10.1 |  |
 | C · Range break · short | 25 | 52.0 | 1.35 | +4.7 | +0.190 | +1.41 / -1.14 | 4.4 |  |
-| C · Range break · LDN | 41 | 39.0 | 0.89 | -2.7 | -0.065 | +1.39 / -1.00 | 10.5 |  |
-| C · Range break · NY | 19 | 47.4 | 1.66 | +5.2 | +0.273 | +1.45 / -0.79 | 2.4 |  |
+| C · Range break · LDN | 42 | 38.1 | 0.86 | -3.7 | -0.088 | +1.39 / -1.00 | 10.5 |  |
+| C · Range break · NY | 20 | 45.0 | 1.46 | +4.1 | +0.207 | +1.45 / -0.81 | 2.4 |  |
 | AMD · Asia → London/NY · long | 0 | — | — | — | — | — | — |  |
 | AMD · Asia → London/NY · short | 0 | — | — | — | — | — | — |  |
-| FVG · retest · long | 105 | 25.7 | 0.54 | -30.7 | -0.293 | +1.33 / -0.86 | 39.2 |  |
-| FVG · retest · short | 116 | 31.0 | 0.63 | -27.3 | -0.235 | +1.32 / -0.93 | 27.3 |  |
-| FVG · retest · LDN | 99 | 30.3 | 0.57 | -29.2 | -0.295 | +1.27 / -0.97 | 29.2 |  |
-| FVG · retest · NY | 122 | 27.0 | 0.61 | -28.8 | -0.236 | +1.38 / -0.83 | 34.4 |  |
 
-### out-of-sample: 2024-04-04 → 2025-02-03
+### out-of-sample: 2024-04-22 → 2025-02-03
 
-| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |
+| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |
 |---|---|---|---|---|---|---|---|---|
-| A · CRT (defaults) | 13 | 38.5 | 0.76 | -1.8 | -0.142 | +1.14 / -0.94 | 5.4 | median stop 6.09 pts = $6/contract |
-| C · Range break (defaults) | 50 | 34.0 | 1.03 | +0.8 | +0.015 | +1.45 / -0.72 | 9.7 | median stop 5.40 pts = $5/contract |
-| C · Range break (raw: no bias) | 108 | 34.3 | 1.05 | +2.3 | +0.022 | +1.44 / -0.72 | 9.2 | median stop 5.28 pts = $5/contract |
-| AMD · Asia → London/NY (defaults) | 1 | 0.0 | 0.00 | -1.0 | -1.041 | +nan / -1.04 | 1.0 | median stop 7.31 pts = $7/contract |
-| AMD · Asia mode + 4H/1H bias | 1 | 0.0 | 0.00 | -1.0 | -1.041 | +nan / -1.04 | 1.0 | median stop 7.31 pts = $7/contract |
-| FVG · retest (defaults, confluence info only) | 168 | 35.7 | 0.80 | -19.7 | -0.117 | +1.35 / -0.93 | 31.0 | median stop 2.63 pts = $3/contract |
-| FVG · + confluence filter (≥2 aligned, ≤1 opposing) | 53 | 32.1 | 0.65 | -12.5 | -0.235 | +1.37 / -0.99 | 20.3 | median stop 2.49 pts = $2/contract |
+| A · CRT (defaults) | 13 | 38.5 | 0.76 | -1.8 | -0.142 | +1.14 / -0.94 | 5.4 | $-12 / $31 · 6.09 pts ($6) |
+| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |
+| C · Range break (defaults) | 48 | 35.4 | 1.13 | +2.8 | +0.059 | +1.45 / -0.70 | 7.6 | $+35 / $40 · 5.32 pts ($5) |
+| C · Range break (no bias filter) | 102 | 35.3 | 1.11 | +5.1 | +0.050 | +1.45 / -0.71 | 6.4 | $+52 / $34 · 5.26 pts ($5) |
+| AMD · Asia → London/NY (defaults) | 2 | 0.0 | 0.00 | -2.1 | -1.032 | +nan / -1.03 | 2.1 | $-21 / $21 · 9.97 pts ($10) |
+| AMD · + 4H/1H bias | 1 | 0.0 | 0.00 | -1.0 | -1.041 | +nan / -1.04 | 1.0 | $-8 / $8 · 7.31 pts ($7) |
+| FVG · research only (signals OFF by default) | 157 | 35.0 | 0.77 | -22.1 | -0.141 | +1.37 / -0.95 | 31.0 | $-32 / $82 · 2.47 pts ($2) |
+
+**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:
+
+* **A · CRT:** STRUCTURAL: planned stop hit before entry 746, MISSED: reached CRT 50% before entry (before 15M) 396, MISSED: reached CRT 50% before entry 62, CONFLICT: opposite 15M structure break after reclaim 42, TRADE 13, EXPIRED: no valid 5M entry (last block: too far from stop) 10, REPLACED: opposite sweep 9, EXPIRED: no 15M confirmation 3
+* **C · Range break:** pairs locked 388, TRADE 48, invalidated (disqualified / filtered) 235, expired 26, not tradable (window / stop / R:R / trade open) 79
+* **AMD:** accumulation locked 130, asia range too wide 63, manipulation confirmed 45, manipulation extreme broken 38, pre-London expansion 32, expansion (too deep) 22, pre-London accepted breakout 20, accepted breakout 11, no distribution 5, TRADE 2
+* **FVG (research):** cand 634, notTradable 46, entriesOff 431
 
 | Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |
 |---|---|---|---|---|---|---|---|---|
@@ -143,13 +192,9 @@ Costs per round trip: 0.300 pts (= commission + 1 tick slippage per side; point 
 | A · CRT · short | 8 | 37.5 | 0.81 | -0.9 | -0.107 | +1.18 / -0.88 | 4.3 |  |
 | A · CRT · LDN | 7 | 42.9 | 0.96 | -0.2 | -0.025 | +1.37 / -1.07 | 3.2 |  |
 | A · CRT · NY | 6 | 33.3 | 0.49 | -1.7 | -0.279 | +0.80 / -0.82 | 2.2 |  |
-| C · Range break · long | 27 | 44.4 | 1.62 | +6.7 | +0.246 | +1.45 / -0.71 | 5.3 |  |
+| C · Range break · long | 25 | 48.0 | 2.01 | +8.7 | +0.349 | +1.45 / -0.66 | 3.2 |  |
 | C · Range break · short | 23 | 21.7 | 0.55 | -5.9 | -0.256 | +1.45 / -0.73 | 6.8 |  |
-| C · Range break · LDN | 34 | 35.3 | 1.13 | +2.0 | +0.059 | +1.44 / -0.70 | 6.9 |  |
-| C · Range break · NY | 16 | 31.2 | 0.86 | -1.2 | -0.077 | +1.46 / -0.78 | 3.9 |  |
+| C · Range break · LDN | 33 | 36.4 | 1.21 | +3.0 | +0.092 | +1.44 / -0.68 | 5.9 |  |
+| C · Range break · NY | 15 | 33.3 | 0.97 | -0.2 | -0.013 | +1.46 / -0.75 | 3.2 |  |
 | AMD · Asia → London/NY · long | 0 | — | — | — | — | — | — |  |
-| AMD · Asia → London/NY · short | 1 | 0.0 | 0.00 | -1.0 | -1.041 | +nan / -1.04 | 1.0 |  |
-| FVG · retest · long | 94 | 35.1 | 0.73 | -16.0 | -0.170 | +1.33 / -0.98 | 21.0 |  |
-| FVG · retest · short | 74 | 36.5 | 0.91 | -3.7 | -0.050 | +1.38 / -0.87 | 14.1 |  |
-| FVG · retest · LDN | 78 | 29.5 | 0.54 | -26.0 | -0.333 | +1.34 / -1.03 | 32.1 |  |
-| FVG · retest · NY | 90 | 41.1 | 1.14 | +6.3 | +0.070 | +1.36 / -0.83 | 9.0 |  |
+| AMD · Asia → London/NY · short | 2 | 0.0 | 0.00 | -2.1 | -1.032 | +nan / -1.03 | 2.1 |  |

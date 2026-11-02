@@ -11,6 +11,8 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 | `docs/SETTINGS.md` | Starting settings for Gold (XAUUSD / GC / MGC) and NQ / MNQ. |
 | `docs/TESTING.md` | Verification checklist, backtest protocol, known limitations. |
 | `docs/UPGRADE_STAGES.md` | Stage 1 (FVG, inverse FVG, supply & demand, MSS, minimal dashboard): rules, measurements, defaults, testing, and the Stage 2–3 plan. |
+| `docs/VALIDATION_GUIDE.md` | **How to export TradingView data** (symbols, 5M timeframe, sessions, date range, CSV columns) and run the validation. |
+| `docs/VALIDATION_RESULTS.md` | Latest cost-inclusive in/out-of-sample results per model and market, including failed-setup funnels. |
 | `docs/MODEL_C.md` | Model C (15M double-range confirmation): exact rules, MTF handling, measured results, checklist, open decisions. |
 | `docs/STATE_MACHINE_AUDIT.md` | Why setups kept invalidating, what was fixed, measured before/after on real gold data. |
 | `tools/replay/` | Python bar-for-bar replay of the engine + no-future-information test. |
@@ -21,7 +23,7 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 * **Model C: 15M double-range confirmation.** Two completed 15M candles are frozen as a range, and a later 15M close beyond it triggers the trade. It is drawn in purple, with labels `C · BUY` / `C · SELL`. Settings are in input group ⑭; see `docs/MODEL_C.md`.
 * There is no Model B in the code (see `docs/MODEL_C.md`, decisions).
 * **Model AMD: Power of Three (Stage 2, optional).** Accumulation range → confirmed manipulation sweep → displacement distribution. Labels: `AMD · BUY` / `AMD · SELL`, M/D markers. Settings are in input group ⑱; see `docs/UPGRADE_STAGES.md`.
-* **Model FVG: strong FVG first retest (Stage 3, optional).** Labels `FVG · BUY` / `FVG · SELL`. **Validation was negative in every sample; keep it off for live use.** Group ⑳.
+* **Model FVG: strong FVG first retest (research).** Standalone signals are **off by default**; validation was negative in every sample. The gaps are still used as context and confluence. Group ⑳.
 * **Confluence engine (Stage 3):** explains every signal (`✓ aligned · ✕ opposing`) and can optionally filter. Group ⑲.
 * **Validation:** `docs/VALIDATION_RESULTS.md` (MGC 2021–25, MES 2020, XAUUSD 2023–25, costs included). No model shows a validated edge yet.
 * **Context overlays (Stage 1):** FVG / inverse FVG (group ⑮), supply & demand / order blocks (group ⑯), BOS / CHoCH / MSS and liquidity lines (group ⑰). They inform; they do not create trades.

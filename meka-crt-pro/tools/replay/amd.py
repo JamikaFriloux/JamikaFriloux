@@ -107,8 +107,22 @@ def run(df, mk, P, D, t_from=None, t_to=None, stop_at=None):
             aH, aL = max(aH, h[i]), min(aL, l[i])
         if asia and 1 <= A["state"] <= 3 and nyEnd:
             end(10, "NY session ended")
-        if asia and A["state"] == 1 and i > A["lock"] and not inLN[i] and D["last"][i] and (c[i] > A["hi"] or c[i] < A["lo"]):
-            end(9, "15M close outside before London/NY")
+        if asia and A["state"] == 1 and i > A["lock"] and not inLN[i]:
+            exMax = max(h[i] - A["hi"], A["lo"] - l[i])
+            if exMax > P["maxSweep"] * a:
+                end(9, "pre-London expansion")
+            else:
+                if exMax > 0:
+                    A["preSwept"] = True
+                if D["last"][i]:
+                    sn = 1 if c[i] > A["hi"] else -1 if c[i] < A["lo"] else 0
+                    if sn != 0:
+                        A["preOut"] = A.get("preOut", 0) + 1 if sn == A.get("preSide", 0) else 1
+                        A["preSide"] = sn
+                        if A["preOut"] >= P["accept"]:
+                            end(9, "pre-London accepted breakout")
+                    else:
+                        A["preOut"], A["preSide"] = 0, 0
         # manipulation watch
         if A["state"] == 1 and i > A["lock"] and (not asia or inLN[i]):
             upB, dnB = h[i] - A["hi"] >= pen, A["lo"] - l[i] >= pen

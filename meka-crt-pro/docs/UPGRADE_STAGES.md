@@ -200,3 +200,28 @@ It counts **objective** factors at a model's signal bar. It is **not** a probabi
 1. **Pre-London rule:** should a 15M close outside the Asia range before London invalidate it? It currently does, and it removes 47% of Asia ranges. The alternative is to let the range survive until London.
 2. **FVG model:** keep it in the code for research, or remove it from the strategy options? It is currently enabled but clearly negative.
 3. **MNQ:** please export 1-minute or 5-minute MNQ data from TradingView (as many months as your plan allows). I will run `validate.py` and report MNQ results the same way.
+
+## Validation round 1 (rule changes requested before testing)
+
+* **AMD pre-London:** the Asia range is carried into London and judged on completed candles before London/NY opens:
+  * **intact**;
+  * **swept & reclaimed** (traded outside but did not hold): kept, and the SETUP tooltip notes it;
+  * **accepted breakout** (2 consecutive 15M closes outside): invalidated;
+  * **expansion** (more than 2 × ATR beyond the range): invalidated.
+
+  A single 15M close outside no longer kills the range. Manipulation is still only counted in London/NY.
+* **FVG model:** standalone BUY/SELL signals are **off by default** (research). Gaps still feed the overlays and the confluence engine.
+* **Validation script:** TradingView exports (several overlapping files per market are merged), `--oos-from`, $ results per contract, an explicit "Model B not implemented" row, and a funnel of failed setups per model. How to export: `docs/VALIDATION_GUIDE.md`.
+
+### MGC results after these changes (in-sample Feb 2021 – Oct 2023 / out-of-sample Oct 2023 – Jul 2025, net of costs)
+| Model | In-sample | Out-of-sample |
+|---|---|---|
+| A · CRT | 44 trades, +0.04R, PF 1.06, +$303 | 31 trades, **−0.22R**, PF 0.68, −$435 |
+| C · Range break (defaults) | 96, −0.02R, PF 0.96 | 94, **−0.09R**, PF 0.83 |
+| C · Range break (no bias) | 218, +0.03R, PF 1.06 | 196, +0.02R, PF 1.04 |
+| AMD · Asia → London/NY | 9, −0.09R | 2, −1.04R |
+| FVG (research) | 423, −0.18R | 300, −0.17R |
+
+Funnel examples: Model A formed about 3,800 setups in-sample, and most ended with the planned stop hit before entry (2,154) or a missed entry (1,442); 44 became trades. AMD locked 516 Asia ranges: 67 were accepted breakouts and 103 expansions before London, 202 manipulations were confirmed, and 9 became trades.
+
+**Still no model with a validated edge.** MNQ and ES are pending your TradingView exports.

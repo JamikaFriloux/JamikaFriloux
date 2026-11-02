@@ -40,8 +40,16 @@ MK = {
 
 
 def load_1m(path, tz="America/Chicago", tv=False):
+    """Load one or more files (comma-separated) of 1M or 5M OHLCV, merge, de-duplicate, resample to 5M."""
+    if "," in path:
+        parts = [load_1m(p.strip(), tz, tv) for p in path.split(",") if p.strip()]
+        out = pd.concat(parts).drop_duplicates("utc", keep="last").sort_values("utc").reset_index(drop=True)
+        return out
     df = pd.read_parquet(path) if path.endswith(".parquet") else pd.read_csv(path)
-    df.columns = [c.lower() for c in df.columns]
+    df.columns = [c.strip().lower() for c in df.columns]
+    need = {"open", "high", "low", "close"}
+    if not need <= set(df.columns) or ("time" not in df.columns and "datetime" not in df.columns):
+        raise SystemExit(f"{path}: needs columns time (or datetime), open, high, low, close[, volume] — found {list(df.columns)}")
     if tv:
         t = pd.to_datetime(df["time"], unit="s", utc=True) if np.issubdtype(df["time"].dtype, np.number) else pd.to_datetime(df["time"], utc=True)
     else:
@@ -94,26 +102,37 @@ def model_a(df, mk, a, b):
     out = []
     lo = int(a.value // 10**6)
     hi = int(b.value // 10**6)
+    from collections import Counter
+    fn = Counter()
     for x in res["outcomes"]:
+        ts0 = pd.Timestamp(x["t"]) - pd.Timedelta(hours=7)
+        u0 = ts0.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward")
+        if not pd.isna(u0) and lo <= int(u0.tz_convert("UTC").value // 10**6) < hi:
+            fn[(x["cat"] + (": " + x["reason"] if x["cat"] != "TRADE" else "")).replace("traded through planned stop", "planned stop hit before entry")] += 1
         if x["cat"] == "TRADE" and x["risk"]:
             # sigT is server-time ms; convert back to UTC for the split
             ts = pd.Timestamp(x["sigT"], unit="ms") - pd.Timedelta(hours=7)
             u = int(ts.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward").tz_convert("UTC").value // 10**6) if not pd.isna(ts) else 0
             if lo <= u < hi:
                 out.append(dict(Rnet=x["R"] - mk["cost_pts"] / x["risk"], dir=x["dir"], kT=u, risk=x["risk"]))
-    return out
+    return out, dict(fn.most_common(8))
 
 
-def run_market(key, df, lines):
+def run_market(key, df, lines, oos_from=None):
     mk = MK[key]
     start, end = df.utc.min(), df.utc.max()
     span = (end - start).days
-    if span > 540:
-        cut = start + (end - start) * 0.6
-        periods = [("in-sample", start + pd.Timedelta(days=45), cut), ("out-of-sample", cut, end)]
+    warm = start + pd.Timedelta(days=45)          # indicator warm-up (ATR(100), 4H EMA, swings) — never scored
+    if oos_from:
+        cut = pd.Timestamp(oos_from, tz="UTC")
+        periods = [("in-sample", warm, cut), ("out-of-sample", cut, end)]
+    elif span >= 180:
+        cut = warm + (end - warm) * 0.6
+        periods = [("in-sample", warm, cut), ("out-of-sample", cut, end)]
     else:
-        periods = [("single period", start + pd.Timedelta(days=45), end)]
-    lines += [f"\n## {mk['name']} — {start:%Y-%m-%d} → {end:%Y-%m-%d} ({len(df):,} 5M bars)",
+        periods = [("single period (TOO SHORT for out-of-sample — export more history)", warm, end)]
+    days = df.utc.dt.tz_convert("America/New_York").dt.date.nunique()
+    lines += [f"\n## {mk['name']} — {start:%Y-%m-%d} → {end:%Y-%m-%d} ({len(df):,} 5M bars, {days} trading days, ~{len(df) / max(days, 1):.0f} bars/day)",
               f"Costs per round trip: {mk['cost_pts']:.3f} pts (= commission + 1 tick slippage per side; point value ${mk['pv']:g}). Entry windows: " +
               ", ".join(f"{tz.split('/')[-1]} {x:04d}-{y:04d}" for tz, x, y in mk["windows"]) + "."]
     t0 = time.time()
@@ -121,24 +140,33 @@ def run_market(key, df, lines):
     for pname, a, b in periods:
         tf, tt = int(a.value // 10**6), int(b.value // 10**6)
         lines += [f"\n### {pname}: {a:%Y-%m-%d} → {b:%Y-%m-%d}", "",
-                  "| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Notes |",
+                  "| Model / variant | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | Net $ / Max DD $ (1 contract) · median stop |",
                   "|---|---|---|---|---|---|---|---|---|"]
-        res = {}
-        res["A · CRT (defaults)"] = model_a(df, mk, a, b)
-        res["C · Range break (defaults)"] = C.run(D, mk, dict(C.DEF), tf, tt)[0]
-        res["C · Range break (raw: no bias)"] = C.run(D, mk, dict(C.DEF, bias="off"), tf, tt)[0]
-        res["AMD · Asia → London/NY (defaults)"] = AMDm.run(df, mk, dict(AMDm.DEF), D, tf, tt)[0]
-        res["AMD · Asia mode + 4H/1H bias"] = AMDm.run(df, mk, dict(AMDm.DEF, bias="4H+1H"), D, tf, tt)[0]
-        res["FVG · retest (defaults, confluence info only)"] = FM.run(df, mk, dict(FM.DEF), D, tf, tt)[0]
-        res["FVG · + confluence filter (≥2 aligned, ≤1 opposing)"] = FM.run(df, mk, dict(FM.DEF, cfFilter=True), D, tf, tt)[0]
+        res, fun = {}, {}
+        res["A · CRT (defaults)"], fun["A · CRT"] = model_a(df, mk, a, b)
+        lines_b = "| B · (not implemented in the code) | — | — | — | — | — | — | — | there is no Model B in MEKA |"
+        res["C · Range break (defaults)"], ce = C.run(D, mk, dict(C.DEF), tf, tt)
+        fun["C · Range break"] = {"pairs locked": ce["locked"], "TRADE": ce[7], "invalidated (disqualified / filtered)": ce[9], "expired": ce[10], "not tradable (window / stop / R:R / trade open)": ce[11]}
+        res["C · Range break (no bias filter)"] = C.run(D, mk, dict(C.DEF, bias="off"), tf, tt)[0]
+        res["AMD · Asia → London/NY (defaults)"], ae = AMDm.run(df, mk, dict(AMDm.DEF), D, tf, tt)
+        fun["AMD"] = dict(ae.most_common())
+        res["AMD · + 4H/1H bias"] = AMDm.run(df, mk, dict(AMDm.DEF, bias="4H+1H"), D, tf, tt)[0]
+        res["FVG · research only (signals OFF by default)"], fe = FM.run(df, mk, dict(FM.DEF), D, tf, tt)
+        fun["FVG (research)"] = fe
         for k, tr in res.items():
             rs = [t["Rnet"] for t in tr]
             risk = [t["risk"] for t in tr]
-            note = f"median stop {np.median(risk):.2f} pts = ${np.median(risk) * mk['pv']:.0f}/contract" if risk else ""
+            usd = [t["Rnet"] * t["risk"] * mk["pv"] for t in tr]
+            eq = np.r_[0, np.cumsum(usd)]
+            note = (f"${sum(usd):+,.0f} / ${float(np.max(np.maximum.accumulate(eq) - eq)):,.0f} · {np.median(risk):.2f} pts (${np.median(risk) * mk['pv']:.0f})") if risk else ""
             lines.append(row(k, stat(rs), note))
-        # long/short and session for each model's default
+            if k.startswith("A ·"):
+                lines.append(lines_b)
+        lines += ["", "**Failed and completed setups (funnel)** — every setup the rules formed in this period, and how it ended:", ""]
+        for k, f in fun.items():
+            lines.append(f"* **{k}:** " + ", ".join(f"{n} {v}" for n, v in f.items() if v))
         lines += ["", "| Split (defaults) | Trades | Win % | PF | Net R | Exp R/trade | Avg win / loss R | Max DD R | |", "|---|---|---|---|---|---|---|---|---|"]
-        for k in ["A · CRT (defaults)", "C · Range break (defaults)", "AMD · Asia → London/NY (defaults)", "FVG · retest (defaults, confluence info only)"]:
+        for k in ["A · CRT (defaults)", "C · Range break (defaults)", "AMD · Asia → London/NY (defaults)"]:
             tr = res[k]
             short = k.split(" (")[0]
             for dn, dv in (("long", 1), ("short", -1)):
@@ -155,7 +183,8 @@ if __name__ == "__main__":
     ap.add_argument("--mgc")
     ap.add_argument("--mes")
     ap.add_argument("--gold")
-    ap.add_argument("--tv", action="append", default=[])
+    ap.add_argument("--tv", action="append", default=[], help="FILE[,FILE2,...]:MARKET  (TradingView export, UNIX time)")
+    ap.add_argument("--oos-from", default=None, help="YYYY-MM-DD: first day of the out-of-sample period (default: last 40%%)")
     ap.add_argument("--out", default=__file__.rsplit("/tools/", 1)[0] + "/docs/VALIDATION_RESULTS.md")
     a = ap.parse_args()
     lines = ["# MEKA CRT PRO — Validation results (generated by tools/replay/validate.py)", "",
@@ -163,12 +192,12 @@ if __name__ == "__main__":
              "Not a TradingView backtest — confirm every result with the companion strategy before trusting it. "
              "R = multiples of the planned stop distance; results are per 1 contract, 50 % closed at TP1.", ""]
     if a.mgc:
-        run_market("mgc", load_1m(a.mgc), lines)
+        run_market("mgc", load_1m(a.mgc), lines, a.oos_from)
     if a.mes:
-        run_market("mes", load_1m(a.mes), lines)
+        run_market("mes", load_1m(a.mes), lines, a.oos_from)
     for spec in a.tv:
         path, key = spec.rsplit(":", 1)
-        run_market(key, load_1m(path, tv=True), lines)
+        run_market(key, load_1m(path, tv=True), lines, a.oos_from)
     if a.gold:
         g = C.load("gold", a.gold)
         run_market("gold", g[g.utc >= pd.Timestamp("2023-01-01", tz="UTC")].reset_index(drop=True), lines)
