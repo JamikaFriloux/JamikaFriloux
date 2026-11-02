@@ -18,7 +18,7 @@ OUT = ROOT / "MEKA CRT PRO — Strategy.pine"
 LAYER = ROOT / "tools" / "strategy_layer.pine"
 
 STRATEGY_HEADER = (
-    'strategy("MEKA CRT PRO — Strategy", shorttitle = "MEKA CRT PRO S", overlay = true, '
+    'strategy("MEKA CRT PRO — Strategy", shorttitle = "MEKA CRT S", overlay = true, '
     "initial_capital = 100000, currency = currency.USD, "
     "default_qty_type = strategy.fixed, default_qty_value = 2, pyramiding = 0, "
     "commission_type = strategy.commission.cash_per_contract, commission_value = 1.5, "
