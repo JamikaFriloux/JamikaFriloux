@@ -225,3 +225,16 @@ It counts **objective** factors at a model's signal bar. It is **not** a probabi
 Funnel examples: Model A formed about 3,800 setups in-sample, and most ended with the planned stop hit before entry (2,154) or a missed entry (1,442); 44 became trades. AMD locked 516 Asia ranges: 67 were accepted breakouts and 103 expansions before London, 202 manipulations were confirmed, and 9 became trades.
 
 **Still no model with a validated edge.** MNQ and ES are pending your TradingView exports.
+
+## Compiled-size fixes (TradingView limits)
+
+TradingView reported CE10295 (main body too long), CE10116 (too many external elements, twice) and CE10117 (more than 100,256 compiled tokens). Fixes:
+
+* **Structure:** engines and display blocks were moved into functions. Inputs are held in three settings objects, and the 4H/1H/15M values in one per-bar object.
+* **Removed to fit the token limit:**
+  * the old *Full* debug dashboard (the compact dashboard, tooltips, Detailed mode and the Diagnostic log remain);
+  * the standalone **FVG signal model** (negative in validation; its research version is in `tools/replay/fvg_model.py`);
+  * 12 of the 16 Data-Window plots;
+  * some long label tooltips.
+* **Strategy build:** the strategy file leaves out display-only code (dashboard, diagnostic log, zone boxes), which the Strategy Tester does not need.
+* **No trading rule of Models A, C or AMD changed.**

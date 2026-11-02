@@ -23,7 +23,7 @@ A private, Candle Range Theory trading assistant for TradingView, written in Pin
 * **Model C: 15M double-range confirmation.** Two completed 15M candles are frozen as a range, and a later 15M close beyond it triggers the trade. It is drawn in purple, with labels `C · BUY` / `C · SELL`. Settings are in input group ⑭; see `docs/MODEL_C.md`.
 * There is no Model B in the code (see `docs/MODEL_C.md`, decisions).
 * **Model AMD: Power of Three (Stage 2, optional).** Accumulation range → confirmed manipulation sweep → displacement distribution. Labels: `AMD · BUY` / `AMD · SELL`, M/D markers. Settings are in input group ⑱; see `docs/UPGRADE_STAGES.md`.
-* **Model FVG: strong FVG first retest (research).** Standalone signals are **off by default**; validation was negative in every sample. The gaps are still used as context and confluence. Group ⑳.
+* **Model FVG (research only, not in the Pine script):** the standalone FVG-retest model lost money in every validation sample and was removed from the indicator to fit TradingView's compiled-size limit. Its exact rules remain testable in `tools/replay/fvg_model.py`. FVG / inverse-FVG detection, overlays and confluence are unchanged in the indicator.
 * **Confluence engine (Stage 3):** explains every signal (`✓ aligned · ✕ opposing`) and can optionally filter. Group ⑲.
 * **Validation:** `docs/VALIDATION_RESULTS.md` (MGC 2021–25, MES 2020, XAUUSD 2023–25, costs included). No model shows a validated edge yet.
 * **Context overlays (Stage 1):** FVG / inverse FVG (group ⑮), supply & demand / order blocks (group ⑯), BOS / CHoCH / MSS and liquidity lines (group ⑰). They inform; they do not create trades.

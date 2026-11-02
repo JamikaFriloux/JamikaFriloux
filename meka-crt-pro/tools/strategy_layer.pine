@@ -6,7 +6,7 @@
 //  Exits: native stop / limit orders at the engine's SL / TP1 / TP2.
 // ═══════════════════════════════════════════════════════════════════════════════
 string G_ST = "⑬ Strategy (backtest only)"
-string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range", "Model AMD — Power of Three", "Model FVG — FVG retest"], group = G_ST)
+string stModel  = input.string("Model A — CRT sweep / reclaim", "Model traded by this strategy", options = ["Model A — CRT sweep / reclaim", "Model C — 15M double-range", "Model AMD — Power of Three"], group = G_ST)
 string sizeMode = input.string("Fixed quantity", "Position sizing", options = ["Fixed quantity", "Risk % of equity", "Risk cash per trade"], group = G_ST)
 float  fixedQty = input.float(2, "Fixed quantity (contracts / units)", minval = 0.000001, group = G_ST, tooltip = "Use ≥ 2 whole contracts on futures so the TP1 partial is possible.")
 float  riskPct  = input.float(0.5, "Risk % of equity per trade", minval = 0.01, maxval = 10, step = 0.05, group = G_ST)
@@ -21,14 +21,13 @@ f_floorStep(float q, float st) => math.floor(q / st + 1e-9) * st
 
 bool useC   = stModel == "Model C — 15M double-range"
 bool useD   = stModel == "Model AMD — Power of Three"
-bool useF   = stModel == "Model FVG — FVG retest"
-Setup T     = useF ? TF : useD ? TD : useC ? TC : S
-bool sigL   = useF ? evFBuy : useD ? evDBuy : useC ? evCBuy : evBuy
-bool sigS   = useF ? evFSell : useD ? evDSell : useC ? evCSell : evSell
-bool mTP1   = useF ? evFTP1 : useD ? evDTP1 : useC ? evCTP1 : evTP1
-bool mEarly = useF ? evFEarly : useD ? evDEarly : useC ? evCEarly : evEarly
-bool mDone  = useF ? evFDone : useD ? evDDone : useC ? evCDone : evDone
-string mTag = useF ? "FVG" : useD ? "AMD" : useC ? "C" : "A"
+Setup T     = useD ? TD : useC ? TC : S
+bool sigL   = useD ? E.evDBuy : useC ? E.evCBuy : E.evBuy
+bool sigS   = useD ? E.evDSell : useC ? E.evCSell : E.evSell
+bool mTP1   = useD ? E.evDTP1 : useC ? E.evCTP1 : E.evTP1
+bool mEarly = useD ? E.evDEarly : useC ? E.evCEarly : E.evEarly
+bool mDone  = useD ? E.evDDone : useC ? E.evCDone : E.evDone
+string mTag = useD ? "AMD" : useC ? "C" : "A"
 bool inDates = time >= fromDate and time <= toDate
 
 var array<float> stRisk = array.new<float>()   // planned risk (account currency) per position, in entry order

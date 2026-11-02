@@ -17,6 +17,8 @@ SRC = ROOT / "MEKA CRT PRO — Indicator.pine"
 OUT = ROOT / "MEKA CRT PRO — Strategy.pine"
 LAYER = ROOT / "tools" / "strategy_layer.pine"
 
+STRIP_FNS = ("f_blkDashCompact", "f_blkDiag", "f_blkZonesDraw")
+
 STRATEGY_HEADER = (
     'strategy("MEKA CRT PRO — Strategy", shorttitle = "MEKA CRT S", overlay = true, '
     "initial_capital = 100000, currency = currency.USD, "
@@ -42,6 +44,11 @@ def main() -> int:
 
     out = header.sub("// #HEADER_BEGIN\n" + STRATEGY_HEADER + "\n// #HEADER_END", src)
     out = alerts.sub("// (alertcondition() block removed in the strategy build — alert() calls still work)\n", out)
+    # display-only code is not needed by the Strategy Tester; dropping it keeps the strategy
+    # comfortably under TradingView's compiled-token limit
+    for fn in STRIP_FNS:
+        out = re.sub(r"\n" + fn + r"\(bool go\) =>\n(?:(?:    [^\n]*)?\n)+?(?=\S)", "\n", out)
+        out = re.sub(r"\n" + fn + r"\([^\n]*\)\n", "\n", out)
     out = out.replace("// #STRATEGY_HOOK", LAYER.read_text(encoding="utf-8").rstrip() + "\n")
     out = out.replace(
         "//  MEKA CRT PRO — Candle Range Theory trading assistant (Pine Script v6)",
