@@ -53,8 +53,8 @@ bool   iSessionOnly = input.bool(true, "Entries only inside enabled sessions", g
 
 string G4 = "04 · Entry Models"
 string iMode     = input.string("Both", "Trade mode", options = ["Both", "Continuation only", "Confirmed reversals only"], group = G4)
-bool   iLongs    = input.bool(true, "Longs", inline = "dir", group = G4)
-bool   iShorts   = input.bool(true, "Shorts", inline = "dir", group = G4)
+bool   iLongs    = input.bool(true, "Allow longs", group = G4)
+bool   iShorts   = input.bool(true, "Allow shorts", group = G4)
 bool   iUsePB    = input.bool(true, "Trend pullback (FVG / OB / level / HTF FVG)", group = G4)
 bool   iUseEmaPB = input.bool(true, "Include EMA pullbacks (weakest location)", group = G4)
 string iTrig     = input.string("MSS or displacement", "Continuation trigger", options = ["MSS only", "MSS or displacement", "Any confirmed rejection"], group = G4)
@@ -904,8 +904,8 @@ f_maintain(array<Zone> zs) =>
                         if high >= z.top
                             z.full := true
             if dead
-                f_delBox(z.bx)
-                zs.remove(i)
+                Zone gone = zs.remove(i)
+                f_delBox(gone.bx)
             else if not na(z.bx)
                 box.set_right(z.bx, bar_index + 3)
                 if z.full or z.used or z.touches > 1
@@ -1529,13 +1529,12 @@ f_updTrade(Draw d, int xr) =>
     label.set_text(d.x1, "TP1 " + f_px(T.tp1) + (T.hit1 ? " ✓" : ""))
     label.set_text(d.x2, "TP2 " + f_px(T.tp2) + (T.hit2 ? " ✓" : ""))
     label.set_text(d.x3, "TP3 " + f_px(T.tp3) + (T.hit3 ? " ✓" : ""))
-    if T.beOn
-        if na(d.la)
-            d.la := line.new(bar_index + 1, T.stop, xr, T.stop, color = C_GOLD, width = 1, style = line.style_dashed)
-            d.xa := label.new(xr, T.stop, "ACTIVE SL (BE) " + f_px(T.stop), style = label.style_label_left, color = C_GOLD, textcolor = #000000, size = size.tiny)
-        else
-            line.set_x2(d.la, xr)
-            label.set_x(d.xa, xr)
+    if T.beOn and na(d.la)
+        d.la := line.new(bar_index + 1, T.stop, xr, T.stop, color = C_GOLD, width = 1, style = line.style_dashed)
+        d.xa := label.new(xr, T.stop, "ACTIVE SL (BE) " + f_px(T.stop), style = label.style_label_left, color = C_GOLD, textcolor = #000000, size = size.tiny)
+    if T.beOn and not na(d.la)
+        line.set_x2(d.la, xr)
+        label.set_x(d.xa, xr)
 
 if iShowTrades and (buySig or sellSig)
     cur := f_mkTrade()

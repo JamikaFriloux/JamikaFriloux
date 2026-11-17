@@ -55,8 +55,8 @@ bool   iSessionOnly = input.bool(true, "Entries only inside enabled sessions", g
 
 string G4 = "04 · Entry Models"
 string iMode     = input.string("Both", "Trade mode", options = ["Both", "Continuation only", "Confirmed reversals only"], group = G4)
-bool   iLongs    = input.bool(true, "Longs", inline = "dir", group = G4)
-bool   iShorts   = input.bool(true, "Shorts", inline = "dir", group = G4)
+bool   iLongs    = input.bool(true, "Allow longs", group = G4)
+bool   iShorts   = input.bool(true, "Allow shorts", group = G4)
 bool   iUsePB    = input.bool(true, "Trend pullback (FVG / OB / level / HTF FVG)", group = G4)
 bool   iUseEmaPB = input.bool(true, "Include EMA pullbacks (weakest location)", group = G4)
 string iTrig     = input.string("MSS or displacement", "Continuation trigger", options = ["MSS only", "MSS or displacement", "Any confirmed rejection"], group = G4)
@@ -868,8 +868,8 @@ f_maintain(array<Zone> zs) =>
                         if high >= z.top
                             z.full := true
             if dead
-                f_delBox(z.bx)
-                zs.remove(i)
+                Zone gone = zs.remove(i)
+                f_delBox(gone.bx)
             else if not na(z.bx)
                 box.set_right(z.bx, bar_index + 3)
                 if z.full or z.used or z.touches > 1
