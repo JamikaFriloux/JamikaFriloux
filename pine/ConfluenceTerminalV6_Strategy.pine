@@ -1,0 +1,1485 @@
+//@version=6
+strategy("CONFLUENCE TERMINAL V6 | NASDAQ FUTURES — BACKTEST", shorttitle = "CT V6 BT", overlay = true, initial_capital = 50000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, commission_type = strategy.commission.cash_per_contract, commission_value = 2.25, slippage = 1, process_orders_on_close = false, calc_on_every_tick = false, margin_long = 0, margin_short = 0, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
+
+// =====================================================================================
+// BACKTEST companion of CONFLUENCE TERMINAL V6. Sections §0–§12 are IDENTICAL to the indicator
+// (same inputs, engines, gates, scoring and arbitration). Only execution/accounting differs:
+//  · signal on bar close → market order fills at NEXT bar open (realistic, no same-bar fill)
+//  · stop / targets are broker-emulated (strategy.exit), BE moves stop from the next bar
+//  · commission & slippage: set in Properties (defaults: $2.25/contract/side, 1 tick slippage).
+//    For MNQ use ≈ $0.62/contract/side.
+// =====================================================================================
+
+// ───────────────────────────── §0 CONSTANTS ─────────────────────────────
+string TZ     = "America/New_York"
+color  C_BULL = #26A69A
+color  C_BEAR = #EF5350
+color  C_NEU  = #8A8F98
+color  C_GOLD = #F6C343
+color  C_TXT  = #D1D4DC
+color  C_HEAD = #2A2E39
+color  C_BG   = #131722
+color  C_BSL  = #4FC3F7
+color  C_SSL  = #FF8A65
+
+// ───────────────────────────── §1 INPUTS ─────────────────────────────
+string G1 = "01 · Instrument & Risk"
+int    iContracts  = input.int(1, "Contracts", minval = 1, maxval = 50, group = G1)
+float  iMaxRiskUsd = input.float(1200.0, "Max $ risk per trade (all contracts)", minval = 1.0, group = G1)
+bool   iRejectUsd  = input.bool(true, "Reject trades above max $ risk", group = G1)
+bool   iUseAcct    = input.bool(false, "Size suggestion also uses account %", group = G1)
+float  iAcct       = input.float(50000.0, "Account size ($)", minval = 0.0, group = G1)
+float  iAcctPct    = input.float(1.0, "Account risk %", minval = 0.05, maxval = 10.0, step = 0.05, group = G1)
+
+string G2 = "02 · Context & Structure"
+int    iHtfLen     = input.int(3, "HTF swing length (4H / 1H / 15M)", minval = 2, maxval = 10, group = G2)
+int    iEmaLen     = input.int(20, "Trend EMA length", minval = 5, maxval = 200, group = G2)
+int    iIntLen     = input.int(2, "Internal swing length (chart)", minval = 1, maxval = 6, group = G2)
+int    iExtLen     = input.int(5, "External swing length (chart)", minval = 3, maxval = 20, group = G2)
+float  iDispBody   = input.float(0.6, "Displacement · min body (× ATR)", minval = 0.2, maxval = 3.0, step = 0.05, group = G2)
+float  iDispRatio  = input.float(0.55, "Displacement · min body / range", minval = 0.3, maxval = 0.95, step = 0.05, group = G2)
+bool   iExtReqDisp = input.bool(false, "External BOS requires displacement close", group = G2)
+bool   iAnalysisSignals = input.bool(false, "Allow entries on 15M / 1H charts", group = G2)
+
+string G3 = "03 · Sessions & ORB (New York time)"
+bool   iUseAM    = input.bool(true, "NY AM", inline = "am", group = G3)
+string iSessAM   = input.session("0930-1200", "", inline = "am", group = G3)
+bool   iUsePM    = input.bool(true, "NY PM", inline = "pm", group = G3)
+string iSessPM   = input.session("1330-1600", "", inline = "pm", group = G3)
+bool   iUseLon   = input.bool(false, "London", inline = "ln", group = G3)
+string iSessLon  = input.session("0300-0600", "", inline = "ln", group = G3)
+bool   iUseAsia  = input.bool(false, "Asia", inline = "as", group = G3)
+string iSessAsia = input.session("2000-2359", "", inline = "as", group = G3)
+int    iOrbMin   = input.int(15, "Opening range (minutes)", options = [5, 15, 30], group = G3)
+bool   iSessionOnly = input.bool(true, "Entries only inside enabled sessions", group = G3)
+
+string G4 = "04 · Entry Models"
+string iMode     = input.string("Both", "Trade mode", options = ["Both", "Continuation only", "Confirmed reversals only"], group = G4)
+bool   iLongs    = input.bool(true, "Longs", inline = "dir", group = G4)
+bool   iShorts   = input.bool(true, "Shorts", inline = "dir", group = G4)
+bool   iUsePB    = input.bool(true, "Trend pullback (FVG / OB / level / HTF FVG)", group = G4)
+bool   iUseEmaPB = input.bool(true, "Include EMA pullbacks (weakest location)", group = G4)
+string iTrig     = input.string("MSS or displacement", "Continuation trigger", options = ["MSS only", "MSS or displacement", "Any confirmed rejection"], group = G4)
+int    iPbWindow = input.int(12, "Pullback trigger window (bars)", minval = 2, maxval = 60, group = G4)
+bool   iUseRev   = input.bool(true, "Sweep / CRT engine (reversals + continuation sweeps)", group = G4)
+string iCrtTf    = input.string("15", "CRT reference candle TF", options = ["15", "60"], group = G4)
+int    iRevAge   = input.int(30, "Sweep sequence max age (bars)", minval = 5, maxval = 150, group = G4)
+bool   iUseORB   = input.bool(true, "ORB breakout", group = G4)
+bool   iUseRange = input.bool(true, "Range expansion (consolidation break)", group = G4)
+int    iCompLen  = input.int(12, "Consolidation lookback (bars)", minval = 5, maxval = 60, group = G4)
+float  iCompAtr  = input.float(2.5, "Consolidation max height (× ATR)", minval = 1.0, maxval = 6.0, step = 0.25, group = G4)
+int    iMinScore = input.int(60, "Min score · continuation / breakout", minval = 0, maxval = 100, group = G4)
+int    iCooldown = input.int(3, "Cooldown after entry (bars)", minval = 0, maxval = 50, group = G4)
+
+string G5 = "05 · Countertrend Reversal Gate"
+int    iRevMinScore  = input.int(70, "Min score · reversal", minval = 0, maxval = 100, group = G5)
+bool   iRevMajorOnly = input.bool(true, "Reversal requires MAJOR liquidity sweep", group = G5)
+bool   iRevReq15     = input.bool(true, "Countertrend requires 15M structural improvement", group = G5)
+bool   iRevRetestAll = input.bool(false, "Always require retest entry for countertrend", group = G5, tooltip = "When off, a retest is still mandatory whenever the 1H trend is STRONG against the trade.")
+bool   iBlockFull    = input.bool(true, "Block countertrend when 4H + 1H + 15M are all strongly opposed", group = G5)
+float  iRevRoom      = input.float(1.5, "Countertrend min room to opposing liquidity (R)", minval = 0.5, maxval = 5.0, step = 0.25, group = G5)
+string iRevStop      = input.string("Sweep extreme", "Reversal stop on retest entries", options = ["Sweep extreme", "Zone invalidation"], group = G5)
+
+string G6 = "06 · FVG / Zones / Liquidity"
+float  iFvgMin   = input.float(0.15, "FVG min size (× ATR)", minval = 0.0, maxval = 2.0, step = 0.05, group = G6)
+bool   iFvgDisp  = input.bool(true, "FVG requires displacement middle candle", group = G6)
+int    iZoneAge  = input.int(150, "Zone expiry (bars)", minval = 10, maxval = 1000, group = G6)
+int    iZoneMax  = input.int(8, "Max zones per direction (each type)", minval = 1, maxval = 30, group = G6)
+int    iObLook   = input.int(10, "Order-block lookback (bars)", minval = 2, maxval = 30, group = G6)
+float  iObMaxAtr = input.float(2.5, "Max order-block height (× ATR)", minval = 0.5, maxval = 8.0, step = 0.25, group = G6)
+float  iEqTol    = input.float(0.10, "Equal highs/lows tolerance (× ATR)", minval = 0.0, maxval = 1.0, step = 0.01, group = G6)
+int    iFailBars = input.int(3, "Failed-breakout window (bars)", minval = 1, maxval = 10, group = G6)
+
+string G7 = "07 · Stops, Targets, Management"
+int    iBufTicks  = input.int(4, "Stop buffer (ticks)", minval = 0, maxval = 40, group = G7)
+float  iBufAtr    = input.float(0.05, "Stop buffer (× ATR) — larger of the two", minval = 0.0, maxval = 1.0, step = 0.01, group = G7)
+float  iMinStop   = input.float(4.0, "Min stop distance (points)", minval = 0.25, step = 0.25, group = G7)
+float  iMaxStop1  = input.float(30.0, "Max stop · 1M–3M charts (points)", minval = 1.0, step = 0.25, group = G7)
+float  iMaxStop5  = input.float(60.0, "Max stop · 4M–5M charts (points)", minval = 1.0, step = 0.25, group = G7)
+float  iMaxStopHi = input.float(120.0, "Max stop · 15M+ charts (points)", minval = 1.0, step = 0.25, group = G7)
+float  iMaxStopAtr = input.float(3.0, "Max stop (× ATR)", minval = 0.5, maxval = 10.0, step = 0.25, group = G7)
+float  iRR1       = input.float(1.0, "TP1 (R)", minval = 0.25, step = 0.25, group = G7)
+float  iRR2       = input.float(2.0, "TP2 (R)", minval = 0.5, step = 0.25, group = G7)
+float  iRR3       = input.float(3.0, "TP3 (R)", minval = 0.75, step = 0.25, group = G7)
+string iTgtMode   = input.string("Fixed R", "Target mode", options = ["Fixed R", "Liquidity-aware"], group = G7)
+float  iMinRoom   = input.float(1.0, "Min room to opposing liquidity (R)", minval = 0.25, maxval = 5.0, step = 0.25, group = G7)
+float  iChaseAtr  = input.float(2.5, "No-chase: max distance from EMA (× ATR)", minval = 0.5, maxval = 10.0, step = 0.25, group = G7)
+bool   iBE        = input.bool(true, "Move stop to break-even after TP1 (from next bar)", group = G7)
+int    iBETicks   = input.int(1, "Break-even offset (ticks)", minval = 0, maxval = 20, group = G7)
+string iAmbig     = input.string("Stop first (conservative)", "Same-bar stop + target", options = ["Stop first (conservative)", "Targets first"], group = G7)
+float  iP1        = input.float(33.0, "Scale-out % at TP1", minval = 0.0, maxval = 100.0, group = G7)
+float  iP2        = input.float(33.0, "Scale-out % at TP2", minval = 0.0, maxval = 100.0, group = G7)
+
+string G8 = "08 · Visuals & Backtest"
+bool   iShowFVG  = input.bool(false, "FVG zones", group = G8)
+bool   iShowOB   = input.bool(false, "Order blocks", group = G8)
+bool   iShowLiq  = input.bool(false, "Major liquidity levels", group = G8)
+int    iLblOff   = input.int(4, "Label offset (bars)", minval = 1, maxval = 20, group = G8)
+bool   iScaleOut = input.bool(true, "Scale out at TP1 / TP2 / TP3 (needs ≥ 2 contracts)", group = G8)
+string iSingleTP = input.string("TP2", "Single target when not scaling out", options = ["TP1", "TP2", "TP3"], group = G8)
+bool   iShowStats = input.bool(true, "Performance table", group = G8)
+
+// ───────────────────────────── §2 TYPES ─────────────────────────────
+type Zone
+    int   dir
+    float top
+    float bot
+    int   left
+    int   born
+    int   kind          // 0 FVG · 1 order block · 2 broken structure level · 3 ORB level
+    float strength
+    bool  overlap = false
+    int   touches = 0
+    bool  inside  = false
+    bool  full    = false
+    bool  used    = false
+    box   bx
+
+type Pool
+    float  price
+    int    side         // +1 buy-side (above) · -1 sell-side (below)
+    string name
+    bool   major
+    int    src          // 0 swing · 1 session/day · 2 equal H/L · 3 CRT ref · 4 ORB · 5 1H swing
+    int    born
+    int    added
+    line   ln
+    label  lb
+
+type PB
+    bool   active = false
+    int    bar    = 0
+    float  top
+    float  bot
+    float  ext
+    int    prio   = 0
+    string kind   = ""
+    bool   swept  = false
+    Zone   z
+
+type RV
+    int    stage  = 0      // 0 idle · 1 swept + reclaimed · 2 internal MSS confirmed
+    float  lvl
+    float  ext
+    int    bar    = 0
+    bool   major  = false
+    bool   crt    = false
+    string src    = ""
+    bool   disp   = false
+    int    mssBar = 0
+    float  zTop
+    float  zBot
+    int    tries  = 0
+
+type Cand
+    bool   ok
+    int    dir
+    string model
+    int    typ             // 1 trend continuation · 2 countertrend reversal · 3 breakout/retest · 4 range reversal
+    int    src             // 1 pullback · 2 sweep/CRT · 3 ORB · 4 range expansion
+    float  score
+    float  entry
+    float  stop
+    float  risk
+    float  t1
+    float  t2
+    float  t3
+    float  room
+    string why
+    string notes
+
+type Trade
+    bool   active  = false
+    int    dir     = 0
+    string model   = ""
+    int    typ     = 0
+    float  score   = 0.0
+    float  entry
+    float  initStop
+    float  stop
+    float  risk
+    float  tp1
+    float  tp2
+    float  tp3
+    bool   hit1    = false
+    bool   hit2    = false
+    bool   hit3    = false
+    bool   beOn    = false
+    int    entryBar = 0
+    int    exitBar  = -1
+    float  exitPx
+    float  realR
+    string outcome = "NO TRADE YET"
+    string notes   = ""
+
+
+// ───────────────────────────── §3 PURE HELPERS ─────────────────────────────
+f_px(float p) => na(p) ? "—" : str.tostring(p, format.mintick)
+f_usd(float v) => na(v) ? "—" : "$" + str.tostring(v, "#,##0")
+f_floorTick(float p) => math.floor(p / syminfo.mintick) * syminfo.mintick
+f_ceilTick(float p) => math.ceil(p / syminfo.mintick) * syminfo.mintick
+f_biasTxt(int b) => b == 2 ? "STRONG BULL" : b == 1 ? "BULLISH" : b == -1 ? "BEARISH" : b == -2 ? "STRONG BEAR" : "NEUTRAL / RANGE"
+f_biasCol(int b) => b > 0 ? C_BULL : b < 0 ? C_BEAR : C_NEU
+f_typeTxt(int t) => t == 1 ? "TREND CONTINUATION" : t == 2 ? "COUNTERTREND REVERSAL" : t == 3 ? "BREAKOUT / RETEST" : t == 4 ? "RANGE REVERSAL" : "—"
+f_touch(int d, float top, float bot) => d == 1 ? (low <= top and close >= bot) : (high >= bot and close <= top)
+f_nearer(float best, float lvl, int d, float e) => na(lvl) or (lvl - e) * d <= syminfo.mintick ? best : na(best) ? lvl : (d == 1 ? math.min(best, lvl) : math.max(best, lvl))
+
+f_delBox(box b) =>
+    if not na(b)
+        box.delete(b)
+f_delLine(line l) =>
+    if not na(l)
+        line.delete(l)
+f_delLabel(label l) =>
+    if not na(l)
+        label.delete(l)
+
+
+// Market structure: confirmed pivots, close-confirmed breaks, no backdating.
+// Returns [trend, event, lastSwingHigh, lastSwingLow, brokenLevel, brokenSwingBar]
+// event: +1 bullish BOS · +2 bullish CHoCH/MSS · -1 bearish BOS · -2 bearish CHoCH/MSS
+f_struct(int len, bool reqDisp, bool dU, bool dD) =>
+    float ph = ta.pivothigh(high, len, len)
+    float pl = ta.pivotlow(low, len, len)
+    var float sH  = na
+    var float sL  = na
+    var int   sHb = na
+    var int   sLb = na
+    var bool  sHx = true
+    var bool  sLx = true
+    var int   tr  = 0
+    if not na(ph)
+        sH  := ph
+        sHb := bar_index - len
+        sHx := false
+    if not na(pl)
+        sL  := pl
+        sLb := bar_index - len
+        sLx := false
+    int   ev = 0
+    float lv = na
+    int   fb = na
+    if barstate.isconfirmed
+        if not sHx and not na(sH) and close > sH and (not reqDisp or dU)
+            ev  := tr == 1 ? 1 : 2
+            lv  := sH
+            fb  := sHb
+            tr  := 1
+            sHx := true
+        else if not sLx and not na(sL) and close < sL and (not reqDisp or dD)
+            ev  := tr == -1 ? -1 : -2
+            lv  := sL
+            fb  := sLb
+            tr  := -1
+            sLx := true
+    [tr, ev, sH, sL, lv, fb]
+
+// HTF context packet, evaluated inside request.security. Every output is offset [1]
+// so the chart only ever sees the last COMPLETED higher-timeframe bar.
+f_htf(int len, int emaLen) =>
+    float a = ta.atr(14)
+    float e = ta.ema(close, emaLen)
+    [tr, ev, sH, sL, lv, fb] = f_struct(len, false, false, false)
+    var int lastEv    = 0
+    var int lastEvBar = 0
+    if ev != 0
+        lastEv    := ev
+        lastEvBar := bar_index
+    int   ePos  = close > e ? 1 : close < e ? -1 : 0
+    float slope = e - e[3]
+    int   eSl   = slope > a * 0.05 ? 1 : slope < -a * 0.05 ? -1 : 0
+    int   bias  = tr == 1 ? (ePos == 1 and eSl == 1 ? 2 : 1) : tr == -1 ? (ePos == -1 and eSl == -1 ? -2 : -1) : (ePos == eSl ? ePos : 0)
+    bool  pb    = tr != 0 and ePos == -tr
+    int   exDir = math.abs(close - e) > a * 2.5 ? (close > e ? 1 : -1) : 0
+    float pd    = not na(sH) and not na(sL) and sH > sL ? math.max(0.0, math.min(1.0, (close - sL) / (sH - sL))) : 0.5
+    int   age   = bar_index - lastEvBar
+    [tr[1], bias[1], pb[1], exDir[1], sH[1], sL[1], lastEv[1], age[1], e[1], a[1], pd[1], close[1]]
+
+// Most recent unmitigated HTF FVG per direction (invalidated by a close beyond the far edge).
+f_htfFvg(float minAtr) =>
+    float a = ta.atr(14)
+    var float bT = na
+    var float bB = na
+    var float sT = na
+    var float sB = na
+    if low > high[2] and low - high[2] >= a * minAtr
+        bT := low
+        bB := high[2]
+    if high < low[2] and low[2] - high >= a * minAtr
+        sT := low[2]
+        sB := high
+    if not na(bB) and close < bB
+        bT := na
+        bB := na
+    if not na(sT) and close > sT
+        sT := na
+        sB := na
+    [bT[1], bB[1], sT[1], sB[1]]
+
+// ───────────────────────────── §4 INSTRUMENT & CORE SERIES ─────────────────────────────
+bool  isNQ      = syminfo.root == "NQ"
+bool  isMNQ     = syminfo.root == "MNQ"
+bool  supported = isNQ or isMNQ
+float pv        = isNQ ? 20.0 : isMNQ ? 2.0 : syminfo.pointvalue
+float tickSz    = syminfo.mintick
+int   tfSec     = timeframe.in_seconds()
+bool  execTF    = timeframe.isintraday and tfSec <= 300
+bool  signalTF  = execTF or (iAnalysisSignals and timeframe.isintraday and tfSec <= 3600)
+float maxStopPts = tfSec <= 180 ? iMaxStop1 : tfSec <= 300 ? iMaxStop5 : iMaxStopHi
+string tfTxt    = tfSec < 3600 ? str.tostring(tfSec / 60.0, "#") + "M" : str.tostring(tfSec / 3600.0, "#") + "H"
+
+float atr   = ta.atr(14)
+float ema   = ta.ema(close, iEmaLen)
+float rng   = math.max(high - low, syminfo.mintick)
+float body  = math.abs(close - open)
+bool  dispUp = close > open and body >= atr * iDispBody and body >= rng * iDispRatio
+bool  dispDn = close < open and body >= atr * iDispBody and body >= rng * iDispRatio
+bool  closed = barstate.isconfirmed
+float buf    = math.max(iBufTicks * syminfo.mintick, atr * iBufAtr)
+float w1 = math.min(iP1, 100.0) / 100.0
+float w2 = math.min(iP2, 100.0 - math.min(iP1, 100.0)) / 100.0
+float w3 = math.max(0.0, 1.0 - w1 - w2)
+
+// ───────────────────────────── §5 HIGHER-TIMEFRAME CONTEXT (non-repainting) ─────────────────────────────
+[tr4, b4r, pb4, ex4, sh4, sl4, ev4, ag4, e4, a4, pd4, c4] = request.security(syminfo.tickerid, "240", f_htf(iHtfLen, iEmaLen), lookahead = barmerge.lookahead_on)
+[tr1, b1r, pb1, ex1, sh1, sl1, ev1, ag1, e1, a1, pd1, c1] = request.security(syminfo.tickerid, "60", f_htf(iHtfLen, iEmaLen), lookahead = barmerge.lookahead_on)
+[tr15r, b15r, pb15r, ex15r, sh15r, sl15r, ev15r, ag15r, e15r, a15r, pd15r, c15r] = request.security(syminfo.tickerid, "15", f_htf(iHtfLen, iEmaLen), lookahead = barmerge.lookahead_on)
+// On charts above 15M a 15M request would be a lower-timeframe request; use the chart's own
+// confirmed structure instead and label it honestly on the dashboard.
+[trC, bC, pbC, exC, shC, slC, evC, agC, eC, aC, pdC, cC] = f_htf(iHtfLen, iEmaLen)
+bool  use15 = tfSec <= 900
+int   b4   = nz(b4r)
+int   b1   = nz(b1r)
+int   b15  = use15 ? nz(b15r) : nz(bC)
+bool  pb15 = use15 ? pb15r : pbC
+int   ev15 = use15 ? nz(ev15r) : nz(evC)
+int   ag15 = use15 ? nz(ag15r, 999) : nz(agC, 999)
+float e15  = use15 ? e15r : eC
+float pd15 = use15 ? nz(pd15r, 0.5) : nz(pdC, 0.5)
+float c15  = use15 ? c15r : cC
+int   ex1d = nz(ex1)
+
+[pdh, pdl, dTime] = request.security(syminfo.tickerid, "D", [high[1], low[1], time], lookahead = barmerge.lookahead_on)
+[crtH, crtL, crtT] = request.security(syminfo.tickerid, iCrtTf, [high[1], low[1], time[1]], lookahead = barmerge.lookahead_on)
+bool crtAvail = tfSec < timeframe.in_seconds(iCrtTf)
+
+[fvBT15r, fvBB15r, fvST15r, fvSB15r] = request.security(syminfo.tickerid, "15", f_htfFvg(iFvgMin), lookahead = barmerge.lookahead_on)
+[fvBT60r, fvBB60r, fvST60r, fvSB60r] = request.security(syminfo.tickerid, "60", f_htfFvg(iFvgMin), lookahead = barmerge.lookahead_on)
+// Suppress HTF zones that duplicate (or are below) the chart timeframe.
+float fvBT15 = tfSec < 900 ? fvBT15r : na
+float fvBB15 = tfSec < 900 ? fvBB15r : na
+float fvST15 = tfSec < 900 ? fvST15r : na
+float fvSB15 = tfSec < 900 ? fvSB15r : na
+float fvBT60 = tfSec < 3600 ? fvBT60r : na
+float fvBB60 = tfSec < 3600 ? fvBB60r : na
+float fvST60 = tfSec < 3600 ? fvST60r : na
+float fvSB60 = tfSec < 3600 ? fvSB60r : na
+
+// Directional context: 1H is the primary filter, 15M confirms, 4H only breaks ties.
+int  ctx = 0
+bool ctxRetrace = false
+if b1 >= 1 and b15 >= 0
+    ctx := 1
+else if b1 <= -1 and b15 <= 0
+    ctx := -1
+else if b1 == 0 and b15 >= 1 and b4 >= 0
+    ctx := 1
+else if b1 == 0 and b15 <= -1 and b4 <= 0
+    ctx := -1
+else if b1 == 2 and b15 == -1
+    ctx := 1
+    ctxRetrace := true
+else if b1 == -2 and b15 == 1
+    ctx := -1
+    ctxRetrace := true
+bool ctxStrong = ctx != 0 and math.abs(b1) == 2 and b15 * ctx > 0
+bool fullBear  = b4 <= -1 and b1 == -2 and b15 == -2
+bool fullBull  = b4 >= 1 and b1 == 2 and b15 == 2
+bool imp15L    = (ev15 > 0 and ag15 <= 12) or (not na(e15) and c15 > e15)
+bool imp15S    = (ev15 < 0 and ag15 <= 12) or (not na(e15) and c15 < e15)
+
+// ───────────────────────────── §6 CHART STRUCTURE ─────────────────────────────
+[trI, evI, shI, slI, lvI, fbI] = f_struct(iIntLen, false, dispUp, dispDn)
+[trE, evE, shE, slE, lvE, fbE] = f_struct(iExtLen, iExtReqDisp, dispUp, dispDn)
+float pivH = ta.pivothigh(high, iExtLen, iExtLen)
+float pivL = ta.pivotlow(low, iExtLen, iExtLen)
+float cHi  = ta.highest(high, iCompLen)[1]
+float cLo  = ta.lowest(low, iCompLen)[1]
+bool  compressed = not na(cHi) and (cHi - cLo) <= iCompAtr * nz(atr[1], atr)
+
+var string lastStructTxt = "—"
+var int    lastStructBar = 0
+if evE != 0
+    lastStructTxt := (math.abs(evE) == 2 ? "CHoCH" : "BOS") + (evE > 0 ? " ↑" : " ↓") + " EXT"
+    lastStructBar := bar_index
+else if math.abs(evI) == 2
+    lastStructTxt := "MSS" + (evI > 0 ? " ↑" : " ↓") + " INT"
+    lastStructBar := bar_index
+
+// ───────────────────────────── §7 SESSIONS & OPENING RANGE ─────────────────────────────
+bool inAM   = not na(time(timeframe.period, iSessAM, TZ))
+bool inPM   = not na(time(timeframe.period, iSessPM, TZ))
+bool inLon  = not na(time(timeframe.period, iSessLon, TZ))
+bool inAsia = not na(time(timeframe.period, iSessAsia, TZ))
+int  sid    = iUseAM and inAM ? 0 : iUsePM and inPM ? 1 : iUseLon and inLon ? 2 : iUseAsia and inAsia ? 3 : -1
+int  sidx   = math.max(sid, 0)
+string sessName = inAM ? "NY AM" : inPM ? "NY PM" : inLon ? "LONDON" : inAsia ? "ASIA" : "OFF-SESSION"
+
+// Lower-timeframe intrabars are only needed when the ORB is shorter than the chart bar (e.g. 5-min ORB on 15M).
+string orbLtf = tfSec > iOrbMin * 60 ? "1" : timeframe.period
+array<float> ltfH = request.security_lower_tf(syminfo.tickerid, orbLtf, high)
+array<float> ltfL = request.security_lower_tf(syminfo.tickerid, orbLtf, low)
+array<int>   ltfT = request.security_lower_tf(syminfo.tickerid, orbLtf, time)
+
+var array<float> orH    = array.new_float(4, na)
+var array<float> orL    = array.new_float(4, na)
+var array<int>   orSt   = array.new_int(4, 0)
+var array<bool>  orWas  = array.new_bool(4, false)
+var array<bool>  orPool = array.new_bool(4, false)
+var array<int>   orDir  = array.new_int(4, 0)
+var array<bool>  orUsedL = array.new_bool(4, false)
+var array<bool>  orUsedS = array.new_bool(4, false)
+array<bool> sessOn = array.from(iUseAM and inAM, iUsePM and inPM, iUseLon and inLon, iUseAsia and inAsia)
+bool orbTfOK = tfSec <= 900
+int  orbMs   = iOrbMin * 60000
+for i = 0 to 3
+    bool ins = sessOn.get(i)
+    if ins and not orWas.get(i)
+        orSt.set(i, time)
+        orH.set(i, na)
+        orL.set(i, na)
+        orPool.set(i, false)
+        orDir.set(i, 0)
+        orUsedL.set(i, false)
+        orUsedS.set(i, false)
+    if ins and orbTfOK
+        int en = orSt.get(i) + orbMs
+        if time_close <= en
+            float h0 = orH.get(i)
+            float l0 = orL.get(i)
+            orH.set(i, na(h0) ? high : math.max(h0, high))
+            orL.set(i, na(l0) ? low : math.min(l0, low))
+        else if time < en and ltfT.size() > 0
+            for k = 0 to ltfT.size() - 1
+                if ltfT.get(k) < en
+                    float h1 = orH.get(i)
+                    float l1 = orL.get(i)
+                    orH.set(i, na(h1) ? ltfH.get(k) : math.max(h1, ltfH.get(k)))
+                    orL.set(i, na(l1) ? ltfL.get(k) : math.min(l1, ltfL.get(k)))
+    orWas.set(i, ins)
+
+bool  orReady = sid >= 0 and orbTfOK and time >= orSt.get(sidx) + orbMs and not na(orH.get(sidx))
+float orHi  = orReady ? orH.get(sidx) : na
+float orLo  = orReady ? orL.get(sidx) : na
+float orMid = orReady ? (orHi + orLo) / 2 : na
+bool  orbUpNow = closed and orReady and close > orHi and orDir.get(sidx) != 1
+bool  orbDnNow = closed and orReady and close < orLo and orDir.get(sidx) != -1
+
+// ───────────────────────────── §8 LIQUIDITY ENGINE ─────────────────────────────
+var array<Pool> pools = array.new<Pool>()
+
+f_killPool(Pool p) =>
+    f_delLine(p.ln)
+    f_delLabel(p.lb)
+
+f_addPool(float price, int side, string name, bool major, int src, int bornBar, bool unique) =>
+    if not na(price)
+        if unique and pools.size() > 0
+            for i = pools.size() - 1 to 0
+                Pool q = pools.get(i)
+                if q.name == name
+                    f_killPool(q)
+                    pools.remove(i)
+        Pool np = Pool.new(price, side, name, major, src, bornBar, bar_index, na, na)
+        if iShowLiq and major and src != 3
+            color c = side == 1 ? C_BSL : C_SSL
+            np.ln := line.new(bornBar, price, bar_index + iLblOff, price, color = color.new(c, 35), style = line.style_dotted, width = 1)
+            np.lb := label.new(bar_index + iLblOff, price, name, style = label.style_none, textcolor = color.new(c, 10), size = size.tiny)
+        pools.push(np)
+        if pools.size() > 40
+            int rm = 0
+            for j = 0 to pools.size() - 1
+                if not pools.get(j).major
+                    rm := j
+                    break
+            Pool old = pools.remove(rm)
+            f_killPool(old)
+
+// Session highs/lows → liquidity at session end
+var array<float> sxH   = array.new_float(4, na)
+var array<float> sxL   = array.new_float(4, na)
+var array<int>   sxB   = array.new_int(4, 0)
+var array<bool>  sxWas = array.new_bool(4, false)
+array<bool>   sxIn  = array.from(inAM, inPM, inLon, inAsia)
+array<string> sxNm  = array.from("NY AM", "NY PM", "LDN", "ASIA")
+for i = 0 to 3
+    bool ins = sxIn.get(i)
+    if ins and not sxWas.get(i)
+        sxH.set(i, high)
+        sxL.set(i, low)
+        sxB.set(i, bar_index)
+    else if ins
+        sxH.set(i, math.max(sxH.get(i), high))
+        sxL.set(i, math.min(sxL.get(i), low))
+    if not ins and sxWas.get(i)
+        f_addPool(sxH.get(i), 1, sxNm.get(i) + " H", true, 1, sxB.get(i), true)
+        f_addPool(sxL.get(i), -1, sxNm.get(i) + " L", true, 1, sxB.get(i), true)
+    sxWas.set(i, ins)
+
+if dTime != dTime[1]
+    f_addPool(pdh, 1, "PDH", true, 1, bar_index, true)
+    f_addPool(pdl, -1, "PDL", true, 1, bar_index, true)
+if not na(sh1) and sh1 != sh1[1]
+    f_addPool(sh1, 1, "1H H", true, 5, bar_index, true)
+if not na(sl1) and sl1 != sl1[1]
+    f_addPool(sl1, -1, "1H L", true, 5, bar_index, true)
+if crtAvail and crtT != crtT[1]
+    f_addPool(crtH, 1, "CRT H", true, 3, bar_index, true)
+    f_addPool(crtL, -1, "CRT L", true, 3, bar_index, true)
+if orReady and not orPool.get(sidx)
+    f_addPool(orHi, 1, "ORB H", true, 4, bar_index, true)
+    f_addPool(orLo, -1, "ORB L", true, 4, bar_index, true)
+    orPool.set(sidx, true)
+
+// Swing liquidity + equal highs / lows
+if not na(pivH)
+    bool eq = false
+    float eqPx = na
+    if pools.size() > 0
+        for i = pools.size() - 1 to 0
+            Pool q = pools.get(i)
+            if q.src == 0 and q.side == 1 and math.abs(q.price - pivH) <= iEqTol * atr
+                eq := true
+                eqPx := math.max(q.price, pivH)
+                f_killPool(q)
+                pools.remove(i)
+                break
+    if eq
+        f_addPool(eqPx, 1, "EQH", true, 2, bar_index - iExtLen, false)
+    else
+        f_addPool(pivH, 1, "SWING H", false, 0, bar_index - iExtLen, false)
+if not na(pivL)
+    bool eq = false
+    float eqPx = na
+    if pools.size() > 0
+        for i = pools.size() - 1 to 0
+            Pool q = pools.get(i)
+            if q.src == 0 and q.side == -1 and math.abs(q.price - pivL) <= iEqTol * atr
+                eq := true
+                eqPx := math.min(q.price, pivL)
+                f_killPool(q)
+                pools.remove(i)
+                break
+    if eq
+        f_addPool(eqPx, -1, "EQL", true, 2, bar_index - iExtLen, false)
+    else
+        f_addPool(pivL, -1, "SWING L", false, 0, bar_index - iExtLen, false)
+
+// Sweep = trade beyond a pool and CLOSE back inside. Breakout = close beyond.
+// A breakout that closes back inside within N bars becomes a (failed-breakout) sweep.
+bool   swBullEv = false
+float  swBullLvl = na
+float  swBullExt = na
+bool   swBullMaj = false
+bool   swBullCrt = false
+string swBullName = ""
+bool   swBearEv = false
+float  swBearLvl = na
+float  swBearExt = na
+bool   swBearMaj = false
+bool   swBearCrt = false
+string swBearName = ""
+
+var float  bkUpLvl = na
+var float  bkUpExt = na
+var int    bkUpBar = na
+var bool   bkUpMaj = false
+var bool   bkUpCrt = false
+var string bkUpName = ""
+var float  bkDnLvl = na
+var float  bkDnExt = na
+var int    bkDnBar = na
+var bool   bkDnMaj = false
+var bool   bkDnCrt = false
+var string bkDnName = ""
+
+if closed and not na(bkUpBar) and bar_index > bkUpBar
+    bkUpExt := math.max(bkUpExt, high)
+    if close < bkUpLvl
+        swBearEv   := true
+        swBearLvl  := bkUpLvl
+        swBearExt  := bkUpExt
+        swBearMaj  := bkUpMaj
+        swBearCrt  := bkUpCrt
+        swBearName := bkUpName + " FAILED BO"
+        bkUpBar    := na
+    else if bar_index - bkUpBar >= iFailBars
+        bkUpBar := na
+if closed and not na(bkDnBar) and bar_index > bkDnBar
+    bkDnExt := math.min(bkDnExt, low)
+    if close > bkDnLvl
+        swBullEv   := true
+        swBullLvl  := bkDnLvl
+        swBullExt  := bkDnExt
+        swBullMaj  := bkDnMaj
+        swBullCrt  := bkDnCrt
+        swBullName := bkDnName + " FAILED BD"
+        bkDnBar    := na
+    else if bar_index - bkDnBar >= iFailBars
+        bkDnBar := na
+
+if closed and pools.size() > 0
+    for i = pools.size() - 1 to 0
+        Pool p = pools.get(i)
+        if p.added < bar_index
+            bool taken = false
+            if p.side == 1 and high > p.price
+                taken := true
+                if close < p.price
+                    swBearEv  := true
+                    swBearLvl := na(swBearLvl) ? p.price : math.max(swBearLvl, p.price)
+                    swBearExt := na(swBearExt) ? high : math.max(swBearExt, high)
+                    swBearMaj := swBearMaj or p.major
+                    swBearCrt := swBearCrt or p.src == 3
+                    swBearName := swBearName == "" or p.major ? p.name : swBearName
+                else
+                    bkUpLvl  := p.price
+                    bkUpExt  := high
+                    bkUpBar  := bar_index
+                    bkUpMaj  := p.major
+                    bkUpCrt  := p.src == 3
+                    bkUpName := p.name
+            else if p.side == -1 and low < p.price
+                taken := true
+                if close > p.price
+                    swBullEv  := true
+                    swBullLvl := na(swBullLvl) ? p.price : math.min(swBullLvl, p.price)
+                    swBullExt := na(swBullExt) ? low : math.min(swBullExt, low)
+                    swBullMaj := swBullMaj or p.major
+                    swBullCrt := swBullCrt or p.src == 3
+                    swBullName := swBullName == "" or p.major ? p.name : swBullName
+                else
+                    bkDnLvl  := p.price
+                    bkDnExt  := low
+                    bkDnBar  := bar_index
+                    bkDnMaj  := p.major
+                    bkDnCrt  := p.src == 3
+                    bkDnName := p.name
+            if taken
+                f_killPool(p)
+                pools.remove(i)
+
+var int    lastSwBullBar = -1000
+var int    lastSwBearBar = -1000
+var string lastSweepTxt  = "NONE"
+if swBullEv
+    lastSwBullBar := bar_index
+    lastSweepTxt  := "SSL SWEPT · " + swBullName
+if swBearEv
+    lastSwBearBar := bar_index
+    lastSweepTxt  := "BSL SWEPT · " + swBearName
+
+// ───────────────────────────── §9 FVG / ORDER BLOCK / LEVEL ZONES ─────────────────────────────
+var array<Zone> fvgZ = array.new<Zone>()
+var array<Zone> szZ  = array.new<Zone>()
+var PB pbL = PB.new()
+var PB pbS = PB.new()
+var RV rvL = RV.new()
+var RV rvS = RV.new()
+
+f_zoneCap(array<Zone> zs, int d, int maxN) =>
+    int cnt = 0
+    for z in zs
+        if z.dir == d
+            cnt += 1
+    if cnt > maxN
+        for i = 0 to zs.size() - 1
+            if zs.get(i).dir == d
+                Zone old = zs.remove(i)
+                f_delBox(old.bx)
+                break
+
+bool bigUp1 = close[1] > open[1] and body[1] >= atr * iDispBody * 0.75
+bool bigDn1 = close[1] < open[1] and body[1] >= atr * iDispBody * 0.75
+bool bullFvg = closed and low > high[2] and (low - high[2]) >= iFvgMin * atr and (not iFvgDisp or bigUp1)
+bool bearFvg = closed and high < low[2] and (low[2] - high) >= iFvgMin * atr and (not iFvgDisp or bigDn1)
+if bullFvg
+    Zone z = Zone.new(dir = 1, top = low, bot = high[2], left = bar_index - 2, born = bar_index, kind = 0, strength = (low - high[2]) / atr)
+    if iShowFVG
+        z.bx := box.new(bar_index - 2, low, bar_index + 3, high[2], border_color = color.new(C_BULL, 65), bgcolor = color.new(C_BULL, 90))
+    fvgZ.push(z)
+    f_zoneCap(fvgZ, 1, iZoneMax)
+    if rvL.stage >= 1
+        rvL.zTop := low
+        rvL.zBot := high[2]
+if bearFvg
+    Zone z = Zone.new(dir = -1, top = low[2], bot = high, left = bar_index - 2, born = bar_index, kind = 0, strength = (low[2] - high) / atr)
+    if iShowFVG
+        z.bx := box.new(bar_index - 2, low[2], bar_index + 3, high, border_color = color.new(C_BEAR, 65), bgcolor = color.new(C_BEAR, 90))
+    fvgZ.push(z)
+    f_zoneCap(fvgZ, -1, iZoneMax)
+    if rvS.stage >= 1
+        rvS.zTop := low[2]
+        rvS.zBot := high
+
+// Order block = last opposite candle before a displacement leg that broke structure.
+bool upBreak = closed and (evI > 0 or evE > 0) and (dispUp or dispUp[1] or dispUp[2])
+bool dnBreak = closed and (evI < 0 or evE < 0) and (dispDn or dispDn[1] or dispDn[2])
+if upBreak
+    int k0 = 0
+    for k = 1 to iObLook
+        if close[k] < open[k]
+            k0 := k
+            break
+    if k0 > 0
+        float zt = high[k0]
+        float zb = low[k0]
+        if zt - zb <= iObMaxAtr * atr and close > zt
+            bool ov = false
+            for f in fvgZ
+                if f.dir == 1 and f.bot < zt and f.top > zb and f.born >= bar_index - k0 - 2
+                    ov := true
+            Zone z = Zone.new(dir = 1, top = zt, bot = zb, left = bar_index - k0, born = bar_index, kind = 1, strength = body / atr + (evE > 0 ? 1.0 : 0.0), overlap = ov)
+            if iShowOB
+                z.bx := box.new(bar_index - k0, zt, bar_index + 3, zb, border_color = color.new(C_BSL, 55), bgcolor = color.new(C_BSL, 88), text = ov ? "DEMAND · OB+FVG" : "DEMAND · OB", text_size = size.tiny, text_color = color.new(C_BSL, 20), text_halign = text.align_left)
+            szZ.push(z)
+            f_zoneCap(szZ, 1, iZoneMax)
+            if rvL.stage >= 1
+                rvL.zTop := zt
+                rvL.zBot := zb
+if dnBreak
+    int k0 = 0
+    for k = 1 to iObLook
+        if close[k] > open[k]
+            k0 := k
+            break
+    if k0 > 0
+        float zt = high[k0]
+        float zb = low[k0]
+        if zt - zb <= iObMaxAtr * atr and close < zb
+            bool ov = false
+            for f in fvgZ
+                if f.dir == -1 and f.bot < zt and f.top > zb and f.born >= bar_index - k0 - 2
+                    ov := true
+            Zone z = Zone.new(dir = -1, top = zt, bot = zb, left = bar_index - k0, born = bar_index, kind = 1, strength = body / atr + (evE < 0 ? 1.0 : 0.0), overlap = ov)
+            if iShowOB
+                z.bx := box.new(bar_index - k0, zt, bar_index + 3, zb, border_color = color.new(C_SSL, 55), bgcolor = color.new(C_SSL, 88), text = ov ? "SUPPLY · OB+FVG" : "SUPPLY · OB", text_size = size.tiny, text_color = color.new(C_SSL, 20), text_halign = text.align_left)
+            szZ.push(z)
+            f_zoneCap(szZ, -1, iZoneMax)
+            if rvS.stage >= 1
+                rvS.zTop := zt
+                rvS.zBot := zb
+
+// Broken external structure level → break-and-retest zone.
+if closed and evE != 0 and not na(lvE)
+    int dz = evE > 0 ? 1 : -1
+    szZ.push(Zone.new(dir = dz, top = lvE + atr * 0.15, bot = lvE - atr * 0.15, left = nz(fbE, bar_index), born = bar_index, kind = 2, strength = 1.0))
+    f_zoneCap(szZ, dz, iZoneMax)
+// Broken opening-range level → ORB retest zone.
+if orbUpNow
+    orDir.set(sidx, 1)
+    szZ.push(Zone.new(dir = 1, top = orHi + atr * 0.15, bot = orHi - atr * 0.15, left = bar_index, born = bar_index, kind = 3, strength = 1.0))
+    f_zoneCap(szZ, 1, iZoneMax)
+if orbDnNow
+    orDir.set(sidx, -1)
+    szZ.push(Zone.new(dir = -1, top = orLo + atr * 0.15, bot = orLo - atr * 0.15, left = bar_index, born = bar_index, kind = 3, strength = 1.0))
+    f_zoneCap(szZ, -1, iZoneMax)
+
+// Pick the best FRESH zone touched on this bar for direction d.
+// prio: 6 OB+FVG overlap · 5 OB / 1H FVG · 4 15M FVG · 3 FVG / level / ORB · 1 EMA
+f_pickZone(int d) =>
+    int    bp = 0
+    float  bt = na
+    float  bb = na
+    string bk = ""
+    int    bArr = -1
+    int    bIdx = -1
+    if fvgZ.size() > 0
+        for i = 0 to fvgZ.size() - 1
+            Zone z = fvgZ.get(i)
+            if z.dir == d and z.born < bar_index and not z.used and z.touches <= 1 and f_touch(d, z.top, z.bot) and 3 > bp
+                bp := 3
+                bt := z.top
+                bb := z.bot
+                bk := "FVG"
+                bArr := 0
+                bIdx := i
+    if szZ.size() > 0
+        for i = 0 to szZ.size() - 1
+            Zone z = szZ.get(i)
+            int p = z.kind == 1 ? (z.overlap ? 6 : 5) : 3
+            if z.dir == d and z.born < bar_index and not z.used and z.touches <= 1 and f_touch(d, z.top, z.bot) and p > bp
+                bp := p
+                bt := z.top
+                bb := z.bot
+                bk := z.kind == 1 ? (z.overlap ? "OB+FVG" : "ORDER BLOCK") : z.kind == 2 ? "BREAK & RETEST" : "ORB RETEST"
+                bArr := 1
+                bIdx := i
+    float h60T = d == 1 ? fvBT60 : fvST60
+    float h60B = d == 1 ? fvBB60 : fvSB60
+    float h15T = d == 1 ? fvBT15 : fvST15
+    float h15B = d == 1 ? fvBB15 : fvSB15
+    if not na(h60T) and f_touch(d, h60T, h60B) and 5 > bp
+        bp := 5
+        bt := h60T
+        bb := h60B
+        bk := "1H FVG"
+        bArr := -1
+        bIdx := -1
+    if not na(h15T) and f_touch(d, h15T, h15B) and 4 > bp
+        bp := 4
+        bt := h15T
+        bb := h15B
+        bk := "15M FVG"
+        bArr := -1
+        bIdx := -1
+    if iUseEmaPB and bp == 0 and (d == 1 ? (low <= ema and close > ema) : (high >= ema and close < ema))
+        bp := 1
+        bt := d == 1 ? ema : ema + atr * 0.5
+        bb := d == 1 ? ema - atr * 0.5 : ema
+        bk := "EMA"
+    [bp, bt, bb, bk, bArr, bIdx]
+
+f_maintain(array<Zone> zs) =>
+    int n = zs.size()
+    if n > 0
+        for i = n - 1 to 0
+            Zone z = zs.get(i)
+            bool dead = bar_index - z.born > iZoneAge
+            if z.born < bar_index and not dead
+                if z.dir == 1
+                    if close < z.bot
+                        dead := true
+                    else
+                        bool inNow = low <= z.top
+                        if inNow and not z.inside
+                            z.touches := z.touches + 1
+                        z.inside := inNow
+                        if low <= z.bot
+                            z.full := true
+                else
+                    if close > z.top
+                        dead := true
+                    else
+                        bool inNow = high >= z.bot
+                        if inNow and not z.inside
+                            z.touches := z.touches + 1
+                        z.inside := inNow
+                        if high >= z.top
+                            z.full := true
+            if dead
+                f_delBox(z.bx)
+                zs.remove(i)
+            else if not na(z.bx)
+                box.set_right(z.bx, bar_index + 3)
+                if z.full or z.used or z.touches > 1
+                    box.set_bgcolor(z.bx, color.new(z.dir == 1 ? C_BULL : C_BEAR, 96))
+
+// ───────────────────────────── §10 SCORING FUNCTIONS ─────────────────────────────
+// Each fact is scored in ONE category only. Mandatory gates are applied before scores.
+f_contScore(int d, int prio, bool tM, bool tD, bool swept) =>
+    float s = 0.0
+    string n = ""
+    float htf = (b1 * d > 0 ? 10.0 : 0.0) + (b15 * d > 0 ? 6.0 : 0.0) + (b4 * d > 0 ? 4.0 : 0.0)
+    s += htf
+    n += "HTF " + str.tostring(htf, "#") + "/20"
+    float st = (trE == d ? 5.0 : 0.0) + (tM ? 15.0 : 0.0)
+    s += st
+    n += " · STRUCT " + str.tostring(st, "#") + "/20"
+    float loc = prio >= 6 ? 20.0 : prio == 5 ? 16.0 : prio == 4 ? 14.0 : prio == 3 ? 12.0 : 6.0
+    loc += (d == 1 and pd15 < 0.5) or (d == -1 and pd15 > 0.5) ? 4.0 : 0.0
+    loc := math.min(loc, 20.0)
+    s += loc
+    n += " · LOC " + str.tostring(loc, "#") + "/20"
+    float mo = tD or (d == 1 ? dispUp : dispDn) ? 10.0 : 0.0
+    s += mo
+    n += " · DISP " + str.tostring(mo, "#") + "/10"
+    float lq = swept ? 10.0 : 0.0
+    s += lq
+    n += " · LIQ " + str.tostring(lq, "#") + "/10"
+    float ss = sid >= 0 ? 5.0 : 0.0
+    s += ss
+    float ex = ex1d == d ? 0.0 : 5.0
+    s += ex
+    n += " · SESS " + str.tostring(ss, "#") + " · EXH " + str.tostring(ex, "#")
+    [s, n]
+
+f_revScore(int d, bool major, bool retest) =>
+    float s = 0.0
+    string n = ""
+    float lq = major ? 20.0 : 10.0
+    s += lq + 20.0
+    n += "SWEEP " + str.tostring(lq, "#") + "/20 · DISP+MSS 20/20"
+    bool evOk = d == 1 ? (ev15 > 0 and ag15 <= 12) : (ev15 < 0 and ag15 <= 12)
+    bool emOk = not na(e15) and (d == 1 ? c15 > e15 : c15 < e15)
+    float im = evOk ? 15.0 : emOk ? 8.0 : 0.0
+    s += im
+    n += " · 15M " + str.tostring(im, "#") + "/15"
+    float rt = retest ? 15.0 : 0.0
+    s += rt
+    n += " · RETEST " + str.tostring(rt, "#") + "/15"
+    float m4 = b4 * d >= 0 or (d == 1 ? nz(pd4, 0.5) < 0.35 : nz(pd4, 0.5) > 0.65) ? 5.0 : 0.0
+    s += m4
+    float ss = sid >= 0 ? 5.0 : 0.0
+    s += ss
+    float h1 = b1 * d > -2 ? 10.0 : 0.0
+    s += h1
+    n += " · 4H " + str.tostring(m4, "#") + " · SESS " + str.tostring(ss, "#") + " · 1H " + str.tostring(h1, "#") + "/10"
+    [s, n]
+
+f_brkScore(int d, float lvl, bool sweptOpp) =>
+    float s = 0.0
+    float al = ctx == d ? 20.0 : 8.0
+    float st = ((d == 1 ? dispUp : dispDn) ? 15.0 : 0.0) + ((close - lvl) * d > 0.25 * atr ? 5.0 : 0.0)
+    float sx = (trE == d ? 10.0 : 0.0) + ((d == 1 ? evI > 0 : evI < 0) ? 5.0 : 0.0)
+    float ss = sid >= 0 ? 10.0 : 0.0
+    float ne = math.abs(close - ema) <= iChaseAtr * atr * 0.6 ? 10.0 : 0.0
+    float m4 = b4 * d > 0 ? 5.0 : 0.0
+    float lq = sweptOpp ? 10.0 : 0.0
+    s := al + st + sx + ss + ne + m4 + lq
+    string n = "HTF " + str.tostring(al, "#") + "/20 · BREAK " + str.tostring(st, "#") + "/20 · STRUCT " + str.tostring(sx, "#") + "/15 · SESS " + str.tostring(ss, "#") + " · EXT " + str.tostring(ne, "#") + " · 4H " + str.tostring(m4, "#") + " · LIQ " + str.tostring(lq, "#")
+    [s, n]
+
+// Nearest level that can block the trade before its targets: major liquidity (CRT reference excluded),
+// opposing HTF FVGs and opposing chart order blocks.
+f_blocker(int d, float e) =>
+    float best = na
+    for p in pools
+        if p.major and p.side == d and p.src != 3
+            best := f_nearer(best, p.price, d, e)
+    best := f_nearer(best, d == 1 ? fvSB15 : fvBT15, d, e)
+    best := f_nearer(best, d == 1 ? fvSB60 : fvBT60, d, e)
+    for z in szZ
+        if z.kind == 1 and z.dir == -d
+            best := f_nearer(best, d == 1 ? z.bot : z.top, d, e)
+    best
+
+f_liqTarget(int d, float e, float minDist) =>
+    float best = na
+    for p in pools
+        if p.side == d and (p.price - e) * d >= minDist
+            best := f_nearer(best, p.price, d, e)
+    best
+
+f_modeOK(int typ) => iMode == "Both" ? true : iMode == "Continuation only" ? (typ == 1 or typ == 3) : (typ == 2 or typ == 4)
+
+f_reject(int d, string model, int typ, int src, string why) =>
+    Cand.new(false, d, model, typ, src, 0.0, close, na, na, na, na, na, na, why, "")
+
+// Builds a candidate: setup-specific invalidation → stop, risk limits, room check, targets, final score.
+// The stop is never pulled closer to make a trade fit; it may only be WIDENED to the minimum distance.
+f_build(int d, string model, int typ, int src, float rawInv, float base, string notes, float minSc, float minRoomR) =>
+    float e = close
+    string why = ""
+    float s = na(rawInv) ? na : d == 1 ? f_floorTick(rawInv - buf) : f_ceilTick(rawInv + buf)
+    float r = na(s) ? na : (e - s) * d
+    if not f_modeOK(typ)
+        why := "DISABLED BY TRADE MODE"
+    else if na(s) or r <= 0
+        why := "NO VALID INVALIDATION LEVEL"
+    else
+        if r < iMinStop
+            s := d == 1 ? f_floorTick(e - iMinStop) : f_ceilTick(e + iMinStop)
+            r := (e - s) * d
+        if r > maxStopPts
+            why := "STOP TOO WIDE · " + str.tostring(r, "#.##") + " > " + str.tostring(maxStopPts, "#.##") + " PTS"
+        else if r > iMaxStopAtr * atr
+            why := "STOP TOO WIDE · " + str.tostring(r / atr, "#.#") + " ATR > " + str.tostring(iMaxStopAtr, "#.#")
+        else if iRejectUsd and r * pv * iContracts > iMaxRiskUsd
+            why := "RISK " + f_usd(r * pv * iContracts) + " > LIMIT " + f_usd(iMaxRiskUsd)
+    float sc = base
+    float room = na
+    float t1 = na
+    float t2 = na
+    float t3 = na
+    if why == ""
+        float blk = f_blocker(d, e)
+        room := na(blk) ? 99.0 : (blk - e) * d / r
+        sc += room >= 2.0 ? 10.0 : room >= 1.5 ? 5.0 : 0.0
+        if room < minRoomR
+            why := "INSUFFICIENT TARGET ROOM · " + str.tostring(room, "#.##") + "R TO " + f_px(blk)
+        t1 := math.round_to_mintick(e + d * r * iRR1)
+        t2 := math.round_to_mintick(e + d * r * math.max(iRR2, iRR1 + 0.25))
+        t3 := math.round_to_mintick(e + d * r * math.max(iRR3, iRR2 + 0.25))
+        if iTgtMode == "Liquidity-aware"
+            if not na(blk) and room > iRR1 + 0.25 and room < iRR2
+                t2 := blk - d * syminfo.mintick
+            float lt = f_liqTarget(d, e, (t2 - e) * d + r * 0.5)
+            if not na(lt) and (lt - e) * d / r <= 6.0
+                t3 := lt - d * syminfo.mintick
+    sc := math.min(sc, 100.0)
+    if why == "" and sc < minSc
+        why := "SCORE " + str.tostring(sc, "#") + " < MIN " + str.tostring(minSc, "#")
+    Cand.new(why == "", d, model, typ, src, sc, e, s, r, t1, t2, t3, room, why, notes)
+
+// ───────────────────────────── §11 SETUP ENGINES ─────────────────────────────
+bool evSetupDev  = false
+bool evSetupConf = false
+bool evSetupInv  = false
+bool evCrtBull   = false
+bool evCrtBear   = false
+bool evFvgRetest = false
+bool evOrbRetest = false
+array<Cand> cands = array.new<Cand>()
+
+// ── A · TREND PULLBACK (continuation): context → pullback into zone → rejection trigger
+if closed and iUsePB and iLongs and ctx == 1 and not pbL.active
+    [bp, bt, bb, bk, bArr, bIdx] = f_pickZone(1)
+    if bp > 0
+        pbL.active := true
+        pbL.bar := bar_index
+        pbL.top := bt
+        pbL.bot := bb
+        pbL.ext := low
+        pbL.prio := bp
+        pbL.kind := bk
+        pbL.swept := false
+        pbL.z := na
+        if bArr == 0
+            pbL.z := fvgZ.get(bIdx)
+        else if bArr == 1
+            pbL.z := szZ.get(bIdx)
+        evSetupDev := true
+        evFvgRetest := evFvgRetest or bk == "FVG" or bk == "15M FVG" or bk == "1H FVG"
+        evOrbRetest := evOrbRetest or bk == "ORB RETEST"
+if closed and iUsePB and iShorts and ctx == -1 and not pbS.active
+    [bp, bt, bb, bk, bArr, bIdx] = f_pickZone(-1)
+    if bp > 0
+        pbS.active := true
+        pbS.bar := bar_index
+        pbS.top := bt
+        pbS.bot := bb
+        pbS.ext := high
+        pbS.prio := bp
+        pbS.kind := bk
+        pbS.swept := false
+        pbS.z := na
+        if bArr == 0
+            pbS.z := fvgZ.get(bIdx)
+        else if bArr == 1
+            pbS.z := szZ.get(bIdx)
+        evSetupDev := true
+        evFvgRetest := evFvgRetest or bk == "FVG" or bk == "15M FVG" or bk == "1H FVG"
+        evOrbRetest := evOrbRetest or bk == "ORB RETEST"
+
+bool pbLTrig = false
+bool pbLM = false
+bool pbLD = false
+if closed and pbL.active
+    pbL.ext := math.min(pbL.ext, low)
+    pbL.swept := pbL.swept or swBullEv
+    if close < pbL.bot or ctx != 1
+        pbL.active := false
+        evSetupInv := true
+    else if bar_index - pbL.bar > iPbWindow
+        pbL.active := false
+    else
+        pbLM := evI > 0
+        pbLD := dispUp and close > pbL.top and close > high[1]
+        bool tR = (math.min(open, close) - low) >= rng * 0.5 and close > open and (high - close) <= rng * 0.35 and close > (pbL.top + pbL.bot) / 2
+        pbLTrig := ctxRetrace ? pbLM : iTrig == "MSS only" ? pbLM : iTrig == "MSS or displacement" ? (pbLM or pbLD) : (pbLM or pbLD or tR)
+bool pbSTrig = false
+bool pbSM = false
+bool pbSD = false
+if closed and pbS.active
+    pbS.ext := math.max(pbS.ext, high)
+    pbS.swept := pbS.swept or swBearEv
+    if close > pbS.top or ctx != -1
+        pbS.active := false
+        evSetupInv := true
+    else if bar_index - pbS.bar > iPbWindow
+        pbS.active := false
+    else
+        pbSM := evI < 0
+        pbSD := dispDn and close < pbS.bot and close < low[1]
+        bool tR = (high - math.max(open, close)) >= rng * 0.5 and close < open and (close - low) <= rng * 0.35 and close < (pbS.top + pbS.bot) / 2
+        pbSTrig := ctxRetrace ? pbSM : iTrig == "MSS only" ? pbSM : iTrig == "MSS or displacement" ? (pbSM or pbSD) : (pbSM or pbSD or tR)
+
+if pbLTrig
+    pbL.active := false
+    evSetupConf := true
+    int typ = pbL.kind == "BREAK & RETEST" or pbL.kind == "ORB RETEST" ? 3 : 1
+    string model = pbL.kind == "BREAK & RETEST" or pbL.kind == "ORB RETEST" ? pbL.kind : pbL.kind + " PULLBACK"
+    if (close - ema) > iChaseAtr * atr
+        cands.push(f_reject(1, model, typ, 1, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_contScore(1, pbL.prio, pbLM, pbLD, pbL.swept)
+        cands.push(f_build(1, model, typ, 1, pbL.ext, sc, nt, iMinScore, iMinRoom))
+if pbSTrig
+    pbS.active := false
+    evSetupConf := true
+    int typ = pbS.kind == "BREAK & RETEST" or pbS.kind == "ORB RETEST" ? 3 : 1
+    string model = pbS.kind == "BREAK & RETEST" or pbS.kind == "ORB RETEST" ? pbS.kind : pbS.kind + " PULLBACK"
+    if (ema - close) > iChaseAtr * atr
+        cands.push(f_reject(-1, model, typ, 1, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_contScore(-1, pbS.prio, pbSM, pbSD, pbS.swept)
+        cands.push(f_build(-1, model, typ, 1, pbS.ext, sc, nt, iMinScore, iMinRoom))
+
+// ── B · SWEEP / CRT ENGINE: sweep → reclaim → displacement → internal MSS → (retest) → entry.
+// The SAME sequence is a continuation sweep when aligned with context, and a countertrend
+// reversal (with the strict gate) when against it. A sweep alone never produces a trade.
+if closed and iUseRev and swBullEv
+    rvL.stage := 1
+    rvL.lvl := swBullLvl
+    rvL.ext := swBullExt
+    rvL.bar := bar_index
+    rvL.major := swBullMaj
+    rvL.crt := swBullCrt
+    rvL.src := swBullName
+    rvL.disp := dispUp
+    rvL.zTop := na
+    rvL.zBot := na
+    rvL.tries := 0
+    evSetupDev := true
+if closed and iUseRev and swBearEv
+    rvS.stage := 1
+    rvS.lvl := swBearLvl
+    rvS.ext := swBearExt
+    rvS.bar := bar_index
+    rvS.major := swBearMaj
+    rvS.crt := swBearCrt
+    rvS.src := swBearName
+    rvS.disp := dispDn
+    rvS.zTop := na
+    rvS.zBot := na
+    rvS.tries := 0
+    evSetupDev := true
+
+bool rvLMss = false
+bool rvLRet = false
+if closed and rvL.stage >= 1
+    if bar_index > rvL.bar
+        if rvL.stage == 1
+            rvL.ext := math.min(rvL.ext, low)
+        if (rvL.stage == 1 and close < rvL.lvl) or close < rvL.ext
+            rvL.stage := 0
+            evSetupInv := true
+        else if bar_index - rvL.bar > iRevAge
+            rvL.stage := 0
+    if rvL.stage >= 1
+        rvL.disp := rvL.disp or dispUp
+        if rvL.stage == 1 and evI > 0 and rvL.disp
+            rvL.stage := 2
+            rvL.mssBar := bar_index
+            rvLMss := true
+            if na(rvL.zTop) and not na(lvI)
+                rvL.zTop := lvI + atr * 0.1
+                rvL.zBot := lvI - atr * 0.25
+            evCrtBull := rvL.crt
+            evSetupConf := true
+        else if rvL.stage == 2 and bar_index > rvL.mssBar and not na(rvL.zTop) and low <= rvL.zTop and close >= rvL.zBot and close > open
+            rvLRet := true
+bool rvSMss = false
+bool rvSRet = false
+if closed and rvS.stage >= 1
+    if bar_index > rvS.bar
+        if rvS.stage == 1
+            rvS.ext := math.max(rvS.ext, high)
+        if (rvS.stage == 1 and close > rvS.lvl) or close > rvS.ext
+            rvS.stage := 0
+            evSetupInv := true
+        else if bar_index - rvS.bar > iRevAge
+            rvS.stage := 0
+    if rvS.stage >= 1
+        rvS.disp := rvS.disp or dispDn
+        if rvS.stage == 1 and evI < 0 and rvS.disp
+            rvS.stage := 2
+            rvS.mssBar := bar_index
+            rvSMss := true
+            if na(rvS.zTop) and not na(lvI)
+                rvS.zTop := lvI + atr * 0.25
+                rvS.zBot := lvI - atr * 0.1
+            evCrtBear := rvS.crt
+            evSetupConf := true
+        else if rvS.stage == 2 and bar_index > rvS.mssBar and not na(rvS.zTop) and high >= rvS.zBot and close <= rvS.zTop and close < open
+            rvSRet := true
+
+string rvLWait = ""
+string rvSWait = ""
+if (rvLMss or rvLRet) and iLongs
+    bool counter = ctx == -1
+    bool neutral = ctx == 0
+    int  typ = counter ? 2 : neutral ? 4 : 1
+    string model = (rvL.crt ? (typ == 1 ? "CRT CONTINUATION" : "CRT REVERSAL") : (typ == 1 ? "SWEEP CONTINUATION" : "SWEEP & RECLAIM")) + (rvLRet ? " · RETEST" : "")
+    bool needRetest = counter and (iRevRetestAll or b1 == -2)
+    if rvLRet
+        rvL.tries := rvL.tries + 1
+    if (counter or neutral) and iRevMajorOnly and not rvL.major
+        cands.push(f_reject(1, model, typ, 2, "MINOR LIQUIDITY — REVERSAL NEEDS MAJOR SWEEP"))
+        rvL.stage := 0
+    else if counter and iBlockFull and fullBear
+        cands.push(f_reject(1, model, typ, 2, "4H+1H+15M STRONGLY BEARISH — REVERSAL BLOCKED"))
+        rvL.stage := 0
+    else if counter and iRevReq15 and not imp15L
+        cands.push(f_reject(1, model, typ, 2, "COUNTERTREND · 15M HAS NOT IMPROVED"))
+    else if needRetest and rvLMss
+        rvLWait := "BULL REVERSAL CONFIRMED (INT) — WAITING FOR RETEST"
+    else
+        float inv = rvLRet and iRevStop == "Zone invalidation" ? math.min(rvL.zBot, low) : rvL.ext
+        [sc, nt] = f_revScore(1, rvL.major, rvLRet)
+        cands.push(f_build(1, model, typ, 2, inv, sc, nt, typ == 1 ? iMinScore : iRevMinScore, counter ? iRevRoom : iMinRoom))
+    if rvL.tries >= 2
+        rvL.stage := 0
+if (rvSMss or rvSRet) and iShorts
+    bool counter = ctx == 1
+    bool neutral = ctx == 0
+    int  typ = counter ? 2 : neutral ? 4 : 1
+    string model = (rvS.crt ? (typ == 1 ? "CRT CONTINUATION" : "CRT REVERSAL") : (typ == 1 ? "SWEEP CONTINUATION" : "SWEEP & RECLAIM")) + (rvSRet ? " · RETEST" : "")
+    bool needRetest = counter and (iRevRetestAll or b1 == 2)
+    if rvSRet
+        rvS.tries := rvS.tries + 1
+    if (counter or neutral) and iRevMajorOnly and not rvS.major
+        cands.push(f_reject(-1, model, typ, 2, "MINOR LIQUIDITY — REVERSAL NEEDS MAJOR SWEEP"))
+        rvS.stage := 0
+    else if counter and iBlockFull and fullBull
+        cands.push(f_reject(-1, model, typ, 2, "4H+1H+15M STRONGLY BULLISH — REVERSAL BLOCKED"))
+        rvS.stage := 0
+    else if counter and iRevReq15 and not imp15S
+        cands.push(f_reject(-1, model, typ, 2, "COUNTERTREND · 15M HAS NOT IMPROVED"))
+    else if needRetest and rvSMss
+        rvSWait := "BEAR REVERSAL CONFIRMED (INT) — WAITING FOR RETEST"
+    else
+        float inv = rvSRet and iRevStop == "Zone invalidation" ? math.max(rvS.zTop, high) : rvS.ext
+        [sc, nt] = f_revScore(-1, rvS.major, rvSRet)
+        cands.push(f_build(-1, model, typ, 2, inv, sc, nt, typ == 1 ? iMinScore : iRevMinScore, counter ? iRevRoom : iMinRoom))
+    if rvS.tries >= 2
+        rvS.stage := 0
+
+// ── C · ORB BREAKOUT (retests are handled by the pullback engine via ORB level zones)
+if orbUpNow and iUseORB and iLongs and dispUp and not orUsedL.get(sidx)
+    orUsedL.set(sidx, true)
+    if ctx == -1
+        cands.push(f_reject(1, "ORB BREAKOUT", 3, 3, "ORB AGAINST HTF CONTEXT — DIRECTIONAL CONFLICT"))
+    else if (close - ema) > iChaseAtr * atr
+        cands.push(f_reject(1, "ORB BREAKOUT", 3, 3, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_brkScore(1, orHi, bar_index - lastSwBullBar <= 30)
+        cands.push(f_build(1, "ORB BREAKOUT", 3, 3, math.max(low, orMid), sc, nt, iMinScore, iMinRoom))
+if orbDnNow and iUseORB and iShorts and dispDn and not orUsedS.get(sidx)
+    orUsedS.set(sidx, true)
+    if ctx == 1
+        cands.push(f_reject(-1, "ORB BREAKOUT", 3, 3, "ORB AGAINST HTF CONTEXT — DIRECTIONAL CONFLICT"))
+    else if (ema - close) > iChaseAtr * atr
+        cands.push(f_reject(-1, "ORB BREAKOUT", 3, 3, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_brkScore(-1, orLo, bar_index - lastSwBearBar <= 30)
+        cands.push(f_build(-1, "ORB BREAKOUT", 3, 3, math.min(high, orMid), sc, nt, iMinScore, iMinRoom))
+
+// ── D · RANGE EXPANSION: continuation after consolidation (momentum resumption)
+var int lastRxBar = -1000
+bool rxUp = closed and iUseRange and compressed and close > cHi and dispUp and bar_index - lastRxBar > iCompLen
+bool rxDn = closed and iUseRange and compressed and close < cLo and dispDn and bar_index - lastRxBar > iCompLen
+if rxUp and iLongs
+    lastRxBar := bar_index
+    int typ = ctx == 1 ? 1 : 3
+    if ctx == -1
+        cands.push(f_reject(1, "RANGE EXPANSION", 3, 4, "RANGE BREAK AGAINST HTF — DIRECTIONAL CONFLICT"))
+    else if (close - ema) > iChaseAtr * atr
+        cands.push(f_reject(1, "RANGE EXPANSION", typ, 4, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_brkScore(1, cHi, bar_index - lastSwBullBar <= iCompLen)
+        cands.push(f_build(1, "RANGE EXPANSION", typ, 4, math.max(low, (cHi + cLo) / 2), sc, nt, iMinScore, iMinRoom))
+if rxDn and iShorts
+    lastRxBar := bar_index
+    int typ = ctx == -1 ? 1 : 3
+    if ctx == 1
+        cands.push(f_reject(-1, "RANGE EXPANSION", 3, 4, "RANGE BREAK AGAINST HTF — DIRECTIONAL CONFLICT"))
+    else if (ema - close) > iChaseAtr * atr
+        cands.push(f_reject(-1, "RANGE EXPANSION", typ, 4, "EXTENDED FROM EMA — NO CHASE"))
+    else
+        [sc, nt] = f_brkScore(-1, cLo, bar_index - lastSwBearBar <= iCompLen)
+        cands.push(f_build(-1, "RANGE EXPANSION", typ, 4, math.min(high, (cHi + cLo) / 2), sc, nt, iMinScore, iMinRoom))
+
+// Zone bookkeeping AFTER touch detection so a first touch is still "fresh" on its own bar.
+f_maintain(fvgZ)
+f_maintain(szZ)
+
+// ───────────────────────────── §12 ARBITRATION & SIGNALS ─────────────────────────────
+var Trade T = Trade.new()
+var int    lastEntryBar = -1000
+var Cand   lastRej = na
+var int    lastRejBar = -1000
+var float  lastBullScore = 0.0
+var float  lastBearScore = 0.0
+Cand bestL = na
+Cand bestS = na
+for c in cands
+    if c.score > 0
+        if c.dir == 1
+            lastBullScore := c.score
+        else
+            lastBearScore := c.score
+    if c.ok
+        if c.dir == 1 and (na(bestL) or c.score > bestL.score)
+            bestL := c
+        if c.dir == -1 and (na(bestS) or c.score > bestS.score)
+            bestS := c
+    else
+        lastRej := c
+        lastRejBar := bar_index
+
+Cand pick = na
+if not na(bestL) and not na(bestS)
+    lastRej := f_reject(0, "BOTH DIRECTIONS", 0, 0, "DIRECTIONAL CONFLICT — LONG AND SHORT SAME BAR")
+    lastRejBar := bar_index
+else if not na(bestL)
+    pick := bestL
+else if not na(bestS)
+    pick := bestS
+
+bool buySig  = false
+bool sellSig = false
+if not na(pick)
+    string block = not supported ? "UNSUPPORTED SYMBOL — NQ / MNQ ONLY" : not signalTF ? "ANALYSIS CHART — WAIT FOR 5M / 1M ENTRY" : T.active ? "" : bar_index <= T.exitBar ? "TRADE CLOSED THIS BAR" : bar_index - lastEntryBar <= iCooldown ? "COOLDOWN" : iSessionOnly and sid < 0 ? "OUTSIDE ENABLED SESSIONS" : "OK"
+    if block == "OK"
+        buySig  := pick.dir == 1
+        sellSig := pick.dir == -1
+    else if block != ""
+        pick.ok := false
+        pick.why := block
+        lastRej := pick
+        lastRejBar := bar_index
+
+// Dedup / consumption of the setup that produced the trade.
+if buySig or sellSig
+    if pick.src == 1
+        Zone uz = buySig ? pbL.z : pbS.z
+        if not na(uz)
+            uz.used := true
+    if pick.src == 2
+        if buySig
+            rvL.stage := 0
+        else
+            rvS.stage := 0
+    lastEntryBar := bar_index
+
+// ───────────────────────────── §13S STRATEGY EXECUTION ─────────────────────────────
+var float sNp0   = 0.0
+var int   sCt0   = 0
+var int   sLastCt = 0
+var bool  done1  = false
+var bool  done2  = false
+var bool  done3  = false
+// stats buckets: 0 all · 1 long · 2 short · 3 continuation · 4 reversal (counter + range) · 5 breakout/retest
+var array<int>   kN  = array.new_int(6, 0)
+var array<int>   kW  = array.new_int(6, 0)
+var array<float> kR  = array.new_float(6, 0.0)
+var array<float> kGP = array.new_float(6, 0.0)
+var array<float> kGL = array.new_float(6, 0.0)
+
+f_stat(int k, float r, float pnl) =>
+    kN.set(k, kN.get(k) + 1)
+    kW.set(k, kW.get(k) + (pnl > 0 ? 1 : 0))
+    kR.set(k, kR.get(k) + r)
+    if pnl > 0
+        kGP.set(k, kGP.get(k) + pnl)
+    else
+        kGL.set(k, kGL.get(k) - pnl)
+
+int qAll = iContracts
+int q1 = iScaleOut and qAll >= 2 ? math.min(qAll, math.round(qAll * w1)) : 0
+int q2 = iScaleOut and qAll >= 2 ? math.min(qAll - q1, math.round(qAll * w2)) : 0
+int q3 = qAll - q1 - q2
+
+// 1) Detect a position that has fully closed (fills happen intrabar; we account at bar close).
+bool evClose = false
+if T.active and bar_index > T.entryBar and strategy.opentrades == 0
+    T.active := false
+    T.exitBar := bar_index
+    evClose := true
+    float pnl = strategy.netprofit - sNp0
+    float fill = strategy.closedtrades > sCt0 ? strategy.closedtrades.entry_price(sCt0) : T.entry
+    float riskUsd = math.abs(fill - T.initStop) * pv * qAll
+    float r = riskUsd > 0 ? pnl / riskUsd : 0.0
+    T.realR := r
+    T.outcome := pnl > 0 ? "WIN" : "LOSS"
+    f_stat(0, r, pnl)
+    f_stat(T.dir == 1 ? 1 : 2, r, pnl)
+    f_stat(T.typ == 1 ? 3 : T.typ == 3 ? 5 : 4, r, pnl)
+
+// 2) New entry (indicator signal + broker must be flat).
+bool goLong  = buySig and strategy.position_size == 0
+bool goShort = sellSig and strategy.position_size == 0
+if goLong or goShort
+    T.active := true
+    T.dir := pick.dir
+    T.model := pick.model
+    T.typ := pick.typ
+    T.score := pick.score
+    T.entry := pick.entry
+    T.initStop := pick.stop
+    T.stop := pick.stop
+    T.risk := pick.risk
+    T.tp1 := pick.t1
+    T.tp2 := pick.t2
+    T.tp3 := pick.t3
+    T.hit1 := false
+    T.hit2 := false
+    T.hit3 := false
+    T.beOn := false
+    T.entryBar := bar_index
+    T.outcome := "ACTIVE"
+    sNp0 := strategy.netprofit
+    sCt0 := strategy.closedtrades
+    sLastCt := strategy.closedtrades
+    done1 := false
+    done2 := false
+    done3 := false
+    strategy.entry(goLong ? "L" : "S", goLong ? strategy.long : strategy.short, qty = qAll, comment = (goLong ? "BUY " : "SELL ") + T.model)
+
+// 3) Manage exits. Each leg is an OCO bracket (limit = target, stop = active stop).
+if T.active
+    if strategy.closedtrades > sLastCt
+        for i = sLastCt to strategy.closedtrades - 1
+            string xid = strategy.closedtrades.exit_id(i)
+            done1 := done1 or xid == "TP1"
+            done2 := done2 or xid == "TP2"
+            done3 := done3 or xid == "TP3"
+        sLastCt := strategy.closedtrades
+    // Break-even: decided on a completed bar AFTER the fill bar, effective from the next bar only.
+    if iBE and not T.beOn and bar_index > T.entryBar and strategy.opentrades > 0 and (T.dir == 1 ? high >= T.tp1 : low <= T.tp1)
+        float avgPx = strategy.position_avg_price
+        T.stop := T.dir == 1 ? f_ceilTick(avgPx + iBETicks * syminfo.mintick) : f_floorTick(avgPx - iBETicks * syminfo.mintick)
+        T.beOn := true
+    string eid = T.dir == 1 ? "L" : "S"
+    float singleTP = iSingleTP == "TP1" ? T.tp1 : iSingleTP == "TP2" ? T.tp2 : T.tp3
+    float lastTP = q1 + q2 == 0 ? singleTP : T.tp3
+    if q1 > 0 and not done1
+        strategy.exit("TP1", eid, qty = q1, limit = T.tp1, stop = T.stop, comment_profit = "TP1", comment_loss = T.beOn ? "BE" : "SL")
+    if q2 > 0 and not done2
+        strategy.exit("TP2", eid, qty = q2, limit = T.tp2, stop = T.stop, comment_profit = "TP2", comment_loss = T.beOn ? "BE" : "SL")
+    if q3 > 0 and not done3
+        strategy.exit("TP3", eid, qty = q3, limit = lastTP, stop = T.stop, comment_profit = q1 + q2 == 0 ? iSingleTP : "TP3", comment_loss = T.beOn ? "BE" : "SL")
+
+plotshape(goLong, "BUY", shape.triangleup, location.belowbar, C_BULL, size = size.tiny)
+plotshape(goShort, "SELL", shape.triangledown, location.abovebar, C_BEAR, size = size.tiny)
+plot(T.active ? T.stop : na, "Active stop", color = C_BEAR, style = plot.style_linebr)
+plot(T.active ? T.tp1 : na, "TP1", color = color.new(C_BULL, 40), style = plot.style_linebr)
+plot(T.active ? T.tp2 : na, "TP2", color = color.new(C_BULL, 40), style = plot.style_linebr)
+plot(T.active ? T.tp3 : na, "TP3", color = color.new(C_BULL, 40), style = plot.style_linebr)
+
+// ───────────────────────────── §14S PERFORMANCE TABLE ─────────────────────────────
+var table pt = table.new(position.bottom_right, 7, 9, bgcolor = color.new(C_BG, 5), border_color = C_HEAD, border_width = 1)
+f_pc(int c, int r, string t, color col) =>
+    table.cell(pt, c, r, t, text_color = col, text_size = size.tiny, text_halign = text.align_left)
+if barstate.islast and iShowStats
+    array<string> hdr = array.from("BUCKET", "TRADES", "WIN %", "PROFIT F.", "AVG R", "EXPECT. $", "NET $")
+    for c = 0 to 6
+        table.cell(pt, c, 0, hdr.get(c), text_color = C_GOLD, text_size = size.tiny, bgcolor = C_HEAD)
+    array<string> nm = array.from("ALL", "LONG", "SHORT", "CONTINUATION", "REVERSAL", "BREAKOUT/RETEST")
+    for k = 0 to 5
+        int   n  = kN.get(k)
+        float gp = kGP.get(k)
+        float gl = kGL.get(k)
+        f_pc(0, k + 1, nm.get(k), C_TXT)
+        f_pc(1, k + 1, str.tostring(n), C_TXT)
+        f_pc(2, k + 1, n > 0 ? str.tostring(100.0 * kW.get(k) / n, "#.#") : "—", C_TXT)
+        f_pc(3, k + 1, gl > 0 ? str.tostring(gp / gl, "#.##") : n > 0 ? "∞" : "—", C_TXT)
+        f_pc(4, k + 1, n > 0 ? str.tostring(kR.get(k) / n, "+#.##;-#.##") : "—", C_TXT)
+        f_pc(5, k + 1, n > 0 ? f_usd((gp - gl) / n) : "—", C_TXT)
+        f_pc(6, k + 1, f_usd(gp - gl), gp >= gl ? C_BULL : C_BEAR)
+    table.cell(pt, 0, 7, tfTxt + " · " + syminfo.ticker + " · max DD " + f_usd(strategy.max_drawdown) + " · net (TV) " + f_usd(strategy.netprofit) + " · incl. commission + slippage", text_color = C_NEU, text_size = size.tiny, text_halign = text.align_left)
+    table.merge_cells(pt, 0, 7, 6, 7)
+    table.cell(pt, 0, 8, "Per-position stats (partials combined). R = net P&L ÷ planned $ risk from actual fill. Run on each TF separately.", text_color = C_NEU, text_size = size.tiny, text_halign = text.align_left)
+    table.merge_cells(pt, 0, 8, 6, 8)
